@@ -1,0 +1,53 @@
+services:
+  # ----------------------------------------------------
+  # 1. LAYANAN APLIKASI FLASK
+  # ----------------------------------------------------
+  flask:
+    image: python3-base:latest
+    # Ganti 'image' dengan 'build' untuk membangun image baru
+    # build:
+    #   context: . # Ambil Dockerfile dari direktori saat ini
+    container_name: dasborkanwil_app
+    # restart: always
+    working_dir: /usr/src/app
+
+    volumes:
+      # Mapping ini sekarang hanya untuk HOT RELOAD kode Python/Template
+      # Jika Anda mengubah main.py, Flask (Werkzeug) akan me-reload
+      - .:/usr/src/app
+
+    # Mengembalikan perintah untuk instalasi dan menjalankan server Flask dan Jupyter Notebook
+    command: >
+      bash -c "jupyter notebook --ip=0.0.0.0 --port=8888 --allow-root --NotebookApp.token='' --NotebookApp.password='' &
+      flask run --host=0.0.0.0 --port=$${FLASK_RUN_PORT:-5000}"
+
+    env_file:
+      - .env
+
+    ports:
+      - "5000:5000" # Port untuk Flask
+      - "8888:8888" # Port untuk Jupyter Notebook Server
+
+    networks:
+      - project_network
+
+  # ----------------------------------------------------
+  # 2. LAYANAN MANAJEMEN ASET
+  # ----------------------------------------------------
+  flask_asset:
+    image: node:20-slim
+    container_name: dasborkanwil_asset
+    working_dir: /usr/src/app
+    user: "1000:1000"  # Sesuaikan dengan UID user WSL / Ubuntu
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - .:/usr/src/app
+      - ./node_modules:/usr/src/app/node_modules
+    tty: true
+    networks:
+      - project_network
+
+networks:
+  project_network:
+    external: true
