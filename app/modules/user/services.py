@@ -19,7 +19,7 @@ class UserService(BaseService):
         """Fungsi internal untuk validasi data API/Manual"""
         # Cek NIP
         if 'username' in data:
-            if not re.match(Rules.NIP['regex'], str(data.get('username', ''))):
+            if not re.match(Rules.NIP['regex'], str(data.get('username'))):
                 raise ValueError(Rules.NIP['validators'][2].message)
 
         # Cek Password
@@ -29,9 +29,11 @@ class UserService(BaseService):
 
         # Cek Email
         if 'email' in data:
-            email_val = data.get('email', '')
+            email_val = data.get('email')
             if not re.match(Rules.EMAIL['regex'], email_val):
                 raise ValueError(Rules.EMAIL['validators'][1].message)
+
+        return True
 
     def register(self, username, email, password, is_seeding=False):
         """
@@ -45,7 +47,7 @@ class UserService(BaseService):
         employee = None
         # 1. Cek apakah NIP terdaftar di Master Data Employee (Hanya jika bukan seeding)
         if not is_seeding:
-            employee = self.emp_repo.find_by(nip=username)[0]
+            employee = self.emp_repo.find_one_by(nip=username)
             if not employee:
                 current_app.logger.warning(f"Ada percobaan registrasi dengan NIP tidak terdaftar: {username}")
                 raise ValueError("NIP tidak terdaftar di database pegawai.")
@@ -86,7 +88,7 @@ class UserService(BaseService):
         # validasi awal untuk memastikan data yang masuk benar sebelum cek database
         self._validate({'username': username, 'password': password})
 
-        user = self.repository.get_by_nip(username)
+        user = self.repository.find_one_by(username=username)
 
         if user and user.check_password(password):
             current_app.logger.info(f"Authentication success. Username: {username}")

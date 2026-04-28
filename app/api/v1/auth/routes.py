@@ -39,13 +39,21 @@ def api_register():
 def api_login():
     data = request.get_json()
 
-    # Otentikasi user
-    user = UserService().authenticate(data.get('username'), data.get('password'))
-    if user:
-        token = create_access_token(identity=str(user.id))
-        return jsonify(token=token), 200
+    try:
+        user = UserService().authenticate(data.get('username'), data.get('password'))
+        if user:
+            token = create_access_token(identity=str(user.id))
 
-    return json_response(False, "Unauthorized.", status=401)
+            return jsonify(token=token), 200
+
+        return json_response(False, "NIP atau Password salah.", status=401)
+
+    except ValueError as e:
+        return json_response(False, str(e), status=400)
+
+    except Exception as e:
+        current_app.logger.error(f"API Login Error: {str(e)}")
+        return json_response(False, "Terjadi kesalahan sistem.", status=500)
 
 @api_auth_bp.route('/logout', methods=['POST'])
 @jwt_required()

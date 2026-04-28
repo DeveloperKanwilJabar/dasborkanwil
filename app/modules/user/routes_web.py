@@ -57,27 +57,42 @@ def register():
 def login():
     form = LoginForm()
 
+    # 1. Cek jika user sudah login
     if current_user.is_authenticated:
-        current_app.logger.info("User already authenticated: %s", current_user.username)
         return redirect(url_for('user.dashboard'))
 
-    if request.method == 'POST':
-        current_app.logger.info("Login form submitted with data: %s", request.form)
+    if form.validate_on_submit():
+        # 2. Proses Otentikasi
+        try:
+            service = UserService()
+            user = service.authenticate(
+                username=form.username.data,
+                password=form.password.data
+            )
 
-        if form.validate_on_submit():
-            current_app.logger.info("Login form validation passed.")
+            if not user:
+                return json_response(False, "NIP atau Password salah.", status=401)
 
-            # Otentikasi user
-            user = UserService().authenticate(form.username.data, form.password.data)
-            if user:
-                login_user(user, remember=form.remember.data)  # Login pengguna dengan opsi "Remember me"
-                return json_response(True, "Login berhasil! Mengarahkan...", {"redirect_url": url_for('user.dashboard')})
+            # 3. Login sukses
+            login_user(user, remember=form.remember.data)
+            current_app.logger.info(f"User logged in: {user.username}")
 
-            return json_response(False, "NIP atau password salah.")
-        else:
-            current_app.logger.warning("Login form validation failed: %s", form.errors)
-            error_msgs = [f"{', '.join(msgs)}" for field, msgs in form.errors.items()]
-            return json_response(False, error_msgs[0] if error_msgs else "Validasi gagal", status=422)
+            return json_response(True, "Login berhasil! Mengarahkan...", {
+                "redirect_url": url_for('user.dashboard')
+            })
+
+        except ValueError as e:
+            return json_response(False, str(e), status=400)
+
+        except Exception as e:
+            current_app.logger.error(f"Login System Error: {str(e)}")
+            return json_response(False, "Terjadi kesalahan sistem saat login.", status=500)
+
+    # 4. Handle Error Validasi Form (WTF-Forms)
+    if form.errors:
+        current_app.logger.warning(f"Login form validation failed: {form.errors}")
+        error_msgs = [f"{', '.join(msgs)}" for field, msgs in form.errors.items()]
+        return json_response(False, error_msgs[0] if error_msgs else "Validasi gagal", status=422)
 
     return render_template('pages/auth/login.html', form=form)
 

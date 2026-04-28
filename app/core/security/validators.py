@@ -5,9 +5,9 @@ class ValidationRules:
         'validators': [
             DataRequired(message="NIP wajib diisi."),
             Length(min=18, max=18, message="NIP harus 18 karakter."),
-            Regexp(r'^\d{18}', message="NIP tidak valid.")
+            Regexp(r'^\d{18}$', message="NIP tidak valid.")
         ],
-        'regex': r'^\d{18}'
+        'regex': r'^\d{18}$'
     }
 
     PASSWORD = {

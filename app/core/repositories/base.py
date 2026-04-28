@@ -30,15 +30,24 @@ class BaseRepository:
          - include_deleted: Jika True, maka hasil akan menyertakan data yang sudah di-soft delete (deleted_at != None).
          - **filters: Kriteria pencarian dinamis yang diteruskan ke filter_by SQLAlchemy.
         Contoh penggunaan di service:
-            - self.repository.find_by(active=True, role='admin') -> mencari semua
-        Catatan: Jika mencari berdasarkan field unik (misal: email, uuid), pastikan untuk mengambil index [0] dari hasil list yang dikembalikan.
-            - self.repository.find_by(email="test@mail.com")[0] -> mencari berdasarkan email dan ambil yang pertama
-            - self.repository.find_by(uuid="some-uuid")[0] -> mencari berdasarkan uuid dan ambil yang pertama
+            - self.repository.find_by(active=True, role='admin') -> mencari semua data yang aktif. Return list dan bisa kosong.
         """
         query = self.model.query.filter_by(**filters)
         if not include_deleted and hasattr(self.model, 'deleted_at'):
             query = query.filter(self.model.deleted_at == None)
         return query.all()
+
+    def find_one_by(self, include_deleted=False, **filters):
+        """
+        Mencari satu data (Return Object atau None).
+        Sangat cocok untuk field unik seperti NIP, Email, UUID.
+        Contoh penggunaan di service:
+            - self.repository.find_one_by(nip="some-nip") -> mencari berdasarkan NIP dan return object atau None
+        """
+        query = self.model.query.filter_by(**filters)
+        if not include_deleted and hasattr(self.model, 'deleted_at'):
+            query = query.filter(self.model.deleted_at == None)
+        return query.first()
 
     def paginate(self, page=1, per_page=10, include_deleted=False, order_by_desc=True):
         """Mekanisme pagination standar Flask-SQLAlchemy."""

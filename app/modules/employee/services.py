@@ -23,7 +23,7 @@ class EmployeeService(BaseService):
         '''Proses pembuatan pegawai baru denga proteksi ganda.'''
 
         # 1. Cek duplikasi (Logika ini pindah dari seeder ke sini)
-        existing = self.repository.find_by(nip=nip)
+        existing = self.repository.find_one_by(nip=nip)
         if existing:
             # Jika untuk seeding, mungkin kita ingin skip saja daripada raise error
             if kwargs.get('skip_if_exists'):
