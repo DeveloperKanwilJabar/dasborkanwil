@@ -19,3 +19,4 @@ __pycache__/
 docker-compose.yml
 /node_modules/
 /logs/*
+AGENTS.md
