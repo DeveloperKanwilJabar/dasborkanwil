@@ -8,6 +8,7 @@ from flask_login import (
 from flask_wtf.csrf import CSRFProtect
 from flask_mail import Mail
 from flask_cors import CORS
+from flask_jwt_extended import JWTManager
 
 # Inisialisasi instance tanpa 'app' (Pattern Factory)
 db = SQLAlchemy()
@@ -17,3 +18,4 @@ login_manager = LoginManager()
 csrf = CSRFProtect()
 mail = Mail()
 cors = CORS()
+jwt = JWTManager()

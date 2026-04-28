@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from app import create_app
-from config import config_dict
+from app.core.config import config_dict
 
 # Load environment variables dari .env
 load_dotenv()

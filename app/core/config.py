@@ -11,7 +11,9 @@ class Config:
     """Konfigurasi Dasar (Base Config)"""
     # Identitas & Keamanan
     APP_NAME = os.environ.get('APP_NAME', 'Dasbor Informasi')
-    SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'dev-key-very-secret')
+    # Gunakan SECRET_KEY yang kuat dan rahasiakan di production
+    # import secrets; secrets.token_urlsafe(64) untuk generate random string 64 karakter
+    SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'ganti-dengan-random-string-64-karakter')
     # Timezone & Locale
     APP_TIMEZONE = os.environ.get('APP_TIMEZONE', 'Asia/Jakarta')
     CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', '*').split(',')
@@ -34,12 +36,17 @@ class Config:
     DB_USER = os.environ.get('DB_USER')
     DB_PASSWORD = os.environ.get('DB_PASSWORD')
     DB_HOST = os.environ.get('DB_HOST', 'localhost')
-    DB_PORT = os.environ.get('DB_PORT', '3306')
+    DB_PORT = os.environ.get('DB_PORT', '5432')
     DB_NAME = os.environ.get('DB_NAME')
 
     # SQLAlchemy
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False
+
+    # JWT
+    JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'ganti-dengan-random-string-64-karakter')
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
+    JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=30)
 
     @staticmethod
     def build_db_uri(driver, user, password, host, port, name):
@@ -49,7 +56,7 @@ class Config:
         elif driver == 'oracle':
             return f'oracle://{user}:{password}@{host}:{port}/{name}'
         elif driver == 'sqlite':
-            return f'sqlite:///{BASE_DIR}/attendance.db'
+            return f'sqlite:///{BASE_DIR}/app.db'
         # Default ke PostgreSQL
         return f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}'
 
@@ -74,7 +81,7 @@ class Production(Config):
 class Development(Config):
     DEVELOPMENT = True
     DEBUG = True
-    SQLALCHEMY_ECHO = True
+    SQLALCHEMY_ECHO = False
     # Bisa override DB khusus dev jika perlu
     SQLALCHEMY_DATABASE_URI = Config.build_db_uri(
         Config.DB_DRIVER, Config.DB_USER, Config.DB_PASSWORD,
