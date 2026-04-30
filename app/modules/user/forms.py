@@ -1,22 +1,72 @@
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, BooleanField
-from wtforms.validators import DataRequired, Length, EqualTo
+from wtforms import BooleanField, PasswordField, StringField, TextAreaField
+from wtforms.validators import DataRequired, EqualTo, Optional
+
 from app.core.security.validators import ValidationRules as Rules
+
 
 class BaseForm(FlaskForm):
     username = StringField('NIP', validators=Rules.NIP['validators'])
     password = PasswordField('Password', validators=Rules.PASSWORD['validators'])
 
+
 class RegisterForm(BaseForm):
     email = StringField('Email', validators=Rules.EMAIL['validators'])
-    confirm_password = PasswordField('Konfirmasi Password', validators=[
-        DataRequired(message="Konfirmasi password wajib diisi."),
-        EqualTo('password', message='Password harus sama')
-        ])
+    confirm_password = PasswordField(
+        'Konfirmasi Password',
+        validators=[
+            DataRequired(message='Konfirmasi password wajib diisi.'),
+            EqualTo('password', message='Konfirmasi password harus sama.'),
+        ],
+    )
+
 
 class LoginForm(BaseForm):
     remember = BooleanField('Ingat saya')
 
-class UserForm(BaseForm):
+
+class BaseUserForm(FlaskForm):
+    username = StringField('NIP', validators=Rules.NIP['validators'])
     email = StringField('Email', validators=Rules.EMAIL['validators'])
-    full_name = StringField('Nama Lengkap', validators=[DataRequired(), Length(min=3, max=254)])
+    roles = TextAreaField('Roles')
+    permissions = TextAreaField('Permissions')
+    active = BooleanField('Aktif', default=True)
+
+
+class UserCreateForm(BaseUserForm):
+    password = PasswordField('Password', validators=Rules.PASSWORD['validators'])
+    confirm_password = PasswordField(
+        'Konfirmasi Password',
+        validators=[
+            DataRequired(message='Konfirmasi password wajib diisi.'),
+            EqualTo('password', message='Konfirmasi password harus sama.'),
+        ],
+    )
+
+
+class UserUpdateForm(BaseUserForm):
+    password = PasswordField('Password Baru', validators=[Optional()] + Rules.PASSWORD['validators'][1:])
+    confirm_password = PasswordField('Konfirmasi Password Baru', validators=[Optional()])
+
+    def validate(self, extra_validators=None):
+        is_valid = super().validate(extra_validators=extra_validators)
+        if not is_valid:
+            return False
+
+        password = (self.password.data or '').strip()
+        confirm_password = (self.confirm_password.data or '').strip()
+
+        if password or confirm_password:
+            if not password:
+                self.password.errors.append('Password baru wajib diisi jika ingin mengganti password.')
+                return False
+
+            if not confirm_password:
+                self.confirm_password.errors.append('Konfirmasi password baru wajib diisi.')
+                return False
+
+            if password != confirm_password:
+                self.confirm_password.errors.append('Konfirmasi password harus sama.')
+                return False
+
+        return True

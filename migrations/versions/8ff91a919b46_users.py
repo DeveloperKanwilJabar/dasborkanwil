@@ -7,6 +7,7 @@ Create Date: 2026-04-21 06:17:35.723871
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -27,6 +28,9 @@ def upgrade():
     sa.Column('is_active', sa.Boolean(), server_default='1', nullable=False),
     sa.Column('email_verified_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('last_login', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('roles', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('permissions', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('settings', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=True, default=sa.func.now()),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True, default=sa.func.now(), onupdate=sa.func.now()),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),

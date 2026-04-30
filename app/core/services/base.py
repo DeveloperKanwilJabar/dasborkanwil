@@ -9,7 +9,7 @@ class BaseService:
 
     def get_all(self):
         """Method generik untuk ambil semua data dari repository."""
-        return self.repository.query.all()
+        return self.repository.get_all()
 
     def to_dataframe(self, query_result):
         """Helper global untuk mengubah hasil query SQLAlchemy ke Dataframe."""

@@ -14,6 +14,7 @@ class Config:
     # Gunakan SECRET_KEY yang kuat dan rahasiakan di production
     # import secrets; secrets.token_urlsafe(64) untuk generate random string 64 karakter
     SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', 'ganti-dengan-random-string-64-karakter')
+    FLASK_DEBUG = False
     # Timezone & Locale
     APP_TIMEZONE = os.environ.get('APP_TIMEZONE', 'Asia/Jakarta')
     CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', '*').split(',')
@@ -25,7 +26,7 @@ class Config:
     SESSION_KEY_PREFIX = 'dasborkanwil_session:'
     SESSION_PERMANENT = False
     SESSION_USE_SIGNER = True
-    PERMANENT_SESSION_LIFETIME = timedelta(hours=24)
+    PERMANENT_SESSION_LIFETIME = timedelta(hours=1)
 
     # === GIS & DATA HANDLING ===
     # Karena ada Geopandas & Folium, folder ini untuk cache/data spatial
@@ -47,6 +48,8 @@ class Config:
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'ganti-dengan-random-string-64-karakter')
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=30)
+    JWT_TOKEN_LOCATION = ['headers', 'cookies']
+    JWT_COOKIE_CSRF_PROTECT = True
 
     @staticmethod
     def build_db_uri(driver, user, password, host, port, name):
@@ -71,7 +74,6 @@ class Config:
             pass
 
 class Production(Config):
-    DEBUG = False
     TESTING = False
     SQLALCHEMY_DATABASE_URI = Config.build_db_uri(
         Config.DB_DRIVER, Config.DB_USER, Config.DB_PASSWORD,
@@ -80,7 +82,7 @@ class Production(Config):
 
 class Development(Config):
     DEVELOPMENT = True
-    DEBUG = True
+    FLASK_DEBUG = True
     SQLALCHEMY_ECHO = False
     # Bisa override DB khusus dev jika perlu
     SQLALCHEMY_DATABASE_URI = Config.build_db_uri(
