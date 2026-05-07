@@ -123,7 +123,7 @@ function markFieldError(fieldId) {
 }
 
 function clearFormErrors() {
-  ["username", "email", "password", "confirm_password", "roles", "permissions"].forEach(clearFieldError);
+  ["username", "email", "password", "confirm_password", "roles", "permissions", "active_year", "scope_type", "scope_code"].forEach(clearFieldError);
 }
 
 function inferFieldFromMessage(message) {
@@ -135,6 +135,9 @@ function inferFieldFromMessage(message) {
   if (normalized.includes("password")) return "password";
   if (normalized.includes("role")) return "roles";
   if (normalized.includes("permission")) return "permissions";
+  if (normalized.includes("tahun aktif") || normalized.includes("active_year")) return "active_year";
+  if (normalized.includes("scope type") || normalized.includes("tipe scope")) return "scope_type";
+  if (normalized.includes("scope code") || normalized.includes("kode scope") || normalized.includes("scope")) return "scope_code";
   return null;
 }
 
@@ -151,6 +154,8 @@ function buildRows(data) {
     user.active,
     user.roles || [],
     user.permissions || [],
+    user.settings?.scope?.code || "-",
+    user.settings?.active_year || "-",
     null,
   ]);
 }
@@ -263,6 +268,9 @@ function resetUserForm() {
   document.getElementById("active").checked = true;
   document.getElementById("roles").value = "";
   document.getElementById("permissions").value = "";
+  document.getElementById("active_year").value = "";
+  document.getElementById("scope_type").value = "";
+  document.getElementById("scope_code").value = "";
   document.getElementById("roles").dispatchEvent(new Event("change", { bubbles: true }));
   document.getElementById("permissions").dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -296,6 +304,9 @@ function configureModal(mode, user = null) {
     document.getElementById("active").checked = Boolean(user.active);
     document.getElementById("roles").value = parseJsonList(user.roles).join(", ");
     document.getElementById("permissions").value = parseJsonList(user.permissions).join(", ");
+    document.getElementById("active_year").value = user.settings?.active_year || "";
+    document.getElementById("scope_type").value = user.settings?.scope?.type || "";
+    document.getElementById("scope_code").value = user.settings?.scope?.code || "";
 
     usernameField.readOnly = true;
     usernameField.classList.add("bg-light");
@@ -343,6 +354,7 @@ async function viewData(id) {
     const data = await fetchJson(apiDetailUrl.replace("0", id));
     const roles = parseJsonList(data.roles);
     const permissions = parseJsonList(data.permissions);
+    const actorScope = data.actor_context?.scope;
 
     document.getElementById("viewModalBody").innerHTML = `
       <div class="table-responsive">
@@ -357,6 +369,11 @@ async function viewData(id) {
             <tr><th>Last Login</th><td>${formatDateTime(data.last_login, "Belum pernah login")}</td></tr>
             <tr><th>Roles</th><td>${renderBadgeList(roles)}</td></tr>
             <tr><th>Permissions</th><td>${renderBadgeList(permissions, "bg-info-subtle text-info")}</td></tr>
+            <tr><th>Tahun Aktif</th><td>${escapeHtml(data.settings?.active_year || "-")}</td></tr>
+            <tr><th>Scope Type</th><td>${escapeHtml(actorScope?.type || "-")}</td></tr>
+            <tr><th>Scope Code</th><td>${escapeHtml(actorScope?.code || "-")}</td></tr>
+            <tr><th>Scope Name</th><td>${escapeHtml(actorScope?.name || "-")}</td></tr>
+            <tr><th>Scope Path</th><td>${escapeHtml((actorScope?.path || []).join(" > ") || "-")}</td></tr>
             <tr><th>Dibuat</th><td>${formatDateTime(data.created_at)}</td></tr>
             <tr><th>Diupdate</th><td>${formatDateTime(data.updated_at)}</td></tr>
           </tbody>
@@ -434,6 +451,13 @@ function initGrid() {
         name: "Permissions",
         formatter: (cell) =>
           gridjs.html(renderBadgeList(parseJsonList(cell), "bg-info-subtle text-info")),
+      },
+      {
+        name: "Scope",
+      },
+      {
+        name: "Tahun Aktif",
+        width: "120px",
       },
       {
         name: "Aksi",

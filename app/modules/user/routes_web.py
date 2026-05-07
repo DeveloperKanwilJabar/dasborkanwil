@@ -2,6 +2,7 @@ from flask import Blueprint, current_app, jsonify, make_response, redirect, rend
 from flask_jwt_extended import create_access_token, set_access_cookies, unset_jwt_cookies
 from flask_login import current_user, login_required, login_user, logout_user
 
+from app.core.access import BOOTSTRAP_SCOPE_REGISTRY, ORG_SCOPE_TYPES, build_actor_context, merge_actor_settings
 from app.core.extensions import db
 from app.core.utils import json_response
 
@@ -23,6 +24,7 @@ def _first_form_error(form, fallback='Validasi gagal.'):
 
 
 def _serialize_user(user, include_audit=False):
+    actor_context = build_actor_context(user)
     payload = {
         'id': user.id,
         'uuid': user.uuid,
@@ -33,6 +35,8 @@ def _serialize_user(user, include_audit=False):
         'last_login': str(user.last_login) if user.last_login else None,
         'roles': user.roles or [],
         'permissions': user.permissions or [],
+        'settings': actor_context.get('settings') or {},
+        'actor_context': actor_context,
     }
 
     if include_audit:
@@ -44,6 +48,37 @@ def _serialize_user(user, include_audit=False):
         )
 
     return payload
+
+
+def _scope_type_choices():
+    return [('', 'Tanpa scope')] + [(scope_type, scope_type.title()) for scope_type in ORG_SCOPE_TYPES]
+
+
+def _scope_code_choices():
+    options = [('', 'Tanpa scope')]
+    sorted_scopes = sorted(
+        BOOTSTRAP_SCOPE_REGISTRY.values(),
+        key=lambda item: ((item.get('path') or []), item.get('name') or item.get('code') or ''),
+    )
+    for scope in sorted_scopes:
+        label = f"{scope.get('name')} ({scope.get('code')})"
+        options.append((scope.get('code'), label))
+    return options
+
+
+def _apply_user_form_choices(form):
+    form.scope_type.choices = _scope_type_choices()
+    form.scope_code.choices = _scope_code_choices()
+    return form
+
+
+def _build_user_settings(form, existing_settings=None):
+    return merge_actor_settings(
+        existing_settings=existing_settings,
+        active_year=form.active_year.data,
+        scope_type=form.scope_type.data,
+        scope_code=form.scope_code.data,
+    )
 
 
 @user_bp.route('/register', methods=['GET', 'POST'])
@@ -148,7 +183,7 @@ def dashboard():
 @user_bp.route('/users/index')
 @login_required
 def index():
-    form = UserUpdateForm()
+    form = _apply_user_form_choices(UserUpdateForm())
     return render_template('pages/user/user_index.html', form=form)
 
 
@@ -186,7 +221,7 @@ def user_data(user_id):
 @user_bp.route('/users/create', methods=['POST'])
 @login_required
 def user_create():
-    form = UserCreateForm(meta={'csrf': False})
+    form = _apply_user_form_choices(UserCreateForm(meta={'csrf': False}))
 
     if not form.validate():
         return json_response(False, _first_form_error(form), status=422)
@@ -200,6 +235,7 @@ def user_create():
             roles=form.roles.data,
             permissions=form.permissions.data,
             active=form.active.data,
+            settings=_build_user_settings(form),
             is_seeding=False,
         )
 
@@ -218,7 +254,7 @@ def user_create():
 @user_bp.route('/users/update/<int:user_id>', methods=['PUT', 'PATCH'])
 @login_required
 def user_update(user_id):
-    form = UserUpdateForm(meta={'csrf': False})
+    form = _apply_user_form_choices(UserUpdateForm(meta={'csrf': False}))
 
     if not form.validate():
         return json_response(False, _first_form_error(form), status=422)
@@ -232,6 +268,7 @@ def user_update(user_id):
             roles=form.roles.data,
             permissions=form.permissions.data,
             password=form.password.data,
+            settings=_build_user_settings(form),
         )
 
         return json_response(True, 'User berhasil diupdate.', _serialize_user(user))

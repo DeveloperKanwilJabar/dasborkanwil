@@ -1,0 +1,67 @@
+{% extends "partials/base.html" %}
+{% block title %}Daftar Form{% endblock title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='libs/gridjs/dist/theme/mermaid.min.css') }}">
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Daftar Form</h4>
+                            <p class="text-muted mb-0">Kelola form dinamis, buka builder, dan akses preview form published.</p>
+                        </div>
+                        <div class="page-title-right">
+                            <ol class="breadcrumb m-0">
+                                <li class="breadcrumb-item"><a href="{{ url_for('user.dashboard') }}">Dashboard</a></li>
+                                <li class="breadcrumb-item active">Daftar Form</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title mb-0">Form Registry</h4>
+                            </div>
+                            <div class="flex-shrink-0">
+                                <a href="{{ url_for('form.builder') }}" class="btn btn-success">
+                                    <i class="ri-add-line align-bottom me-1"></i> Buat Form Baru
+                                </a>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="forms-table-data"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+    const formsDataUrl = "{{ url_for('form.forms_data') }}";
+    const builderUrlTemplate = "{{ url_for('form.builder') }}?form_id=0";
+    const previewUrlTemplate = "{{ url_for('form.preview', form_id=0) }}";
+    const templateUrlTemplate = "{{ url_for('form.export_template', form_id=0) }}";
+    const importMappingUrlTemplate = "{{ url_for('form.import_mapping', form_id=0) }}";
+</script>
+<script src="{{ url_for('static', filename='libs/gridjs/dist/gridjs.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/forms.js') }}"></script>
+{% endblock extra_js %}

@@ -25,6 +25,7 @@ jupyter
 marshmallow
 marshmallow-sqlalchemy
 numpy
+openpyxl
 pandas
 passlib[bcrypt]
 pendulum
@@ -34,9 +35,11 @@ psycopg2
 pydantic
 python-dotenv
 PyMySQL
+pytest
 pytz
 cryptography
 redis
 setuptools
 wheel
 virtualenv
+xlsxwriter

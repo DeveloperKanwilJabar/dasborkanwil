@@ -90,9 +90,21 @@ class Development(Config):
         Config.DB_HOST, Config.DB_PORT, Config.DB_NAME
     )
 
+
+class Testing(Config):
+    TESTING = True
+    LOGIN_DISABLED = True
+    WTF_CSRF_ENABLED = False
+    SQLALCHEMY_DATABASE_URI = os.environ.get(
+        'TEST_DATABASE_URI',
+        'sqlite:///:memory:',
+    )
+
+
 # Mapping untuk memudahkan pemanggilan di run.py
 config_dict = {
     'production': Production,
     'development': Development,
+    'testing': Testing,
     'default': Production
 }

@@ -180,6 +180,21 @@
                             {{ form.permissions(class="d-none", rows="1") }}
                             <div class="form-text">Contoh: users.read, users.create, users.update.</div>
                         </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="active_year">{{ form.active_year.label.text if form.active_year is defined else None }}</label>
+                            {{ form.active_year(class="form-control", placeholder="Contoh: 2026") }}
+                            <div class="form-text">Dipakai sebagai konteks default periode aktif actor.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="scope_type">{{ form.scope_type.label.text }}</label>
+                            {{ form.scope_type(class="form-select") }}
+                            <div class="form-text">Tipe scope actor untuk baseline ABAC.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="scope_code">{{ form.scope_code.label.text }}</label>
+                            {{ form.scope_code(class="form-select") }}
+                            <div class="form-text">Pilih scope organisasi dari registry bootstrap.</div>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">

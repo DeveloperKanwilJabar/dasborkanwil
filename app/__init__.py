@@ -51,21 +51,34 @@ def create_app(config_mode='default'):
     setup_request(app)
 
     with app.app_context():
+        # Import model tambahan agar terdaftar di SQLAlchemy metadata untuk autogenerate migration
+        from .modules.form.models import Form, FormVersion
+        from .modules.import_pipeline.models import ImportBatch, ImportBatchRow
+        from .modules.submission.models import ReportingPeriod, Submission, SubmissionEvent
+
         # Registrasi Blueprint
         from .api.v1.auth.routes import api_auth_bp
+        from .api.v1.forms.routes import api_form_bp
+        from .api.v1.submissions.routes import api_submission_bp
         from .modules.user.routes_web import user_bp
         from .api.v1.users.routes import api_user_bp
         from .modules.employee.routes_web import employee_bp
+        from .modules.form.routes_web import form_web_bp
 
         # web routes
         app.register_blueprint(user_bp)
         app.register_blueprint(employee_bp)
+        app.register_blueprint(form_web_bp)
 
         # api routes
         app.register_blueprint(api_auth_bp)
         csrf.exempt(api_auth_bp) # Menonaktifkan CSRF untuk semua route di api_auth_bp
         app.register_blueprint(api_user_bp)
         csrf.exempt(api_user_bp) # Menonaktifkan CSRF untuk semua route di api_user_bp
+        app.register_blueprint(api_form_bp)
+        csrf.exempt(api_form_bp) # Menonaktifkan CSRF untuk semua route di api_form_bp
+        app.register_blueprint(api_submission_bp)
+        csrf.exempt(api_submission_bp) # Menonaktifkan CSRF untuk semua route di api_submission_bp
 
         # Services untuk Flask-Login & Shell
         from .modules.user.services import UserService

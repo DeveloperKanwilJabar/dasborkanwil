@@ -1,0 +1,259 @@
+{% extends "partials/base.html" %}
+{% block title %}Resume Import Batch{% endblock title %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Resume Import Batch</h4>
+                            <p class="text-muted mb-0">Staging awal hasil upload Excel sebelum validasi final dan insert submission.</p>
+                        </div>
+                        <div class="page-title-right">
+                            <ol class="breadcrumb m-0">
+                                <li class="breadcrumb-item"><a href="{{ url_for('user.dashboard') }}">Dashboard</a></li>
+                                <li class="breadcrumb-item"><a href="{{ url_for('form.index') }}">Daftar Form</a></li>
+                                <li class="breadcrumb-item active">Resume Import</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if error_message %}
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-warning" role="alert">
+                        <i class="ri-alert-line me-1 align-middle"></i> {{ error_message }}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if batch %}
+            {% with flashed_messages = get_flashed_messages(with_categories=true) %}
+            {% if flashed_messages %}
+            <div id="formImportFlashMessages" class="d-none" toast-list="true">
+                {% for category, message in flashed_messages %}
+                <div data-category="{{ category }}" data-message="{{ message|e }}"></div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endwith %}
+
+            {% if not can_process_batch %}
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-warning" role="alert">
+                        <i class="ri-alert-line me-1 align-middle"></i>
+                        Akun Anda tidak memiliki izin submit untuk form ini. Anda masih bisa review staging row, tetapi proses import final dan re-import koreksi dinonaktifkan.
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="row">
+                <div class="col-xl-4 col-md-6">
+                    <div class="card card-animate">
+                        <div class="card-body">
+                            <p class="text-muted mb-1">Total Row</p>
+                            <h3 class="mb-0">{{ batch.total_rows }}</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-2 col-md-6">
+                    <div class="card card-animate">
+                        <div class="card-body">
+                            <p class="text-muted mb-1">Mapped</p>
+                            <h3 class="mb-0">{{ batch.mapped_rows }}</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-2 col-md-6">
+                    <div class="card card-animate">
+                        <div class="card-body">
+                            <p class="text-muted mb-1">Valid</p>
+                            <h3 class="mb-0 text-success">{{ batch.valid_rows }}</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-2 col-md-6">
+                    <div class="card card-animate">
+                        <div class="card-body">
+                            <p class="text-muted mb-1">Error</p>
+                            <h3 class="mb-0 text-danger">{{ batch.error_rows }}</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-2 col-md-6">
+                    <div class="card card-animate">
+                        <div class="card-body">
+                            <p class="text-muted mb-1">Status</p>
+                            {% if batch.status == 'completed' %}
+                            <span class="badge bg-success-subtle text-success fs-12">{{ batch.status }}</span>
+                            {% elif batch.status == 'completed_with_errors' %}
+                            <span class="badge bg-warning-subtle text-warning fs-12">{{ batch.status }}</span>
+                            {% else %}
+                            <span class="badge bg-info-subtle text-info fs-12">{{ batch.status }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-xl-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Informasi Batch</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Batch UUID</p>
+                                <code>{{ batch.uuid }}</code>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">File</p>
+                                <h6 class="mb-0">{{ batch.original_filename or '-' }}</h6>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Form</p>
+                                <h6 class="mb-0">{{ batch.form.name if batch.form else '-' }}</h6>
+                                <div class="text-muted fs-12">{{ batch.form.code if batch.form else '-' }}</div>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Form Version</p>
+                                <span class="badge bg-success-subtle text-success">v{{ batch.form_version.version_number if batch.form_version else '-' }}</span>
+                            </div>
+                            <div class="mb-0">
+                                <p class="text-muted mb-1 fs-13">Created At</p>
+                                <div>{{ batch.created_at }}</div>
+                            </div>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <div class="d-grid gap-2">
+                                <form method="post" action="{{ url_for('form.process_import_batch', batch_id=batch.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-primary w-100" {% if batch.status not in ['mapped', 'completed_with_errors', 'failed'] or not can_process_batch %}disabled{% endif %}>
+                                        <i class="ri-play-circle-line align-bottom me-1"></i> Proses Validasi & Import
+                                    </button>
+                                </form>
+                                <a href="{{ url_for('form.download_import_batch_errors', batch_id=batch.id) }}" class="btn btn-soft-danger w-100 {% if (error_rows_count or 0) == 0 %}disabled{% endif %}" {% if (error_rows_count or 0) == 0 %}aria-disabled="true"{% endif %}>
+                                    <i class="ri-file-excel-2-line align-bottom me-1"></i> Download Error Excel
+                                </a>
+                                <form method="post" action="{{ url_for('form.reimport_corrected_batch', batch_id=batch.id) }}" enctype="multipart/form-data" class="border rounded p-2 bg-light-subtle">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <label for="excel_file_reimport" class="form-label mb-2">Upload File Error yang Sudah Diperbaiki</label>
+                                    <input type="file" id="excel_file_reimport" name="excel_file" class="form-control mb-2" accept=".xlsx" {% if (error_rows_count or 0) == 0 or not can_process_batch %}disabled{% endif %}>
+                                    <div class="form-text mb-2">File koreksi akan langsung dibuatkan batch baru dan otomatis diproses.</div>
+                                    <button type="submit" class="btn btn-success w-100" {% if (error_rows_count or 0) == 0 or not can_process_batch %}disabled{% endif %}>
+                                        <i class="ri-refresh-line align-bottom me-1"></i> Re-Import File Koreksi
+                                    </button>
+                                </form>
+                                <a href="{{ url_for('form.import_mapping', form_id=batch.form_id) }}" class="btn btn-soft-secondary w-100">
+                                    <i class="ri-arrow-left-line align-bottom me-1"></i> Kembali ke Mapping
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-8">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-0">Preview Row Staging</h5>
+                                <p class="text-muted mb-0 fs-13">Menampilkan maksimal 20 row pertama. Row error bisa diunduh kembali dalam format Excel untuk koreksi manual.</p>
+                            </div>
+                            <div class="flex-shrink-0">
+                                <span class="badge bg-light text-body">{{ rows|length }} row tampil</span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive table-card">
+                                <table class="table table-sm table-bordered align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width: 90px;">Row</th>
+                                            <th style="width: 110px;">Status</th>
+                                            <th>Mapped Payload</th>
+                                            <th>Validation Errors</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for row in rows %}
+                                        <tr>
+                                            <td>{{ row.row_number }}</td>
+                                            <td>
+                                                {% if row.status == 'imported' %}
+                                                <span class="badge bg-success-subtle text-success">{{ row.status }}</span>
+                                                {% elif row.status == 'error' %}
+                                                <span class="badge bg-danger-subtle text-danger">{{ row.status }}</span>
+                                                {% else %}
+                                                <span class="badge bg-info-subtle text-info">{{ row.status }}</span>
+                                                {% endif %}
+                                            </td>
+                                            <td><pre class="mb-0 fs-12 bg-light rounded p-2">{{ row.mapped_payload }}</pre></td>
+                                            <td><pre class="mb-0 fs-12 bg-light rounded p-2 text-danger">{{ row.validation_errors or '' }}</pre></td>
+                                        </tr>
+                                        {% else %}
+                                        <tr>
+                                            <td colspan="4" class="text-center text-muted">Belum ada row staging.</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <div class="alert alert-info mb-0">
+                                <i class="ri-information-line me-1 align-middle"></i>
+                                Part 2E: file error sekarang bisa diedit langsung lalu di-upload ulang dari halaman ini untuk membuat batch koreksi baru.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+    (function () {
+        const container = document.getElementById('formImportFlashMessages');
+        if (!container || typeof Toastify !== 'function') {
+            return;
+        }
+
+        const colors = {
+            success: '#34c38f',
+            error: '#f46a6a',
+            warning: '#f1b44c',
+            info: '#50a5f1',
+        };
+
+        container.querySelectorAll('[data-message]').forEach((node) => {
+            Toastify({
+                text: node.dataset.message || 'Terjadi notifikasi.',
+                duration: 5000,
+                close: true,
+                gravity: 'top',
+                position: 'right',
+                style: {
+                    background: colors[node.dataset.category] || colors.info,
+                },
+            }).showToast();
+        });
+    })();
+</script>
+{% endblock extra_js %}

@@ -1,5 +1,5 @@
 from flask_wtf import FlaskForm
-from wtforms import BooleanField, PasswordField, StringField, TextAreaField
+from wtforms import BooleanField, IntegerField, PasswordField, SelectField, StringField, TextAreaField
 from wtforms.validators import DataRequired, EqualTo, Optional
 
 from app.core.security.validators import ValidationRules as Rules
@@ -30,6 +30,9 @@ class BaseUserForm(FlaskForm):
     email = StringField('Email', validators=Rules.EMAIL['validators'])
     roles = TextAreaField('Roles')
     permissions = TextAreaField('Permissions')
+    active_year = IntegerField('Tahun Aktif', validators=[Optional()])
+    scope_type = SelectField('Tipe Scope', validators=[Optional()], choices=[])
+    scope_code = SelectField('Kode Scope', validators=[Optional()], choices=[])
     active = BooleanField('Aktif', default=True)
 
 

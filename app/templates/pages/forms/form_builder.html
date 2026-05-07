@@ -1,0 +1,266 @@
+{% extends "partials/base.html" %}
+{% block title %}Form Builder{% endblock title %}
+
+{% block extra_css %}
+<link href="{{ url_for('static', filename='libs/@formio/js/dist/formio.builder.min.css') }}" rel="stylesheet" type="text/css" />
+<style>
+    .form-builder-shell .builder-sidebar {
+        position: sticky;
+        top: 90px;
+    }
+
+    .form-builder-canvas {
+        min-height: 620px;
+    }
+
+    .form-builder-canvas .formio-builder {
+        margin-bottom: 0;
+    }
+
+    .autosave-indicator-dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        display: inline-block;
+        border-radius: 50%;
+        background: var(--vz-secondary);
+    }
+
+    .autosave-indicator-dot.is-saving {
+        background: var(--vz-warning);
+    }
+
+    .autosave-indicator-dot.is-saved {
+        background: var(--vz-success);
+    }
+
+    .autosave-indicator-dot.is-error {
+        background: var(--vz-danger);
+    }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Form Builder</h4>
+                            <p class="text-muted mb-0">Susun schema form dinamis dengan drag & drop. Draft disimpan otomatis ke API v1.</p>
+                        </div>
+                        <div class="page-title-right">
+                            <ol class="breadcrumb m-0">
+                                <li class="breadcrumb-item"><a href="{{ url_for('user.dashboard') }}">Dashboard</a></li>
+                                <li class="breadcrumb-item active">Form Builder</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row form-builder-shell">
+                <div class="col-xl-3">
+                    <div class="card builder-sidebar">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Informasi Draft</h5>
+                        </div>
+                        <div class="card-body">
+                            {% if form and permissions and not permissions.can_manage %}
+                            <div class="alert alert-warning" role="alert">
+                                <i class="ri-alert-line me-1 align-middle"></i>
+                                Mode builder ini hanya read-only untuk akun Anda. Policy backend mengizinkan lihat konteks form, tetapi aksi simpan/publish akan ditolak.
+                            </div>
+                            {% endif %}
+                            <form id="formBuilderCreateForm" class="mb-4">
+                                <div class="mb-3">
+                                    <label class="form-label" for="formBuilderName">Nama Form</label>
+                                    <input type="text" class="form-control" id="formBuilderName" value="{{ form.name if form else '' }}" placeholder="Contoh: Survei Kepuasan Layanan" {% if form_id %}disabled{% endif %} required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" for="formBuilderCode">Kode Form</label>
+                                    <input type="text" class="form-control text-uppercase" id="formBuilderCode" value="{{ form.code if form else '' }}" placeholder="SURVEI-LAYANAN" {% if form_id %}disabled{% endif %} required>
+                                    <div class="form-text">Kode unik untuk identitas internal form.</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" for="formBuilderSlug">Slug</label>
+                                    <input type="text" class="form-control" id="formBuilderSlug" value="{{ form.slug if form else '' }}" placeholder="survei-kepuasan-layanan" {% if form_id %}disabled{% endif %} required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" for="formBuilderDescription">Deskripsi</label>
+                                    <textarea class="form-control" id="formBuilderDescription" rows="2" placeholder="Deskripsi singkat form" {% if form_id %}disabled{% endif %}>{{ form.description if form and form.description else '' }}</textarea>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" for="formBuilderVisibility">Visibility</label>
+                                    <select class="form-select" id="formBuilderVisibility" {% if form_id %}disabled{% endif %}>
+                                        <option value="internal" {% if not form or form.visibility == 'internal' %}selected{% endif %}>Internal</option>
+                                        <option value="public" {% if form and form.visibility == 'public' %}selected{% endif %}>Public</option>
+                                    </select>
+                                </div>
+
+                                <div class="border rounded p-3 mb-3">
+                                    <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                                        <div>
+                                            <h6 class="mb-1">ABAC Tipis</h6>
+                                            <p class="text-muted mb-0 fs-13">Input awal untuk owner scope, target scope, dan policy form agar uji coba domain 2-3 bisa langsung terasa dari UI.</p>
+                                        </div>
+                                        <span class="badge bg-info-subtle text-info">Bootstrap</span>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label" for="formBuilderOwnerScopeCode">Owner Scope</label>
+                                        <select class="form-select" id="formBuilderOwnerScopeCode" {% if form_id %}disabled{% endif %}>
+                                            <option value="">Pilih owner scope</option>
+                                            {% for scope in scope_options %}
+                                            <option value="{{ scope.code }}" {% if form and form.owner_scope_code == scope.code %}selected{% endif %}>
+                                                {{ scope.name }} ({{ scope.type }})
+                                            </option>
+                                            {% endfor %}
+                                        </select>
+                                        <div class="form-text" id="formBuilderOwnerScopeHelp">Scope pemilik/pengelola utama form.</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label" for="formBuilderTargetScopeCode">Target Scope</label>
+                                        <select class="form-select" id="formBuilderTargetScopeCode" {% if form_id %}disabled{% endif %}>
+                                            <option value="">Pilih target scope</option>
+                                            {% for scope in scope_options %}
+                                            <option value="{{ scope.code }}" {% if form and form.target_scope_code == scope.code %}selected{% endif %}>
+                                                {{ scope.name }} ({{ scope.type }})
+                                            </option>
+                                            {% endfor %}
+                                        </select>
+                                        <div class="form-text" id="formBuilderTargetScopeHelp">Scope konsumen/pengisi form.</div>
+                                    </div>
+                                    <div class="mb-0">
+                                        <label class="form-label" for="formBuilderAccessPolicyKey">Access Policy</label>
+                                        <select class="form-select" id="formBuilderAccessPolicyKey" {% if form_id %}disabled{% endif %}>
+                                            {% for policy in form_access_policies %}
+                                            <option value="{{ policy.key }}" {% if form and form.access_policy_key == policy.key %}selected{% elif not form and policy.key == 'form.unit_internal' %}selected{% endif %}>
+                                                {{ policy.key }}
+                                            </option>
+                                            {% endfor %}
+                                        </select>
+                                        <div class="form-text" id="formBuilderAccessPolicyHelp">Policy baseline untuk authoring/konsumsi form.</div>
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-success w-100" id="formBuilderCreateFormBtn" {% if form_id %}disabled{% endif %}>
+                                    <i class="ri-send-plane-line align-bottom me-1"></i> Buat Form & Draft
+                                </button>
+                            </form>
+
+                            <div class="border-top pt-3">
+                                <div class="mb-3">
+                                    <p class="text-muted mb-1 fs-13">Form ID</p>
+                                    <h6 class="mb-0" id="formBuilderFormId">{{ form_id or '-' }}</h6>
+                                </div>
+                                <div class="mb-3">
+                                    <p class="text-muted mb-1 fs-13">Version Number</p>
+                                    <h6 class="mb-0" id="formBuilderDraftVersionId">{{ selected_version.version_number if selected_version else '-' }}</h6>
+                                </div>
+                                <div class="mb-3">
+                                    <p class="text-muted mb-1 fs-13">Mode Builder</p>
+                                    {% if builder_mode == 'edit_draft' %}
+                                    <span class="badge bg-warning-subtle text-warning">Edit Draft</span>
+                                    {% elif builder_mode == 'published_source' %}
+                                    <span class="badge bg-success-subtle text-success">Published Source</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary-subtle text-secondary">Form Baru</span>
+                                    {% endif %}
+                                </div>
+                                <div class="border-top pt-3">
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <span class="autosave-indicator-dot" id="formBuilderAutosaveDot"></span>
+                                        <span class="fw-semibold" id="formBuilderAutosaveLabel">Menunggu perubahan</span>
+                                    </div>
+                                    <p class="text-muted mb-0 fs-13" id="formBuilderAutosaveDetail">
+                                        Autosave aktif setelah form dan draft version tersedia.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <div class="d-grid gap-2">
+                                <button type="button" class="btn btn-primary" id="formBuilderManualSaveBtn">
+                                    <i class="ri-save-3-line align-bottom me-1"></i> Simpan Draft
+                                </button>
+                                <button type="button" class="btn btn-success" id="formBuilderPublishBtn" {% if not draft_version_id %}disabled{% endif %}>
+                                    <i class="ri-rocket-line align-bottom me-1"></i> Publish Draft
+                                </button>
+                                <a href="{{ url_for('form.preview', form_id=form_id or 0) }}" class="btn btn-soft-success {% if builder_mode != 'published_source' %}disabled{% endif %}" id="formBuilderPreviewFormBtn" aria-disabled="{{ 'false' if builder_mode == 'published_source' else 'true' }}">
+                                    <i class="ri-eye-line align-bottom me-1"></i> Preview / Isi Form
+                                </a>
+                                <button type="button" class="btn btn-soft-secondary" id="formBuilderPreviewSchemaBtn">
+                                    <i class="ri-code-box-line align-bottom me-1"></i> Lihat Schema
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-9">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-0">Canvas Builder</h5>
+                                <p class="text-muted mb-0 fs-13">Drag komponen dari panel Form.io ke canvas di bawah ini.</p>
+                            </div>
+                            <div class="flex-shrink-0">
+                                <span class="badge bg-primary-subtle text-primary">Form.io Builder</span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="formioBuilder" class="form-builder-canvas"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+
+<div class="modal fade" id="schemaPreviewModal" tabindex="-1" aria-labelledby="schemaPreviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="schemaPreviewModalLabel">Preview Schema Draft</h5>
+                    <p class="text-muted mb-0 fs-13">Schema JSON yang akan dikirim ke endpoint autosave draft.</p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <pre class="bg-light border rounded p-3 mb-0"><code id="schemaPreviewCode">{}</code></pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='libs/toastify-js/src/toastify.js') }}"></script>
+<script>
+    window.formBuilderConfig = {
+        formId: {{ form_id|tojson }},
+        draftVersionId: {{ draft_version_id|tojson }},
+        selectedVersionId: {{ selected_version.id|tojson if selected_version else 'null' }},
+        selectedVersionStatus: {{ selected_version.status|tojson if selected_version else 'null' }},
+        builderMode: {{ builder_mode|tojson }},
+        sourceVersionId: {{ selected_version.id|tojson if selected_version and selected_version.status == 'published' else 'null' }},
+        selectedVersionNumber: {{ selected_version.version_number|tojson if selected_version else 'null' }},
+        initialSchema: {{ initial_schema|tojson }},
+        bootstrapScopes: {{ scope_options|tojson }},
+        formAccessPolicies: {{ form_access_policies|tojson }},
+        permissions: {{ permissions|tojson }},
+        createFormUrl: "{{ url_for('api_form_v1.create_form') }}",
+        autosaveUrlTemplate: "{{ url_for('api_form_v1.update_draft_schema', version_id=0) }}",
+        createDraftUrlTemplate: "{{ url_for('api_form_v1.create_draft_version', form_id=0) }}",
+        publishUrlTemplate: "{{ url_for('api_form_v1.publish_version', version_id=0) }}"
+    };
+</script>
+<script src="{{ url_for('static', filename='libs/@formio/js/dist/formio.full.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/form-builder.js') }}"></script>
+{% endblock extra_js %}

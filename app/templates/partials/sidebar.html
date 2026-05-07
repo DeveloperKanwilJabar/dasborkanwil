@@ -50,6 +50,22 @@
 
                         <li class="menu-title"><i class="ri-more-fill"></i> <span data-key="t-fitur">Fitur</span></li>
                         <li class="nav-item">
+                            <a class="nav-link menu-link" href="#sidebarFormBuilder" data-bs-toggle="collapse" role="button"
+                                aria-expanded="false" aria-controls="sidebarFormBuilder">
+                                <i class="ri-drag-drop-line"></i> <span data-key="t-form-builder">Form Builder</span>
+                            </a>
+                            <div class="collapse menu-dropdown" id="sidebarFormBuilder">
+                                <ul class="nav nav-sm flex-column">
+                                    <li class="nav-item">
+                                        <a href="{{ url_for('form.index') }}" class="nav-link" data-key="t-form-list">Daftar Form </a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a href="{{ url_for('form.builder') }}" class="nav-link" data-key="t-builder">Builder </a>
+                                    </li>
+                                </ul>
+                            </div>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link menu-link" href="#sidebarMasterData" data-bs-toggle="collapse" role="button"
                                 aria-expanded="false" aria-controls="sidebarMasterData">
                                 <i class="ri-function-fill"></i> <span data-key="t-masters">Master Data</span>
@@ -61,7 +77,7 @@
                                     </li>
                                 </ul>
                             </div>
-                        </li> <!-- end Dashboard Menu -->
+                        </li> <!-- end Feature Menu -->
                     </ul>
                 </div>
                 <!-- Sidebar -->

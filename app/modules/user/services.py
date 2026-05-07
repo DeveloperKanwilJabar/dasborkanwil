@@ -3,6 +3,7 @@ import uuid
 
 from flask import current_app
 
+from app.core.access import merge_actor_settings
 from app.core.extensions import db
 from app.core.security.validators import ValidationRules as Rules
 from app.core.services.base import BaseService
@@ -60,7 +61,17 @@ class UserService(BaseService):
             normalized.append(cleaned)
         return normalized
 
-    def register(self, username, email, password, is_seeding=False, roles=None, permissions=None, active=True):
+    def register(
+        self,
+        username,
+        email,
+        password,
+        is_seeding=False,
+        roles=None,
+        permissions=None,
+        active=True,
+        settings=None,
+    ):
         """
         Pintu tunggal pendaftaran user.
         - Jika is_seeding=True: Lewati validasi Employee & Linking.
@@ -102,6 +113,7 @@ class UserService(BaseService):
                 active=bool(active),
                 roles=self._normalize_json_list(roles),
                 permissions=self._normalize_json_list(permissions),
+                settings=merge_actor_settings(settings),
             )
             new_user.set_password(password)
 
@@ -119,7 +131,7 @@ class UserService(BaseService):
             current_app.logger.error(f"Gagal registrasi user, DB error: {str(e)}")
             raise ValueError(str(e))
 
-    def update_user(self, user_id, email, active, roles=None, permissions=None, password=None):
+    def update_user(self, user_id, email, active, roles=None, permissions=None, password=None, settings=None):
         user = self.repository.get_by_id(user_id)
         if not user:
             raise ValueError('User tidak ditemukan.')
@@ -136,6 +148,7 @@ class UserService(BaseService):
         user.active = bool(active)
         user.roles = self._normalize_json_list(roles)
         user.permissions = self._normalize_json_list(permissions)
+        user.settings = merge_actor_settings(settings)
 
         if password:
             user.set_password(password)
