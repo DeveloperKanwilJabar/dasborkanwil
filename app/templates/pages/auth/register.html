@@ -1,0 +1,106 @@
+{% extends "base_auth.html" %}
+
+{% block title %}Daftar{% endblock title %}
+
+{% block content %}
+<!-- auth page content -->
+<div class="auth-page-content">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="text-center mt-sm-5 mb-4 text-white-50">
+                    <div>
+                        <a href="/" class="d-inline-block auth-logo">
+                            <img src="{{url_for('static' ,filename='images/logo-light.png')}}" alt="" height="20">
+                        </a>
+                    </div>
+                    <p class="mt-3 fs-15 fw-medium">Dasbor Informasi Kanwil Kemenkum Jabar</p>
+                </div>
+            </div>
+        </div>
+        <!-- end row -->
+
+        <div class="row justify-content-center">
+            <div class="col-md-8 col-lg-6 col-xl-5">
+                <div class="card mt-4">
+
+                    <div class="card-body p-4">
+                        <div class="text-center mt-2">
+                            <h5 class="text-primary">Selamat Datang!</h5>
+                            <p class="text-muted">Registrasi akun pegawai.</p>
+                        </div>
+                        <div class="p-2 mt-4">
+                            <form class="needs-validation" novalidate action="{{ url_for('user.register') }}" method="POST" id="registerForm">
+                                {{ form.hidden_tag() }}
+                                {% with messages = get_flashed_messages() %}
+                                    {% if messages %}
+                                        {% for message in messages %}
+                                        <div class="alert alert-danger mb-4 text-center" role="alert">
+                                            <strong>{{ message }}</strong>
+                                        </div>
+                                        {% endfor %}
+                                    {% endif %}
+                                {% endwith %}
+                                <div class="mb-3">
+                                    {{ form.email.label(class="form-label") }}
+                                    {{ form.email(class="form-control is-invalid" if form.email.errors else "form-control", placeholder="Masukan Email") }}
+                                </div>
+
+                                <div class="mb-3">
+                                    {{ form.username.label(class="form-label") }}
+                                    {{ form.username(class="form-control is-invalid" if form.username.errors else "form-control", placeholder="Masukan NIP") }}
+                                </div>
+
+                                <div class="mb-3">
+                                    {{ form.password.label(class="form-label") }}
+                                    <div class="position-relative auth-pass-inputgroup">
+                                        {{ form.password(class="form-control password-input pe-5 is-invalid" if form.password.errors else
+                                        "form-control password-input pe-5", placeholder="Masukan kata sandi") }}
+                                        <button
+                                            class="btn btn-link position-absolute end-0 top-0 text-decoration-none text-muted password-addon"
+                                            type="button" id="password-addon"><i class="ri-eye-fill align-middle"></i></button>
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    {{ form.confirm_password.label(class="form-label") }}
+                                    <div class="position-relative auth-pass-inputgroup">
+                                        {{ form.confirm_password(class="form-control password-input pe-5 is-invalid" if form.confirm_password.errors else
+                                        "form-control password-input pe-5", placeholder="Ulangi kata sandi") }}
+                                        <button
+                                            class="btn btn-link position-absolute end-0 top-0 text-decoration-none text-muted password-addon"
+                                            type="button" id="password-addon"><i class="ri-eye-fill align-middle"></i></button>
+                                    </div>
+                                </div>
+
+                                <div class="mt-4">
+                                    <button type="submit" class="btn btn-success w-100" id="btn-register">Daftar</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                    <!-- end card body -->
+                </div>
+                <div class="mt-4 text-center">
+                    <p class="mb-0">Sudah memiliki akun? <a href="{{ url_for('user.login') }}" class="fw-semibold text-primary text-decoration-underline">Masuk</a></p>
+                </div>
+                <!-- end card -->
+            </div>
+        </div>
+        <!-- end row -->
+    </div>
+    <!-- end container -->
+</div>
+<!-- end auth page content -->
+{% endblock content %}
+
+{% block javascript %}
+<!-- particles js -->
+<script src="{{url_for('static' ,filename='libs/particles.js/particles.js')}}"></script>
+<!-- particles app js -->
+<script src="{{url_for('static' ,filename='js/pages/particles.app.js')}}"></script>
+<!-- password-addon init -->
+<script src="{{url_for('static' ,filename='js/pages/password-addon.init.js')}}"></script>
+<!-- page init -->
+<script src="{{url_for('static' ,filename='js/pages/register.init.js')}}"></script>
+{% endblock javascript %}

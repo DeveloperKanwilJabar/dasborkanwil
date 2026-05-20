@@ -1,0 +1,149 @@
+{% extends "partials/base.html" %}
+{% block title %}Preview Form{% endblock title %}
+
+{% block extra_css %}
+<link href="{{ url_for('static', filename='libs/@formio/js/dist/formio.form.min.css') }}" rel="stylesheet" type="text/css" />
+<style>
+    .form-preview-canvas {
+        min-height: 420px;
+    }
+
+    .submission-indicator-dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        display: inline-block;
+        border-radius: 50%;
+        background: var(--vz-secondary);
+    }
+
+    .submission-indicator-dot.is-saving {
+        background: var(--vz-warning);
+    }
+
+    .submission-indicator-dot.is-saved {
+        background: var(--vz-success);
+    }
+
+    .submission-indicator-dot.is-error {
+        background: var(--vz-danger);
+    }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Preview Form</h4>
+                            <p class="text-muted mb-0">Render published schema dan kirim response melalui API v1 Submission.</p>
+                        </div>
+                        <div class="page-title-right">
+                            <ol class="breadcrumb m-0">
+                                <li class="breadcrumb-item"><a href="{{ url_for('user.dashboard') }}">Dashboard</a></li>
+                                <li class="breadcrumb-item"><a href="{{ url_for('form.builder', form_id=form_id) }}">Form Builder</a></li>
+                                <li class="breadcrumb-item active">Preview</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-xl-8">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-0">{{ form.name if form else 'Form tidak ditemukan' }}</h5>
+                                <p class="text-muted mb-0 fs-13">{{ form.description if form and form.description else 'Isi form di bawah ini untuk menguji flow submission.' }}</p>
+                            </div>
+                            <div class="flex-shrink-0 d-flex gap-2">
+                                {% if published_version %}
+                                <a href="{{ url_for('form.export_template', form_id=form_id) }}" class="btn btn-soft-primary btn-sm">
+                                    <i class="ri-file-excel-2-line align-bottom me-1"></i> Template Excel
+                                </a>
+                                <a href="{{ url_for('form.import_mapping', form_id=form_id) }}" class="btn btn-soft-info btn-sm">
+                                    <i class="ri-upload-cloud-2-line align-bottom me-1"></i> Import Excel
+                                </a>
+                                <span class="badge bg-success-subtle text-success align-self-center">Published v{{ published_version.version_number }}</span>
+                                {% else %}
+                                <span class="badge bg-warning-subtle text-warning">Belum Published</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            {% if permissions and not permissions.can_submit %}
+                            <div class="alert alert-warning">
+                                <i class="ri-alert-line me-1 align-middle"></i>
+                                Akun Anda tidak memiliki izin submit untuk form ini. Preview tetap bisa dibuka untuk review schema published, tetapi aksi kirim akan ditolak backend.
+                            </div>
+                            {% endif %}
+                            {% if published_version %}
+                            <div id="formioPreview" class="form-preview-canvas"></div>
+                            {% else %}
+                            <div class="alert alert-warning mb-0">
+                                Form ini belum memiliki published version. Publish draft dari Form Builder terlebih dahulu.
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Status Submission</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Form ID</p>
+                                <h6 class="mb-0">{{ form_id }}</h6>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Published Version ID</p>
+                                <h6 class="mb-0">{{ published_version.id if published_version else '-' }}</h6>
+                            </div>
+                            <div class="border-top pt-3">
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <span class="submission-indicator-dot" id="formPreviewSubmissionDot"></span>
+                                    <span class="fw-semibold" id="formPreviewSubmissionLabel">Menunggu submit</span>
+                                </div>
+                                <p class="text-muted mb-0 fs-13" id="formPreviewSubmissionDetail">
+                                    Klik tombol Submit bawaan Form.io setelah mengisi form.
+                                </p>
+                            </div>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <a href="{{ url_for('form.builder', form_id=form_id, draft_version_id=published_version.id if published_version else None) }}" class="btn btn-soft-secondary w-100">
+                                <i class="ri-arrow-left-line align-bottom me-1"></i> Kembali ke Builder
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='libs/toastify-js/src/toastify.js') }}"></script>
+<script>
+    window.formPreviewConfig = {
+        formId: {{ form_id|tojson }},
+        publishedVersionId: {{ published_version.id|tojson if published_version else 'null' }},
+        schema: {{ schema|tojson }},
+        permissions: {{ permissions|tojson }},
+        submitUrl: "{{ url_for('api_submission_v1.submit_form', form_id=form_id) }}"
+    };
+</script>
+<script src="{{ url_for('static', filename='libs/@formio/js/dist/formio.full.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/form-preview.js') }}"></script>
+{% endblock extra_js %}

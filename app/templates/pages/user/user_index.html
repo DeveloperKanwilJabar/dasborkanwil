@@ -1,0 +1,224 @@
+{% extends "partials/base.html" %}
+{% block title %}Manajemen User{% endblock title %}
+
+{% block extra_css %}
+<link href="{{ url_for('static', filename='libs/sweetalert2/dist/sweetalert2.min.css') }}" rel="stylesheet" type="text/css" />
+<link rel="stylesheet" href="{{ url_for('static', filename='libs/gridjs/dist/theme/mermaid.min.css') }}">
+<style>
+    .tag-editor {
+        border: 1px solid var(--vz-input-border-custom, #ced4da);
+        border-radius: 0.375rem;
+        padding: 0.5rem;
+        background-color: var(--vz-input-bg, #fff);
+    }
+
+    .tag-editor:focus-within {
+        border-color: var(--vz-primary);
+        box-shadow: 0 0 0 0.05rem rgba(var(--vz-primary-rgb), .15);
+    }
+
+    .tag-editor-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+        min-height: 1.5rem;
+    }
+
+    .tag-editor-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.625rem;
+        border-radius: 999px;
+        background: rgba(var(--vz-primary-rgb), .12);
+        color: var(--vz-primary);
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .tag-editor-pill button {
+        border: 0;
+        background: transparent;
+        color: inherit;
+        padding: 0;
+        line-height: 1;
+    }
+
+    .tag-editor-input {
+        border: 0;
+        outline: 0;
+        width: 100%;
+        padding: 0;
+        background: transparent;
+    }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Manajemen User</h4>
+                            <p class="text-muted mb-0">Kelola akun pengguna tanpa reload halaman menggunakan modal terpadu.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title mb-0">Daftar User</h4>
+                            </div>
+                            <div class="flex-shrink-0">
+                                <button type="button" class="btn btn-success" id="addRecordBtn">
+                                    <i class="ri-add-line align-bottom me-1"></i> Tambah User
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="table-data"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+
+<div class="modal fade" id="viewModal" tabindex="-1" aria-labelledby="viewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="viewModalLabel">Detail User</h5>
+                    <p class="text-muted mb-0 fs-13">Informasi lengkap data user.</p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="viewModalBody"></div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="userModal" tabindex="-1" aria-labelledby="userModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="userModalLabel">Tambah User</h5>
+                    <p class="text-muted mb-0 fs-13" id="userModalDescription">Lengkapi form untuk membuat user baru.</p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="userForm">
+                {{ form.hidden_tag() }}
+                <input type="hidden" id="userId" name="user_id">
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label" for="username">{{ form.username.label.text }}</label>
+                            {{ form.username(class="form-control", placeholder="Masukkan NIP 18 digit") }}
+                            <div class="form-text" id="usernameHelp">NIP dipakai sebagai username login.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="email">{{ form.email.label.text }}</label>
+                            {{ form.email(class="form-control", placeholder="Masukkan email aktif") }}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="password">{{ form.password.label.text }}</label>
+                            <div class="position-relative auth-pass-inputgroup">
+                                {{ form.password(class="form-control password-input pe-5", placeholder="Masukkan password") }}
+                                <button class="btn btn-link position-absolute end-0 top-0 text-decoration-none text-muted password-addon" type="button" data-password-toggle="password">
+                                    <i class="ri-eye-fill align-middle"></i>
+                                </button>
+                            </div>
+                            <div class="form-text" id="passwordHelp">Minimal 8 karakter, mengandung huruf besar, huruf kecil, angka, dan karakter khusus.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="confirm_password">{{ form.confirm_password.label.text }}</label>
+                            <div class="position-relative auth-pass-inputgroup">
+                                {{ form.confirm_password(class="form-control password-input pe-5", placeholder="Ulangi password") }}
+                                <button class="btn btn-link position-absolute end-0 top-0 text-decoration-none text-muted password-addon" type="button" data-password-toggle="confirm_password">
+                                    <i class="ri-eye-fill align-middle"></i>
+                                </button>
+                            </div>
+                            <div class="form-text" id="confirmPasswordHelp">Wajib diisi saat membuat user baru.</div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check form-switch form-switch-md">
+                                {{ form.active(class="form-check-input", role="switch") }}
+                                <label class="form-check-label" for="active">{{ form.active.label.text }}</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">{{ form.roles.label.text }}</label>
+                            <div class="tag-editor" data-tag-editor data-target="roles" data-placeholder="Ketik role lalu Enter, mis. admin">
+                                <div class="tag-editor-list"></div>
+                                <input type="text" class="tag-editor-input" autocomplete="off" placeholder="Ketik role lalu tekan Enter">
+                            </div>
+                            {{ form.roles(class="d-none", rows="1") }}
+                            <div class="form-text">Pisahkan role menjadi beberapa pill agar lebih mudah dibaca.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">{{ form.permissions.label.text }}</label>
+                            <div class="tag-editor" data-tag-editor data-target="permissions" data-placeholder="Ketik permission lalu Enter, mis. users.create">
+                                <div class="tag-editor-list"></div>
+                                <input type="text" class="tag-editor-input" autocomplete="off" placeholder="Ketik permission lalu tekan Enter">
+                            </div>
+                            {{ form.permissions(class="d-none", rows="1") }}
+                            <div class="form-text">Contoh: users.read, users.create, users.update.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="active_year">{{ form.active_year.label.text if form.active_year is defined else None }}</label>
+                            {{ form.active_year(class="form-control", placeholder="Contoh: 2026") }}
+                            <div class="form-text">Dipakai sebagai konteks default periode aktif actor.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="scope_type">{{ form.scope_type.label.text }}</label>
+                            {{ form.scope_type(class="form-select") }}
+                            <div class="form-text">Tipe scope actor untuk baseline ABAC.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="scope_code">{{ form.scope_code.label.text }}</label>
+                            {{ form.scope_code(class="form-select") }}
+                            <div class="form-text">Pilih scope organisasi dari registry bootstrap.</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Batal</button>
+                    <button type="submit" class="btn btn-primary" id="submitUserBtn">
+                        <span class="label">Simpan</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+    const apiListUrl = "{{ url_for('user.users_data') }}";
+    const apiDetailUrl = "{{ url_for('user.user_data', user_id=0) }}";
+    const addUrl = "{{ url_for('user.user_create') }}";
+    const editUrl = "{{ url_for('user.user_update', user_id=0) }}";
+    const deleteUrl = "{{ url_for('user.user_delete', user_id=0) }}";
+</script>
+<script src="{{ url_for('static', filename='libs/sweetalert2/dist/sweetalert2.min.js') }}"></script>
+<script src="{{ url_for('static', filename='libs/prismjs/prism.js') }}"></script>
+<script src="{{ url_for('static', filename='libs/gridjs/dist/gridjs.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/users.js') }}"></script>
+{% endblock extra_js %}

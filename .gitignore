@@ -1,0 +1,22 @@
+!.gitignore
+/venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+*.env
+*.mako
+.DS_Store
+.idea/
+.vscode/
+
+# Ignore all files in the app/static directory, but keep the directory itself
+/app/static/*
+!/app/static/.gitignore
+docker-compose.yml
+/node_modules/
+/logs/*
+AGENTS.md
