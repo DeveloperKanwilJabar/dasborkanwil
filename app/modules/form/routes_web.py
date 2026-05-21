@@ -171,7 +171,7 @@ def builder():
         for key, value in ACCESS_POLICY_CATALOG.items()
         if value.get('resource') == 'form'
     ]
-    registry_consumer_presets = FormRegistryConsumerService().list_builder_presets()
+    registry_consumer_presets = FormRegistryConsumerService().list_builder_presets(base_url=request.url_root)
     registry_consumer_presets_json = htmlsafe_json_dumps(
         registry_consumer_presets,
         dumps=current_app.json.dumps,

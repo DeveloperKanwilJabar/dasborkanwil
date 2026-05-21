@@ -260,6 +260,15 @@
     };
   }
 
+  function ensureLocalFormioBaseUrl() {
+    if (!window.Formio?.setBaseUrl) return;
+
+    const resolvedBaseUrl = config.formioBaseUrl || window.location.origin;
+    if (!resolvedBaseUrl) return;
+
+    window.Formio.setBaseUrl(resolvedBaseUrl);
+  }
+
   function currentSchema() {
     return normalizeSchema(state.builder?.form || config.initialSchema || { components: [] });
   }
@@ -646,6 +655,7 @@
       return;
     }
 
+    ensureLocalFormioBaseUrl();
     const initialSchema = normalizeSchema(config.initialSchema || { components: [] });
 
     try {

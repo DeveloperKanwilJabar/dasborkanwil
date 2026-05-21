@@ -3,10 +3,10 @@ class FormRegistryConsumerService:
 
     DEFAULT_WILAYAH_REGISTRY_SLUG = 'wilayah.administratif'
 
-    def list_builder_presets(self):
-        return [self.get_builder_preset('wilayah_cascading_select')]
+    def list_builder_presets(self, base_url=None):
+        return [self.get_builder_preset('wilayah_cascading_select', base_url=base_url)]
 
-    def get_builder_preset(self, preset_key):
+    def get_builder_preset(self, preset_key, base_url=None):
         if preset_key != 'wilayah_cascading_select':
             raise ValueError('Preset consumer registry tidak ditemukan.')
 
@@ -22,6 +22,7 @@ class FormRegistryConsumerService:
                     label='Provinsi',
                     admin_level='province',
                     registry_slug=registry_slug,
+                    base_url=base_url,
                 ),
                 self._build_select_component(
                     key='city_regency_code',
@@ -29,6 +30,7 @@ class FormRegistryConsumerService:
                     admin_level='city_regency',
                     registry_slug=registry_slug,
                     parent_key='province_code',
+                    base_url=base_url,
                 ),
                 self._build_select_component(
                     key='district_code',
@@ -36,6 +38,7 @@ class FormRegistryConsumerService:
                     admin_level='district',
                     registry_slug=registry_slug,
                     parent_key='city_regency_code',
+                    base_url=base_url,
                 ),
                 self._build_select_component(
                     key='village_code',
@@ -43,14 +46,32 @@ class FormRegistryConsumerService:
                     admin_level='village',
                     registry_slug=registry_slug,
                     parent_key='district_code',
+                    base_url=base_url,
                 ),
             ],
         }
 
-    def _build_select_component(self, key, label, admin_level, registry_slug, parent_key=None):
-        query = f'/api/v1/registry-resources/{registry_slug}/options?admin_level={admin_level}'
+    def _normalize_base_url(self, base_url):
+        if not base_url:
+            return ''
+        return str(base_url).rstrip('/')
+
+    def _build_registry_options_url(self, registry_slug, admin_level, parent_key=None, base_url=None):
+        normalized_base_url = self._normalize_base_url(base_url)
+        query = f'{normalized_base_url}/api/v1/registry-resources/{registry_slug}/options?admin_level={admin_level}'
+        if not normalized_base_url:
+            query = f'/api/v1/registry-resources/{registry_slug}/options?admin_level={admin_level}'
         if parent_key:
             query = f'{query}&parent_code={{{{ data.{parent_key} }}}}'
+        return query
+
+    def _build_select_component(self, key, label, admin_level, registry_slug, parent_key=None, base_url=None):
+        query = self._build_registry_options_url(
+            registry_slug=registry_slug,
+            admin_level=admin_level,
+            parent_key=parent_key,
+            base_url=base_url,
+        )
 
         component = {
             'label': label,

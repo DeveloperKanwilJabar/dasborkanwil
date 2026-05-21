@@ -73,6 +73,8 @@ def test_form_builder_page_smoke_returns_velzon_container_and_assets():
     assert 'Preset Konsumen Registry' in html
     assert 'id="formBuilderInsertWilayahCascadeBtn"' in html
     assert 'registryConsumerPresets' in html
+    assert 'formioBaseUrl' in html
+    assert 'http://localhost/api/v1/registry-resources/wilayah.administratif/options?admin_level=province' in html
 
 
 def test_forms_data_returns_form_list_payload(monkeypatch):
@@ -886,4 +888,5 @@ def test_form_preview_page_smoke_returns_preview_container_and_submit_contract()
     assert 'libs/@formio/js/dist/formio.form.min.css' in html
     assert 'libs/@formio/js/dist/formio.full.min.js' in html
     assert 'js/pages/form-preview.js' in html
+    assert 'formioBaseUrl' in html
     assert 'submitUrl' in html

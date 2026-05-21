@@ -140,6 +140,7 @@
         formId: {{ form_id|tojson }},
         publishedVersionId: {{ published_version.id|tojson if published_version else 'null' }},
         schema: {{ schema|tojson }},
+        formioBaseUrl: {{ request.url_root.rstrip('/')|tojson }},
         permissions: {{ permissions|tojson }},
         submitUrl: "{{ url_for('api_submission_v1.submit_form', form_id=form_id) }}"
     };

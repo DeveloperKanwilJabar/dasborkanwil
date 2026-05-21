@@ -152,3 +152,5 @@ def test_form_builder_source_js_registers_registry_consumer_preset_controls():
     assert 'formBuilderInsertWilayahCascadeBtn' in content
     assert 'registryConsumerPresets' in content
     assert 'insertPresetComponents' in content
+    assert 'ensureLocalFormioBaseUrl' in content
+    assert 'window.Formio.setBaseUrl' in content

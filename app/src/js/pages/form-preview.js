@@ -118,6 +118,15 @@
     }
   }
 
+  function ensureLocalFormioBaseUrl() {
+    if (!window.Formio?.setBaseUrl) return;
+
+    const resolvedBaseUrl = config.formioBaseUrl || window.location.origin;
+    if (!resolvedBaseUrl) return;
+
+    window.Formio.setBaseUrl(resolvedBaseUrl);
+  }
+
   async function initPreview() {
     if (!previewElement) return;
 
@@ -130,6 +139,8 @@
       setStatus("error", "Form.io tidak tersedia", "Pastikan asset @formio/js sudah ter-compile ke app/static/libs.");
       return;
     }
+
+    ensureLocalFormioBaseUrl();
 
     try {
       const form = await window.Formio.createForm(previewElement, config.schema || { components: [] }, {
