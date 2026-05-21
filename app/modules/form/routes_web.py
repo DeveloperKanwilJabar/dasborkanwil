@@ -3,6 +3,7 @@ from io import BytesIO
 from flask import Blueprint, Response, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from flask_wtf.csrf import generate_csrf
+from jinja2.utils import htmlsafe_json_dumps
 from werkzeug.utils import secure_filename
 
 from app.core.access import (
@@ -13,6 +14,7 @@ from app.core.access import (
     can_view_form,
 )
 from app.modules.form.import_services import FormDataImportPipelineService
+from app.modules.form.registry_consumers import FormRegistryConsumerService
 from app.modules.form.services import FormService, FormVersionService
 
 
@@ -169,6 +171,11 @@ def builder():
         for key, value in ACCESS_POLICY_CATALOG.items()
         if value.get('resource') == 'form'
     ]
+    registry_consumer_presets = FormRegistryConsumerService().list_builder_presets()
+    registry_consumer_presets_json = htmlsafe_json_dumps(
+        registry_consumer_presets,
+        dumps=current_app.json.dumps,
+    )
 
     return render_template(
         'pages/forms/form_builder.html',
@@ -182,6 +189,7 @@ def builder():
         initial_schema=initial_schema,
         scope_options=scope_options,
         form_access_policies=form_access_policies,
+        registry_consumer_presets_json=registry_consumer_presets_json,
     )
 
 

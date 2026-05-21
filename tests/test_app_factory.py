@@ -70,6 +70,9 @@ def test_form_builder_page_smoke_returns_velzon_container_and_assets():
     assert 'createFormUrl' in html
     assert 'autosaveUrlTemplate' in html
     assert 'publishUrlTemplate' in html
+    assert 'Preset Konsumen Registry' in html
+    assert 'id="formBuilderInsertWilayahCascadeBtn"' in html
+    assert 'registryConsumerPresets' in html
 
 
 def test_forms_data_returns_form_list_payload(monkeypatch):

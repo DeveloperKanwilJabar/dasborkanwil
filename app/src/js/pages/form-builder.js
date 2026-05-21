@@ -20,6 +20,7 @@
   const publishBtn = document.getElementById("formBuilderPublishBtn");
   const previewFormBtn = document.getElementById("formBuilderPreviewFormBtn");
   const previewSchemaBtn = document.getElementById("formBuilderPreviewSchemaBtn");
+  const insertWilayahCascadeBtn = document.getElementById("formBuilderInsertWilayahCascadeBtn");
   const previewCode = document.getElementById("schemaPreviewCode");
   const previewModalElement = document.getElementById("schemaPreviewModal");
   const autosaveDot = document.getElementById("formBuilderAutosaveDot");
@@ -40,6 +41,13 @@
   const policyMap = formAccessPolicies.reduce((accumulator, policy) => {
     if (policy?.key) {
       accumulator[policy.key] = policy;
+    }
+    return accumulator;
+  }, {});
+  const registryConsumerPresets = Array.isArray(config.registryConsumerPresets) ? config.registryConsumerPresets : [];
+  const registryPresetMap = registryConsumerPresets.reduce((accumulator, preset) => {
+    if (preset?.key) {
+      accumulator[preset.key] = preset;
     }
     return accumulator;
   }, {});
@@ -561,6 +569,48 @@
     }
   }
 
+  async function setBuilderSchema(nextSchema) {
+    if (!state.builder) return;
+
+    const normalizedSchema = normalizeSchema(nextSchema);
+    if (typeof state.builder.setForm === "function") {
+      await state.builder.setForm(normalizedSchema);
+      return;
+    }
+
+    state.builder.form = normalizedSchema;
+    if (typeof state.builder.redraw === "function") {
+      await state.builder.redraw();
+    }
+  }
+
+  async function insertPresetComponents(presetKey) {
+    const preset = registryPresetMap[presetKey];
+    if (!preset) {
+      showToast("Preset registry tidak ditemukan.", "warning");
+      return;
+    }
+
+    if (!state.builder) {
+      showToast("Builder belum siap.", "warning");
+      return;
+    }
+
+    const schema = currentSchema();
+    const nextComponents = Array.isArray(schema.components) ? [...schema.components] : [];
+    const presetComponents = Array.isArray(preset.components)
+      ? preset.components.map((component) => JSON.parse(JSON.stringify(component)))
+      : [];
+
+    nextComponents.push(...presetComponents);
+    await setBuilderSchema({
+      ...schema,
+      components: nextComponents,
+    });
+    scheduleAutosave(250);
+    showToast(`${preset.label || "Preset registry"} berhasil ditambahkan ke builder.`, "success");
+  }
+
   function setupIdentityHelpers() {
     formNameInput?.addEventListener("input", () => {
       if (!state.slugTouched && formSlugInput) {
@@ -637,6 +687,7 @@
   manualSaveBtn?.addEventListener("click", () => saveDraft({ silent: false }));
   publishBtn?.addEventListener("click", publishDraft);
   previewSchemaBtn?.addEventListener("click", openPreview);
+  insertWilayahCascadeBtn?.addEventListener("click", () => insertPresetComponents("wilayah_cascading_select"));
 
   setupIdentityHelpers();
   refreshActionButtons();

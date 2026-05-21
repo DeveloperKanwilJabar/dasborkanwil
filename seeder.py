@@ -5,6 +5,12 @@ import os
 from dotenv import load_dotenv
 
 from app.core.access import enrich_scope
+from app.modules.data_registry.repositories import DataRegistryRepository, DataRegistryVersionRepository
+from app.modules.data_registry.services import (
+    DataRegistryMaterializationService,
+    DataRegistryService,
+    DataRegistryVersionService,
+)
 from app.modules.employee.services import EmployeeService
 from app.modules.form.repositories import FormRepository
 from app.modules.form.services import FormService, FormVersionService
@@ -14,6 +20,150 @@ from app.modules.user.services import UserService
 load_dotenv()
 
 DEFAULT_MATRIX_TEST_PASSWORD = 'MatrixTest#2026'
+DEFAULT_WILAYAH_REGISTRY_SLUG = 'wilayah.administratif'
+DEFAULT_WILAYAH_REGISTRY_CODE = 'WILAYAH-ADM'
+DEFAULT_WILAYAH_REGISTRY_CSV_PATH = 'instance/diskominfo-od_kode_wilayah_dan_nama_wilayah_desa_kelurahan_data.csv'
+
+
+def build_wilayah_registry_fixture_payload(csv_path=DEFAULT_WILAYAH_REGISTRY_CSV_PATH):
+    return {
+        'registry_slug': DEFAULT_WILAYAH_REGISTRY_SLUG,
+        'registry_code': DEFAULT_WILAYAH_REGISTRY_CODE,
+        'name': 'Wilayah Administratif',
+        'description': 'Registry wilayah administratif hasil bootstrap dari CSV Diskominfo Jabar.',
+        'registry_type': 'geo',
+        'category_key': 'wilayah',
+        'source_mode': 'import_file',
+        'data_shape': 'hierarchical_geo',
+        'schema_json': {
+            'fields': [
+                {'key': 'record_code'},
+                {'key': 'label'},
+                {'key': 'admin_level'},
+                {'key': 'parent_record_code'},
+            ]
+        },
+        'mapping_spec': {
+            'source_format': 'csv',
+            'delimiter': ',',
+            'levels': ['province', 'city_regency', 'district', 'village'],
+        },
+        'source_snapshot': {
+            'source_name': 'diskominfo-jabar',
+            'source_file': csv_path,
+        },
+        'csv_path': csv_path,
+    }
+
+
+def seed_wilayah_registry(
+    csv_path=DEFAULT_WILAYAH_REGISTRY_CSV_PATH,
+    actor=None,
+    registry_service=None,
+    registry_repository=None,
+    version_service=None,
+    version_repository=None,
+    materialization_service=None,
+):
+    fixture = build_wilayah_registry_fixture_payload(csv_path=csv_path)
+    registry_service = registry_service or DataRegistryService()
+    registry_repository = registry_repository or DataRegistryRepository()
+    version_service = version_service or DataRegistryVersionService()
+    version_repository = version_repository or DataRegistryVersionRepository()
+    materialization_service = materialization_service or DataRegistryMaterializationService()
+
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f'File CSV wilayah tidak ditemukan: {csv_path}')
+
+    with open(csv_path, mode='r', encoding='utf-8', newline='') as file:
+        source_rows = list(csv.DictReader(file))
+
+    fixture['source_snapshot'] = {
+        **fixture['source_snapshot'],
+        'row_count': len(source_rows),
+    }
+
+    registry = registry_repository.get_by_slug(fixture['registry_slug'])
+    if not registry:
+        create_result = registry_service.create_registry(
+            {
+                'registry_slug': fixture['registry_slug'],
+                'registry_code': fixture['registry_code'],
+                'name': fixture['name'],
+                'description': fixture['description'],
+                'registry_type': fixture['registry_type'],
+                'category_key': fixture['category_key'],
+                'source_mode': fixture['source_mode'],
+                'data_shape': fixture['data_shape'],
+                'schema_json': fixture['schema_json'],
+                'mapping_spec': fixture['mapping_spec'],
+                'source_snapshot': fixture['source_snapshot'],
+            },
+            actor=actor,
+        )
+        registry = create_result['registry']
+        draft_version = create_result['draft_version']
+    else:
+        registry.registry_code = fixture['registry_code']
+        registry.name = fixture['name']
+        registry.description = fixture['description']
+        registry.registry_type = fixture['registry_type']
+        registry.category_key = fixture['category_key']
+        registry.source_mode = fixture['source_mode']
+        registry.data_shape = fixture['data_shape']
+        registry.schema_meta = {
+            **(registry.schema_meta or {}),
+            'source_name': fixture['source_snapshot']['source_name'],
+            'source_file': fixture['source_snapshot']['source_file'],
+        }
+        registry_repository.save(registry)
+
+        published_version = version_repository.get_published_version(registry.id)
+        draft_version = version_repository.get_draft_version(registry.id)
+        if not draft_version:
+            draft_version = version_service.create_draft_version(
+                registry_id=registry.id,
+                schema_json=fixture['schema_json'],
+                mapping_spec=fixture['mapping_spec'],
+                source_snapshot=fixture['source_snapshot'],
+                actor=actor,
+                source_version_id=getattr(published_version, 'id', None),
+            )
+
+    draft_version.schema_json = fixture['schema_json']
+    draft_version.mapping_spec = fixture['mapping_spec']
+    draft_version.source_snapshot = fixture['source_snapshot']
+    version_repository.save(draft_version)
+
+    materialize_result = materialization_service.materialize_wilayah_rows(
+        draft_version.id,
+        source_rows,
+        actor=actor,
+    )
+    publish_result = registry_service.publish_registry(
+        registry.id,
+        version_id=draft_version.id,
+        actor=actor,
+    )
+
+    return {
+        'registry': registry,
+        'draft_version': draft_version,
+        'published_version': publish_result['published_version'],
+        'record_count': materialize_result['record_count'],
+        'source_row_count': materialize_result['source_row_count'],
+        'csv_path': csv_path,
+    }
+
+
+def print_wilayah_registry_summary(result):
+    print('✅ Seed registry wilayah selesai.')
+    print(
+        f"- registry_slug={result['registry'].registry_slug} "
+        f"published_version_id={getattr(result['published_version'], 'id', None)} "
+        f"records={result['record_count']} rows={result['source_row_count']}"
+    )
+    print(f"- source_csv={result['csv_path']}")
 
 
 def seed_employees():
@@ -389,7 +539,7 @@ def parse_args():
     parser.add_argument(
         '--profile',
         action='append',
-        choices=['employees', 'agent', 'abac_matrix', 'all'],
+        choices=['employees', 'agent', 'abac_matrix', 'wilayah_registry', 'all'],
         help='Profile seeding yang akan dijalankan. Bisa dipakai berulang.',
     )
     parser.add_argument(
@@ -397,13 +547,18 @@ def parse_args():
         default=DEFAULT_MATRIX_TEST_PASSWORD,
         help='Password yang dipakai semua user fixture matriks ABAC.',
     )
+    parser.add_argument(
+        '--wilayah-csv',
+        default=DEFAULT_WILAYAH_REGISTRY_CSV_PATH,
+        help='Path CSV bootstrap registry wilayah administratif.',
+    )
     return parser.parse_args()
 
 
 def run_selected_seed_profiles(args):
     selected_profiles = args.profile or ['all']
     if 'all' in selected_profiles:
-        selected_profiles = ['employees', 'agent', 'abac_matrix']
+        selected_profiles = ['employees', 'agent', 'abac_matrix', 'wilayah_registry']
 
     if 'employees' in selected_profiles:
         seed_employees()
@@ -412,6 +567,9 @@ def run_selected_seed_profiles(args):
     if 'abac_matrix' in selected_profiles:
         result = seed_matrix_test_fixture(password=args.matrix_password)
         print_matrix_fixture_summary(result)
+    if 'wilayah_registry' in selected_profiles:
+        result = seed_wilayah_registry(csv_path=args.wilayah_csv)
+        print_wilayah_registry_summary(result)
 
 
 if __name__ == '__main__':

@@ -143,6 +143,15 @@ V1 sebaiknya fokus pada kontrak konsumsi sederhana:
 - geojson feature collection
 - filtered registry records
 
+Registry/version yang sudah dipublish boleh diekspos sebagai resource API dinamis untuk consumer seperti Form Builder dan Form Runtime, selama kontraknya tetap terkurasi dan stabil. Artinya yang dipublikasikan adalah published registry contract, bukan draft version, bukan raw source, dan bukan query builder bebas.
+
+Pola publish consumer-friendly yang direkomendasikan di v1:
+- option source untuk select/autocomplete/dependent select
+- lookup endpoint by key/code
+- tree endpoint berdasarkan parent/level
+- feature collection endpoint untuk peta ringan
+- filtered listing dengan parameter terbatas yang sudah didefinisikan
+
 Jangan langsung membangun query builder yang terlalu generik.
 
 ### 4.5. CRUD dinamis tetap butuh governance
@@ -186,6 +195,12 @@ Kebutuhan:
 - bisa simpan `properties` dinamis
 - bisa simpan `geometry` / GeoJSON
 - bisa serve untuk select/autocomplete/peta
+
+Dokumen turunan yang mematangkan use case ini:
+- `docs/architecture/domain-4-wilayah-blueprint-v1.md`
+- `docs/architecture/domain-4-wilayah-schema-contract-v1.md`
+- `docs/architecture/domain-4-wilayah-migration-schema-plan-v1.md`
+- `docs/architecture/domain-4-wilayah-implementation-plan-v1.md`
 
 ### Use case 2 — Registry organisasi/pegawai ringan
 Contoh:

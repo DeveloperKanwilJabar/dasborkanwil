@@ -1,0 +1,913 @@
+from decimal import Decimal
+from types import SimpleNamespace
+
+from app import create_app
+from app.modules.data_registry.models import DataRegistry, DataRegistryVersion
+
+
+class SaveMixin:
+    def __init__(self):
+        self.saved = []
+        self.next_id = 1
+
+    def save(self, obj):
+        if getattr(obj, 'id', None) is None:
+            obj.id = self.next_id
+            self.next_id += 1
+        self.saved.append(obj)
+        return obj
+
+
+class StubDataRegistryRepository(SaveMixin):
+    def __init__(self, registry=None):
+        super().__init__()
+        self.registry = registry
+
+    def get_by_id(self, registry_id):
+        if self.registry and self.registry.id == registry_id:
+            return self.registry
+        return None
+
+    def get_by_slug(self, slug):
+        if self.registry and self.registry.registry_slug == slug:
+            return self.registry
+        return None
+
+    def get_active_by_slug(self, slug):
+        if self.registry and self.registry.registry_slug == slug and self.registry.status in {'draft', 'published'}:
+            return self.registry
+        return None
+
+    def find_by(self, **filters):
+        if self.registry and filters.get('registry_code') and self.registry.registry_code == filters['registry_code']:
+            return [self.registry]
+        return []
+
+
+class StubDataRegistryVersionRepository(SaveMixin):
+    def __init__(self, version=None):
+        super().__init__()
+        self.version = version
+        self.archived_args = None
+
+    def get_by_id(self, version_id):
+        if self.version and self.version.id == version_id:
+            return self.version
+        return None
+
+    def get_next_version_number(self, registry_id):
+        return 2
+
+    def archive_published_others(self, registry_id, except_version_id=None):
+        self.archived_args = {
+            'registry_id': registry_id,
+            'except_version_id': except_version_id,
+        }
+        return []
+
+    def get_published_version(self, registry_id):
+        if self.version and self.version.registry_id == registry_id and self.version.status == 'published':
+            return self.version
+        return None
+
+
+class StubDraftRegistryVersionService:
+    def __init__(self):
+        self.called_with = None
+
+    def create_draft_version(self, **kwargs):
+        self.called_with = kwargs
+        return DataRegistryVersion(
+            id=11,
+            registry_id=kwargs['registry_id'],
+            version_number=1,
+            schema_json=kwargs['schema_json'],
+            mapping_spec=kwargs.get('mapping_spec') or {},
+            source_snapshot=kwargs.get('source_snapshot') or {},
+            status='draft',
+            freshness_status='unknown',
+        )
+
+
+class StubQueryVersionRepository:
+    def __init__(self, published_version=None, versions=None):
+        self.published_version = published_version
+        self.versions = versions or ([] if published_version is None else [published_version])
+        self.published_calls = []
+        self.list_calls = []
+
+    def get_published_version(self, registry_id):
+        self.published_calls.append(registry_id)
+        if self.published_version and self.published_version.registry_id == registry_id:
+            return self.published_version
+        return None
+
+    def list_versions(self, registry_id, include_deleted=False):
+        self.list_calls.append({'registry_id': registry_id, 'include_deleted': include_deleted})
+        return [version for version in self.versions if version.registry_id == registry_id]
+
+
+class StubQueryRecordRepository:
+    def __init__(self, records):
+        self.records = records
+        self.list_options_calls = []
+        self.list_children_calls = []
+        self.list_by_level_calls = []
+        self.list_feature_collection_calls = []
+
+    def get_by_key(self, registry_version_id, record_key):
+        for record in self.records:
+            if record.registry_version_id == registry_version_id and record.record_key == record_key:
+                return record
+        return None
+
+    def get_by_code(self, registry_version_id, record_code):
+        for record in self.records:
+            if record.registry_version_id == registry_version_id and record.record_code == record_code:
+                return record
+        return None
+
+    def list_children(self, registry_version_id, parent_record_id):
+        self.list_children_calls.append(
+            {'registry_version_id': registry_version_id, 'parent_record_id': parent_record_id}
+        )
+        items = [
+            record
+            for record in self.records
+            if record.registry_version_id == registry_version_id and record.parent_record_id == parent_record_id
+        ]
+        return sorted(items, key=lambda item: ((item.sort_order or 0), item.label))
+
+    def list_by_level(self, registry_version_id, admin_level, parent_record_id=None):
+        self.list_by_level_calls.append(
+            {
+                'registry_version_id': registry_version_id,
+                'admin_level': admin_level,
+                'parent_record_id': parent_record_id,
+            }
+        )
+        items = [
+            record
+            for record in self.records
+            if record.registry_version_id == registry_version_id and record.admin_level == admin_level
+        ]
+        if parent_record_id is not None:
+            items = [record for record in items if record.parent_record_id == parent_record_id]
+        return sorted(items, key=lambda item: ((item.sort_order or 0), item.label))
+
+    def list_options(self, registry_version_id, admin_level=None, parent_record_id=None, q=None, limit=100):
+        self.list_options_calls.append(
+            {
+                'registry_version_id': registry_version_id,
+                'admin_level': admin_level,
+                'parent_record_id': parent_record_id,
+                'q': q,
+                'limit': limit,
+            }
+        )
+        items = [record for record in self.records if record.registry_version_id == registry_version_id]
+        if admin_level is not None:
+            items = [record for record in items if record.admin_level == admin_level]
+        if parent_record_id is not None:
+            items = [record for record in items if record.parent_record_id == parent_record_id]
+        if q:
+            q_lower = q.lower()
+            items = [record for record in items if q_lower in record.label.lower()]
+        items = sorted(items, key=lambda item: ((item.sort_order or 0), item.label))
+        return items[:limit]
+
+    def list_feature_collection_records(self, registry_version_id, admin_level=None):
+        self.list_feature_collection_calls.append(
+            {'registry_version_id': registry_version_id, 'admin_level': admin_level}
+        )
+        items = [record for record in self.records if record.registry_version_id == registry_version_id]
+        if admin_level is not None:
+            items = [record for record in items if record.admin_level == admin_level]
+        return sorted(items, key=lambda item: ((item.sort_order or 0), item.label))
+
+
+class StubMaterializationRecordRepository(SaveMixin):
+    def __init__(self):
+        super().__init__()
+        self.deleted_registry_version_id = None
+
+    def delete_by_registry_version(self, registry_version_id):
+        self.deleted_registry_version_id = registry_version_id
+        self.saved = [item for item in self.saved if item.registry_version_id != registry_version_id]
+        return True
+
+
+def make_record(**overrides):
+    defaults = {
+        'id': 1,
+        'registry_id': 10,
+        'registry_version_id': 30,
+        'parent_record_id': None,
+        'record_key': 'province:32',
+        'record_code': '32',
+        'external_code': None,
+        'label': 'Jawa Barat',
+        'display_label': None,
+        'normalized_label': 'jawa barat',
+        'admin_level': 'province',
+        'admin_level_code': 'PROV',
+        'city_regency_kind': None,
+        'province_code': '32',
+        'city_regency_code': None,
+        'district_code': None,
+        'village_code': None,
+        'village_adm_status': None,
+        'sort_order': 1,
+        'is_active': True,
+        'valid_from': None,
+        'valid_to': None,
+        'centroid_lat': None,
+        'centroid_lng': None,
+        'bbox_min_lat': None,
+        'bbox_min_lng': None,
+        'bbox_max_lat': None,
+        'bbox_max_lng': None,
+        'geometry_json': None,
+        'source_row_number': None,
+        'source_row_hash': None,
+        'source_snapshot': {},
+        'payload': {},
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_create_registry_returns_registry_and_initial_draft_version():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryService
+
+        registry_repository = StubDataRegistryRepository()
+        version_service = StubDraftRegistryVersionService()
+        service = DataRegistryService(
+            registry_repository=registry_repository,
+            version_service=version_service,
+        )
+        actor = SimpleNamespace(id=7, uuid='actor-uuid')
+
+        result = service.create_registry(
+            {
+                'registry_slug': 'wilayah.administratif',
+                'registry_code': 'WILAYAH-ADM',
+                'name': 'Wilayah Administratif',
+                'description': 'Registry wilayah administratif Jawa Barat.',
+                'schema_json': {'fields': [{'key': 'kode_wilayah'}]},
+                'mapping_spec': {'source': 'csv'},
+                'source_snapshot': {'source_name': 'diskominfo-jabar'},
+            },
+            actor=actor,
+        )
+
+        assert result['registry'].id == 1
+        assert result['registry'].registry_slug == 'wilayah.administratif'
+        assert result['registry'].registry_code == 'WILAYAH-ADM'
+        assert result['registry'].name == 'Wilayah Administratif'
+        assert result['registry'].created_by == 7
+        assert result['draft_version'].registry_id == 1
+        assert result['draft_version'].schema_json == {'fields': [{'key': 'kode_wilayah'}]}
+        assert result['draft_version'].mapping_spec == {'source': 'csv'}
+        assert version_service.called_with['actor'] is actor
+
+
+def test_create_draft_version_can_clone_from_source_version_when_schema_not_provided():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryVersionService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='draft',
+        )
+        source_version = DataRegistryVersion(
+            id=20,
+            registry_id=10,
+            version_number=1,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            mapping_spec={'source': 'csv'},
+            source_snapshot={'source_name': 'diskominfo-jabar'},
+            status='published',
+            freshness_status='fresh',
+        )
+        version_repository = StubDataRegistryVersionRepository(version=source_version)
+        registry_repository = StubDataRegistryRepository(registry=registry)
+        service = DataRegistryVersionService(
+            version_repository=version_repository,
+            registry_repository=registry_repository,
+        )
+
+        draft_version = service.create_draft_version(
+            registry_id=10,
+            schema_json=None,
+            source_version_id=20,
+        )
+
+        assert draft_version.registry_id == 10
+        assert draft_version.version_number == 2
+        assert draft_version.schema_json == {'fields': [{'key': 'kode_wilayah'}]}
+        assert draft_version.mapping_spec == {'source': 'csv'}
+        assert draft_version.source_snapshot == {'source_name': 'diskominfo-jabar'}
+        assert draft_version.status == 'draft'
+        assert draft_version.freshness_status == 'unknown'
+
+
+def test_publish_version_marks_version_published_and_parent_registry_published():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryVersionService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='draft',
+        )
+        version = DataRegistryVersion(
+            id=20,
+            registry_id=10,
+            version_number=1,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            mapping_spec={'source': 'csv'},
+            source_snapshot={'source_name': 'diskominfo-jabar'},
+            status='draft',
+            freshness_status='unknown',
+        )
+        version_repository = StubDataRegistryVersionRepository(version=version)
+        registry_repository = StubDataRegistryRepository(registry=registry)
+        service = DataRegistryVersionService(
+            version_repository=version_repository,
+            registry_repository=registry_repository,
+        )
+
+        published_version = service.publish_version(20)
+
+        assert version_repository.archived_args == {
+            'registry_id': 10,
+            'except_version_id': 20,
+        }
+        assert published_version.status == 'published'
+        assert published_version.published_at is not None
+        assert published_version.freshness_status == 'fresh'
+        assert registry.status == 'published'
+        assert registry_repository.saved[-1] is registry
+
+
+def test_get_option_list_reads_only_published_version_and_supports_parent_code_filter():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryQueryService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='published',
+        )
+        published_version = DataRegistryVersion(
+            id=30,
+            registry_id=10,
+            version_number=3,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='published',
+            freshness_status='fresh',
+        )
+        draft_version = DataRegistryVersion(
+            id=31,
+            registry_id=10,
+            version_number=4,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='draft',
+            freshness_status='unknown',
+        )
+        record_repository = StubQueryRecordRepository(
+            [
+                make_record(id=1, registry_version_id=30, record_key='province:32', record_code='32', label='Jawa Barat', admin_level='province'),
+                make_record(id=2, registry_version_id=30, parent_record_id=1, record_key='city:3204', record_code='3204', label='Kabupaten Bandung', admin_level='city_regency', city_regency_code='3204'),
+                make_record(id=3, registry_version_id=31, parent_record_id=999, record_key='city:9999', record_code='9999', label='Draft City', admin_level='city_regency'),
+            ]
+        )
+        service = DataRegistryQueryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=StubQueryVersionRepository(
+                published_version=published_version,
+                versions=[published_version, draft_version],
+            ),
+            record_repository=record_repository,
+        )
+
+        result = service.get_option_list(
+            'wilayah.administratif',
+            admin_level='city_regency',
+            parent_code='32',
+        )
+
+        assert result['version'].id == 30
+        assert result['items'] == [
+            {
+                'label': 'Kabupaten Bandung',
+                'value': '3204',
+                'meta': {
+                    'record_key': 'city:3204',
+                    'record_code': '3204',
+                    'admin_level': 'city_regency',
+                    'parent_record_id': 1,
+                },
+            }
+        ]
+        assert record_repository.list_options_calls[-1] == {
+            'registry_version_id': 30,
+            'admin_level': 'city_regency',
+            'parent_record_id': 1,
+            'q': None,
+            'limit': 100,
+        }
+
+
+
+def test_get_option_list_raises_when_published_version_missing():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryQueryService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='draft',
+        )
+        service = DataRegistryQueryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=StubQueryVersionRepository(published_version=None, versions=[]),
+            record_repository=StubQueryRecordRepository([]),
+        )
+
+        try:
+            service.get_option_list('wilayah.administratif')
+            assert False, 'Expected ValueError when published version is missing.'
+        except ValueError as error:
+            assert str(error) == 'Published version registry tidak ditemukan.'
+
+
+
+def test_get_lookup_rejects_when_key_and_code_missing():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryQueryService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='published',
+        )
+        published_version = DataRegistryVersion(
+            id=30,
+            registry_id=10,
+            version_number=3,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='published',
+            freshness_status='fresh',
+        )
+        service = DataRegistryQueryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=StubQueryVersionRepository(published_version=published_version),
+            record_repository=StubQueryRecordRepository([]),
+        )
+
+        try:
+            service.get_lookup('wilayah.administratif')
+            assert False, 'Expected ValueError when record key/code is missing.'
+        except ValueError as error:
+            assert str(error) == 'record_key atau record_code wajib diisi.'
+
+
+
+def test_get_lookup_can_find_record_by_code():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryQueryService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='published',
+        )
+        published_version = DataRegistryVersion(
+            id=30,
+            registry_id=10,
+            version_number=3,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='published',
+            freshness_status='fresh',
+        )
+        service = DataRegistryQueryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=StubQueryVersionRepository(published_version=published_version),
+            record_repository=StubQueryRecordRepository(
+                [
+                    make_record(
+                        id=2,
+                        registry_version_id=30,
+                        parent_record_id=1,
+                        record_key='city:3204',
+                        record_code='3204',
+                        label='Kabupaten Bandung',
+                        admin_level='city_regency',
+                        city_regency_code='3204',
+                    )
+                ]
+            ),
+        )
+
+        result = service.get_lookup('wilayah.administratif', record_code='3204')
+
+        assert result['record'] == {
+            'id': 2,
+            'record_key': 'city:3204',
+            'record_code': '3204',
+            'label': 'Kabupaten Bandung',
+            'display_label': 'Kabupaten Bandung',
+            'admin_level': 'city_regency',
+            'parent_record_id': 1,
+            'centroid': None,
+            'payload': {},
+        }
+
+
+
+def test_get_children_returns_only_active_children_and_respects_admin_level():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryQueryService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='published',
+        )
+        published_version = DataRegistryVersion(
+            id=30,
+            registry_id=10,
+            version_number=3,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='published',
+            freshness_status='fresh',
+        )
+        service = DataRegistryQueryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=StubQueryVersionRepository(published_version=published_version),
+            record_repository=StubQueryRecordRepository(
+                [
+                    make_record(id=1, registry_version_id=30, record_key='province:32', record_code='32', label='Jawa Barat', admin_level='province'),
+                    make_record(id=2, registry_version_id=30, parent_record_id=1, record_key='city:3204', record_code='3204', label='Kabupaten Bandung', admin_level='city_regency', sort_order=2),
+                    make_record(id=3, registry_version_id=30, parent_record_id=1, record_key='city:3273', record_code='3273', label='Kota Bandung', admin_level='city_regency', sort_order=1),
+                    make_record(id=4, registry_version_id=30, parent_record_id=1, record_key='district:x', record_code='x', label='Inactive District', admin_level='district', is_active=False, sort_order=3),
+                ]
+            ),
+        )
+
+        result = service.get_children('wilayah.administratif', parent_code='32', admin_level='city_regency')
+
+        assert [item['record_code'] for item in result['items']] == ['3273', '3204']
+        assert [item['label'] for item in result['items']] == ['Kota Bandung', 'Kabupaten Bandung']
+
+
+
+def test_get_tree_returns_nested_tree_until_max_depth():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryQueryService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='published',
+        )
+        published_version = DataRegistryVersion(
+            id=30,
+            registry_id=10,
+            version_number=3,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='published',
+            freshness_status='fresh',
+        )
+        records = [
+            make_record(id=1, registry_version_id=30, record_key='province:32', record_code='32', label='Jawa Barat', admin_level='province'),
+            make_record(id=2, registry_version_id=30, parent_record_id=1, record_key='city:3204', record_code='3204', label='Kabupaten Bandung', admin_level='city_regency'),
+            make_record(id=3, registry_version_id=30, parent_record_id=2, record_key='district:3204010', record_code='3204010', label='Cicalengka', admin_level='district'),
+            make_record(id=4, registry_version_id=30, parent_record_id=3, record_key='village:3204010001', record_code='3204010001', label='Babakan Peuteuy', admin_level='village'),
+        ]
+        service = DataRegistryQueryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=StubQueryVersionRepository(published_version=published_version),
+            record_repository=StubQueryRecordRepository(records),
+        )
+
+        result = service.get_tree('wilayah.administratif', root_level='province', max_depth=3)
+
+        assert result['items'][0]['record_code'] == '32'
+        assert result['items'][0]['children'][0]['record_code'] == '3204'
+        assert result['items'][0]['children'][0]['children'][0]['record_code'] == '3204010'
+        assert result['items'][0]['children'][0]['children'][0]['children'] == []
+
+
+
+def test_get_feature_collection_excludes_records_without_geometry_or_centroid():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryQueryService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='published',
+        )
+        published_version = DataRegistryVersion(
+            id=30,
+            registry_id=10,
+            version_number=3,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='published',
+            freshness_status='fresh',
+        )
+        records = [
+            make_record(
+                id=1,
+                registry_version_id=30,
+                record_key='province:32',
+                record_code='32',
+                label='Jawa Barat',
+                admin_level='province',
+                geometry_json={'type': 'Polygon', 'coordinates': []},
+            ),
+            make_record(
+                id=2,
+                registry_version_id=30,
+                parent_record_id=1,
+                record_key='city:3204',
+                record_code='3204',
+                label='Kabupaten Bandung',
+                admin_level='city_regency',
+                centroid_lat='-6.914744',
+                centroid_lng='107.609810',
+            ),
+            make_record(
+                id=3,
+                registry_version_id=30,
+                parent_record_id=1,
+                record_key='city:missing',
+                record_code='missing',
+                label='No Geometry',
+                admin_level='city_regency',
+            ),
+        ]
+        service = DataRegistryQueryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=StubQueryVersionRepository(published_version=published_version),
+            record_repository=StubQueryRecordRepository(records),
+        )
+
+        result = service.get_feature_collection('wilayah.administratif')
+
+        assert result['type'] == 'FeatureCollection'
+        assert len(result['features']) == 2
+        assert result['features'][0]['properties']['record_code'] == '32'
+        assert result['features'][1]['geometry'] == {
+            'type': 'Point',
+            'coordinates': [107.60981, -6.914744],
+        }
+
+
+
+def test_materialize_wilayah_rows_expands_flat_rows_into_hierarchy_and_refreshes_version():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryMaterializationService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='draft',
+        )
+        version = DataRegistryVersion(
+            id=30,
+            registry_id=10,
+            version_number=1,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='draft',
+            freshness_status='unknown',
+        )
+        record_repository = StubMaterializationRecordRepository()
+        version_repository = StubDataRegistryVersionRepository(version=version)
+        service = DataRegistryMaterializationService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=version_repository,
+            record_repository=record_repository,
+        )
+
+        result = service.materialize_wilayah_rows(
+            30,
+            [
+                {
+                    'id': '1',
+                    'kemendagri_provinsi_kode': '32',
+                    'kemendagri_kota_kode': '32.01',
+                    'kemendagri_kecamatan_kode': '32.01.01',
+                    'kemendagri_kelurahan_kode': '32.01.01.1001',
+                    'kemendagri_provinsi_nama': 'JAWA BARAT',
+                    'kemendagri_kota_nama': 'KAB. BOGOR',
+                    'kemendagri_kecamatan_nama': 'CIBINONG',
+                    'kemendagri_kelurahan_nama': 'HARAPANJAYA',
+                    'bps_provinsi_kode': '32.0',
+                    'bps_kota_kode': '3201.0',
+                    'bps_kecamatan_kode': '3201010.0',
+                    'bps_kelurahan_kode': '3201010001.0',
+                    'bps_provinsi_nama': 'JAWA BARAT',
+                    'bps_kota_nama': 'KABUPATEN BOGOR',
+                    'bps_kecamatan_nama': 'CIBINONG',
+                    'bps_kelurahan_nama': 'HARAPAN JAYA',
+                    'latitude': '-6.485088',
+                    'longitude': '106.854729',
+                    'kode_pos': '16913.0',
+                    'status_adm': '',
+                },
+                {
+                    'id': '2',
+                    'kemendagri_provinsi_kode': '32',
+                    'kemendagri_kota_kode': '32.01',
+                    'kemendagri_kecamatan_kode': '32.01.01',
+                    'kemendagri_kelurahan_kode': '32.01.01.1002',
+                    'kemendagri_provinsi_nama': 'JAWA BARAT',
+                    'kemendagri_kota_nama': 'KAB. BOGOR',
+                    'kemendagri_kecamatan_nama': 'CIBINONG',
+                    'kemendagri_kelurahan_nama': 'CIRIUNG',
+                    'bps_provinsi_kode': '32.0',
+                    'bps_kota_kode': '3201.0',
+                    'bps_kecamatan_kode': '3201010.0',
+                    'bps_kelurahan_kode': '3201010002.0',
+                    'bps_provinsi_nama': 'JAWA BARAT',
+                    'bps_kota_nama': 'KABUPATEN BOGOR',
+                    'bps_kecamatan_nama': 'CIBINONG',
+                    'bps_kelurahan_nama': 'CIRIUNG',
+                    'latitude': '-6.490000',
+                    'longitude': '106.860000',
+                    'kode_pos': '16914.0',
+                    'status_adm': '',
+                },
+            ],
+        )
+
+        assert record_repository.deleted_registry_version_id == 30
+        assert result['record_count'] == 5
+        assert len(record_repository.saved) == 5
+
+        province, city, district, village_one, village_two = record_repository.saved
+        assert province.record_key == 'province:32'
+        assert province.record_code == '32'
+        assert province.parent_record_id is None
+        assert province.external_code == '32'
+        assert province.payload['codes']['kemendagri']['province'] == '32'
+
+        assert city.record_key == 'city_regency:32.01'
+        assert city.parent_record_id == province.id
+        assert city.city_regency_kind == 'kabupaten'
+        assert city.external_code == '3201'
+
+        assert district.record_key == 'district:32.01.01'
+        assert district.parent_record_id == city.id
+        assert district.external_code == '3201010'
+
+        assert village_one.record_key == 'village:32.01.01.1001'
+        assert village_one.parent_record_id == district.id
+        assert village_one.external_code == '3201010001'
+        assert village_one.village_adm_status == 'kelurahan'
+        assert village_one.payload['postal_code'] == '16913'
+        assert village_one.payload['source_labels']['bps']['village'] == 'HARAPAN JAYA'
+        assert village_one.source_row_number == 1
+        assert village_one.source_row_hash
+        assert village_one.centroid_lat == Decimal('-6.485088')
+        assert village_one.centroid_lng == Decimal('106.854729')
+
+        assert village_two.record_code == '32.01.01.1002'
+        assert village_two.parent_record_id == district.id
+        assert village_two.payload['postal_code'] == '16914'
+
+        assert version.freshness_status == 'fresh'
+        assert version.materialized_watermark
+        assert version.freshness_signature
+        assert version_repository.saved[-1] is version
+
+
+def test_materialize_wilayah_rows_nulls_duplicate_bps_external_codes_for_conflicting_records():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryMaterializationService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='wilayah.administratif',
+            name='Wilayah Administratif',
+            status='draft',
+        )
+        version = DataRegistryVersion(
+            id=30,
+            registry_id=10,
+            version_number=1,
+            schema_json={'fields': [{'key': 'kode_wilayah'}]},
+            status='draft',
+            freshness_status='unknown',
+        )
+        record_repository = StubMaterializationRecordRepository()
+        version_repository = StubDataRegistryVersionRepository(version=version)
+        service = DataRegistryMaterializationService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_repository=version_repository,
+            record_repository=record_repository,
+        )
+
+        service.materialize_wilayah_rows(
+            30,
+            [
+                {
+                    'id': '1700',
+                    'kemendagri_provinsi_kode': '32',
+                    'kemendagri_kota_kode': '32.05',
+                    'kemendagri_kecamatan_kode': '32.05.20',
+                    'kemendagri_kelurahan_kode': '32.05.20.2003',
+                    'kemendagri_provinsi_nama': 'JAWA BARAT',
+                    'kemendagri_kota_nama': 'KAB. GARUT',
+                    'kemendagri_kecamatan_nama': 'CISURUPAN',
+                    'kemendagri_kelurahan_nama': 'SUKAWANGI',
+                    'bps_provinsi_kode': '32.0',
+                    'bps_kota_kode': '3205.0',
+                    'bps_kecamatan_kode': '3205160.0',
+                    'bps_kelurahan_kode': '3205160002.0',
+                    'bps_provinsi_nama': 'JAWA BARAT',
+                    'bps_kota_nama': 'KABUPATEN GARUT',
+                    'bps_kecamatan_nama': 'CISURUPAN',
+                    'bps_kelurahan_nama': 'SUKAWANGI',
+                    'latitude': '-7.34350',
+                    'longitude': '107.78944',
+                    'kode_pos': '44163.0',
+                    'status_adm': '',
+                },
+                {
+                    'id': '1701',
+                    'kemendagri_provinsi_kode': '32',
+                    'kemendagri_kota_kode': '32.05',
+                    'kemendagri_kecamatan_kode': '32.05.20',
+                    'kemendagri_kelurahan_kode': '32.05.20.2004',
+                    'kemendagri_provinsi_nama': 'JAWA BARAT',
+                    'kemendagri_kota_nama': 'KAB. GARUT',
+                    'kemendagri_kecamatan_nama': 'CISURUPAN',
+                    'kemendagri_kelurahan_nama': 'SUKATANI',
+                    'bps_provinsi_kode': '32.0',
+                    'bps_kota_kode': '3205.0',
+                    'bps_kecamatan_kode': '3205160.0',
+                    'bps_kelurahan_kode': '3205160002.0',
+                    'bps_provinsi_nama': 'JAWA BARAT',
+                    'bps_kota_nama': 'KABUPATEN GARUT',
+                    'bps_kecamatan_nama': 'CISURUPAN',
+                    'bps_kelurahan_nama': 'SUKATANI',
+                    'latitude': '-7.34351',
+                    'longitude': '107.78945',
+                    'kode_pos': '44163.0',
+                    'status_adm': '',
+                },
+            ],
+        )
+
+        villages = [item for item in record_repository.saved if item.admin_level == 'village']
+        province = next(item for item in record_repository.saved if item.admin_level == 'province')
+        city = next(item for item in record_repository.saved if item.admin_level == 'city_regency')
+        district = next(item for item in record_repository.saved if item.admin_level == 'district')
+
+        assert province.external_code == '32'
+        assert city.external_code == '3205'
+        assert district.external_code == '3205160'
+        assert len(villages) == 2
+        assert all(item.external_code is None for item in villages)
+

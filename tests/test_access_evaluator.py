@@ -143,3 +143,12 @@ def test_form_builder_source_js_collects_abac_payload_fields():
     assert 'owner_scope' in content
     assert 'target_scope' in content
     assert 'access_policy_key' in content
+
+
+def test_form_builder_source_js_registers_registry_consumer_preset_controls():
+    js_path = Path('app/src/js/pages/form-builder.js')
+    content = js_path.read_text(encoding='utf-8')
+
+    assert 'formBuilderInsertWilayahCascadeBtn' in content
+    assert 'registryConsumerPresets' in content
+    assert 'insertPresetComponents' in content

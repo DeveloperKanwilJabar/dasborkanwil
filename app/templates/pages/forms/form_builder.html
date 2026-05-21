@@ -148,6 +148,19 @@
                                 </button>
                             </form>
 
+                            <div class="border rounded p-3 mb-3">
+                                <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                                    <div>
+                                        <h6 class="mb-1">Preset Konsumen Registry</h6>
+                                        <p class="text-muted mb-0 fs-13">Shortcut untuk menanam select wilayah cascading yang langsung membaca published data registry.</p>
+                                    </div>
+                                    <span class="badge bg-primary-subtle text-primary">Wilayah</span>
+                                </div>
+                                <button type="button" class="btn btn-soft-primary w-100" id="formBuilderInsertWilayahCascadeBtn">
+                                    <i class="ri-add-circle-line align-bottom me-1"></i> Tambah Cascading Select Wilayah
+                                </button>
+                            </div>
+
                             <div class="border-top pt-3">
                                 <div class="mb-3">
                                     <p class="text-muted mb-1 fs-13">Form ID</p>
@@ -254,6 +267,7 @@
         initialSchema: {{ initial_schema|tojson }},
         bootstrapScopes: {{ scope_options|tojson }},
         formAccessPolicies: {{ form_access_policies|tojson }},
+        registryConsumerPresets: {{ registry_consumer_presets_json|safe }},
         permissions: {{ permissions|tojson }},
         createFormUrl: "{{ url_for('api_form_v1.create_form') }}",
         autosaveUrlTemplate: "{{ url_for('api_form_v1.update_draft_schema', version_id=0) }}",

@@ -52,12 +52,14 @@ def create_app(config_mode='default'):
 
     with app.app_context():
         # Import model tambahan agar terdaftar di SQLAlchemy metadata untuk autogenerate migration
+        from .modules.data_registry.models import DataRegistry, DataRegistryVersion, DataRegistryRecord
         from .modules.form.models import Form, FormVersion
         from .modules.import_pipeline.models import ImportBatch, ImportBatchRow
         from .modules.submission.models import ReportingPeriod, Submission, SubmissionEvent
 
         # Registrasi Blueprint
         from .api.v1.auth.routes import api_auth_bp
+        from .api.v1.data_registries.routes import api_data_registry_bp
         from .api.v1.forms.routes import api_form_bp
         from .api.v1.submissions.routes import api_submission_bp
         from .modules.user.routes_web import user_bp
@@ -79,6 +81,8 @@ def create_app(config_mode='default'):
         csrf.exempt(api_form_bp) # Menonaktifkan CSRF untuk semua route di api_form_bp
         app.register_blueprint(api_submission_bp)
         csrf.exempt(api_submission_bp) # Menonaktifkan CSRF untuk semua route di api_submission_bp
+        app.register_blueprint(api_data_registry_bp)
+        csrf.exempt(api_data_registry_bp) # Menonaktifkan CSRF untuk semua route di api_data_registry_bp
 
         # Services untuk Flask-Login & Shell
         from .modules.user.services import UserService
