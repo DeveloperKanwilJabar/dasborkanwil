@@ -39,6 +39,10 @@ Belum masuk v1:
 
 Output:
 - boundary Domain 4 disepakati
+- taxonomy registry Domain 4 (`lookup`, `scope`, `geo`, `master_data`, `submission_derived`) disepakati
+- schema contract generik registry non-wilayah disepakati
+- import workflow generik non-wilayah disepakati
+- implementation slice v1 untuk migration/service/API disepakati
 - entity candidate disepakati
 - daftar kolom relasional vs JSONB disepakati
 - tiga use case driver disepakati
@@ -126,30 +130,32 @@ Belum perlu dulu:
 - UI kompleks bertingkat
 - tree browser besar
 
-## Phase 4 — Source & ingestion foundation
+## Phase 4 — Generic import workflow foundation
 
-Entity yang mulai ditambahkan:
-- `data_registry_sources`
-- `data_registry_mappings`
-- `data_registry_ingestion_runs`
+Entity prioritas yang mulai ditambahkan:
+- `data_registry_import_batches`
+- `data_registry_import_rows`
 
 Kemampuan yang ditargetkan:
-- mencatat source manual/import/submission
-- menyimpan mapping spec JSONB
-- menyimpan ingestion run log
-- preview import ringan
-- publish hasil ingest ke registry version
-- menyimpan watermark/source freshness per run
+- upload file/source metadata ke target draft version
+- menyimpan `mapping_snapshot` dan `source_snapshot` pada batch
+- membuat staged rows
+- validasi row-level + batch-level
+- normalisasi tipe data termasuk `date` / `datetime`
+- menghasilkan error workbook
+- materialize valid rows ke draft records
 
 Test minimum:
-- source bisa diregistrasikan
-- ingestion run status lifecycle benar
-- mapping spec tersimpan dan terasosiasi ke registry/source
-- freshness signature terbentuk konsisten untuk source + period context
+- batch lifecycle benar (`uploaded -> mapped -> validating -> validated -> materializing -> completed`)
+- row status benar (`mapped/valid/error/duplicate/skipped/materialized`)
+- parsing/normalisasi tanggal salah format ditolak sebagai validation error
+- error workbook dapat dibentuk dari row gagal
 
-## Phase 4.5 — Freshness & worker foundation
+## Phase 4.5 — Source catalog, freshness & worker foundation
 
 Target tambahan sebelum scheduler berat:
+- `data_registry_sources`
+- `data_registry_mappings`
 - `DataRegistryFreshnessService`
 - `DataRegistrySyncService`
 - worker/orchestrator ringan yang masih synchronous atau cron-friendly
@@ -166,21 +172,22 @@ Catatan:
 - worker v1 tidak perlu langsung queue system kompleks
 - cukup service yang bisa dipanggil manual, via cron, atau on-demand dari admin/UI
 
-## Phase 5 — Import reference file v1
+## Phase 5 — API v1 untuk import dan publish workflow
 
 Use case kedua yang disarankan:
-- import csv/xlsx/geojson untuk registry wilayah
+- import csv/xlsx untuk registry non-wilayah
 
 Kemampuan v1:
-- upload file referensi
-- baca sample/header/shape
-- simpan mapping spec
-- jalankan ingest
-- publish record hasil import
+- buat batch import ke target draft version
+- simpan/finalisasi mapping
+- jalankan validation pass
+- unduh error workbook
+- materialize ke draft records
+- publish record hasil import secara eksplisit
 
 Contract yang perlu dijaga:
 - source file tidak otomatis overwrite published version lama
-- ingest menghasilkan draft/preview dulu
+- ingest menghasilkan staging + draft materialization dulu
 - publish adalah langkah eksplisit
 
 ## Phase 6 — Submission-derived registry v1
@@ -217,10 +224,11 @@ Urutan paling aman:
 1. Phase 1 — schema foundation minimal
 2. Phase 2 — service contract minimal
 3. Phase 3 — registry manual CRUD v1
-4. Phase 4 — source & ingestion foundation
-5. Phase 5 — import reference file v1
-6. Phase 6 — submission-derived registry v1
-7. Phase 7 — consumer integration ringan
+4. Phase 4 — generic import workflow foundation
+5. Phase 5 — API v1 untuk import dan publish workflow
+6. Phase 4.5 — source catalog, freshness & worker foundation
+7. Phase 6 — submission-derived registry v1
+8. Phase 7 — consumer integration ringan
 
 ## Saran use case implementasi pertama
 
