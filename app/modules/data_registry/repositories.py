@@ -1,7 +1,15 @@
+from sqlalchemy import func
+
 from app.core.extensions import db
 from app.core.repositories.base import BaseRepository
 
-from .models import DataRegistry, DataRegistryRecord, DataRegistryVersion
+from .models import (
+    DataRegistry,
+    DataRegistryImportBatch,
+    DataRegistryImportRow,
+    DataRegistryRecord,
+    DataRegistryVersion,
+)
 
 
 class DataRegistryRepository(BaseRepository):
@@ -130,3 +138,52 @@ class DataRegistryRecordRepository(BaseRepository):
         ).delete(synchronize_session=False)
         db.session.commit()
         return True
+
+
+class DataRegistryImportBatchRepository(BaseRepository):
+    def __init__(self):
+        super().__init__(model=DataRegistryImportBatch)
+
+    def get_by_id(self, batch_id):
+        return self.model.query.filter(
+            DataRegistryImportBatch.id == batch_id,
+            DataRegistryImportBatch.deleted_at == None,
+        ).first()
+
+    def list_by_registry_version(self, registry_version_id):
+        return self.model.query.filter(
+            DataRegistryImportBatch.registry_version_id == registry_version_id,
+            DataRegistryImportBatch.deleted_at == None,
+        ).order_by(DataRegistryImportBatch.created_at.desc(), DataRegistryImportBatch.id.desc()).all()
+
+
+class DataRegistryImportRowRepository(BaseRepository):
+    def __init__(self):
+        super().__init__(model=DataRegistryImportRow)
+
+    def bulk_create(self, rows):
+        if not rows:
+            return []
+
+        db.session.add_all(rows)
+        db.session.commit()
+        return rows
+
+    def list_by_batch(self, import_batch_id, status=None):
+        query = self.model.query.filter(
+            DataRegistryImportRow.import_batch_id == import_batch_id,
+            DataRegistryImportRow.deleted_at == None,
+        )
+        if status is not None:
+            query = query.filter(DataRegistryImportRow.status == status)
+        return query.order_by(DataRegistryImportRow.row_number.asc(), DataRegistryImportRow.id.asc()).all()
+
+    def count_by_batch_and_status(self, import_batch_id):
+        rows = db.session.query(
+            DataRegistryImportRow.status,
+            func.count(DataRegistryImportRow.id),
+        ).filter(
+            DataRegistryImportRow.import_batch_id == import_batch_id,
+            DataRegistryImportRow.deleted_at == None,
+        ).group_by(DataRegistryImportRow.status).all()
+        return {status: count for status, count in rows}

@@ -66,11 +66,13 @@ def create_app(config_mode='default'):
         from .api.v1.users.routes import api_user_bp
         from .modules.employee.routes_web import employee_bp
         from .modules.form.routes_web import form_web_bp
+        from .modules.data_registry.routes_web import data_registry_web_bp
 
         # web routes
         app.register_blueprint(user_bp)
         app.register_blueprint(employee_bp)
         app.register_blueprint(form_web_bp)
+        app.register_blueprint(data_registry_web_bp)
 
         # api routes
         app.register_blueprint(api_auth_bp)

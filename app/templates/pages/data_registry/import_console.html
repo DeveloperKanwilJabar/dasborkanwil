@@ -1,0 +1,175 @@
+{% extends "partials/base.html" %}
+{% block title %}Import Console Registry{% endblock title %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Import Console Registry</h4>
+                            <p class="text-muted mb-0">Console tipis untuk review batch import staging per registry version sebelum validasi dan materialisasi.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if error_message %}
+            <div class="alert alert-warning" role="alert">
+                <i class="ri-alert-line me-1 align-middle"></i> {{ error_message }}
+            </div>
+            {% endif %}
+
+            {% if version %}
+            {% set version_status_labels = {
+                'draft': 'Draft Kerja',
+                'published': 'Published',
+                'archived': 'Diarsipkan'
+            } %}
+            {% set version_status_badges = {
+                'draft': 'bg-info-subtle text-info',
+                'published': 'bg-success-subtle text-success',
+                'archived': 'bg-secondary-subtle text-secondary'
+            } %}
+            {% set batch_status_labels = {
+                'mapped': 'Siap Validasi',
+                'validating': 'Sedang Divalidasi',
+                'validated': 'Tervalidasi',
+                'materialized': 'Termaterialisasi',
+                'failed': 'Gagal',
+                'error': 'Error'
+            } %}
+            {% set batch_status_badges = {
+                'mapped': 'bg-info-subtle text-info',
+                'validating': 'bg-warning-subtle text-warning',
+                'validated': 'bg-success-subtle text-success',
+                'materialized': 'bg-success-subtle text-success',
+                'failed': 'bg-danger-subtle text-danger',
+                'error': 'bg-danger-subtle text-danger'
+            } %}
+            {% set freshness_labels = {
+                'fresh': 'Fresh',
+                'stale': 'Butuh Refresh',
+                'unknown': 'Unknown'
+            } %}
+            {% set freshness_badges = {
+                'fresh': 'bg-success-subtle text-success',
+                'stale': 'bg-warning-subtle text-warning',
+                'unknown': 'bg-light text-body'
+            } %}
+            {% set version_materialized_raw = version.materialized_at|string if version.materialized_at else '' %}
+            {% if version_materialized_raw %}
+                {% set version_materialized_display = version_materialized_raw[8:10] ~ '/' ~ version_materialized_raw[5:7] ~ '/' ~ version_materialized_raw[0:4] ~ ' ' ~ version_materialized_raw[11:16] ~ ' UTC' %}
+            {% else %}
+                {% set version_materialized_display = '-' %}
+            {% endif %}
+            <div class="row">
+                <div class="col-xl-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Version Registry</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Version</p>
+                                <h5 class="mb-0">v{{ version.version_number }}</h5>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Status Version</p>
+                                <span class="badge {{ version_status_badges.get(version.status, 'bg-light text-body') }}">{{ version_status_labels.get(version.status, version.status) }}</span>
+                                <div class="text-muted fs-12 mt-2">{{ version.status }}</div>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Freshness</p>
+                                {% set freshness_key = version.freshness_status or 'unknown' %}
+                                <span class="badge {{ freshness_badges.get(freshness_key, 'bg-light text-body') }}">{{ freshness_labels.get(freshness_key, freshness_key) }}</span>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Materialized At</p>
+                                <div class="fs-13">{{ version_materialized_display }}</div>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Source</p>
+                                <div>{{ (version.source_snapshot or {}).get('source_name', '-') }}</div>
+                            </div>
+                            <div class="mb-0">
+                                <p class="text-muted mb-1 fs-13">Catatan Console</p>
+                                <div class="text-muted fs-13">Version ini merangkum batch staging yang siap direview sebelum materialisasi berikutnya.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-8">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-0">Daftar Batch</h5>
+                                <p class="text-muted mb-0 fs-13">Status, warning, dan duplicate indicator diringkas di sini sebelum operator membuka batch console detail.</p>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive table-card">
+                                <table class="table table-nowrap align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Batch</th>
+                                            <th>Status</th>
+                                            <th>Total</th>
+                                            <th>Valid/Error</th>
+                                            <th>Catatan</th>
+                                            <th class="text-end">Aksi</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for batch in batches %}
+                                        <tr>
+                                            <td>
+                                                <div class="fw-semibold">{{ batch.original_filename or ('Batch #' ~ batch.id) }}</div>
+                                                <div class="text-muted fs-12"><code>{{ batch.uuid }}</code></div>
+                                            </td>
+                                            <td>
+                                                <span class="badge {{ batch_status_badges.get(batch.status, 'bg-light text-body') }}">{{ batch_status_labels.get(batch.status, batch.status) }}</span>
+                                            </td>
+                                            <td>{{ batch.total_rows }}</td>
+                                            <td>
+                                                <div>{{ batch.valid_rows }}/{{ batch.error_rows }}</div>
+                                                {% if batch.duplicate_rows %}
+                                                <div class="text-warning fs-12">{{ batch.duplicate_rows }} duplikat perlu perhatian</div>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                {% if batch.error_rows or batch.duplicate_rows %}
+                                                <span class="text-warning fs-12">Perlu review error/duplicate sebelum batch dipakai ulang.</span>
+                                                {% else %}
+                                                <span class="text-muted fs-12">Siap dibuka untuk review materialisasi dan error row.</span>
+                                                {% endif %}
+                                            </td>
+                                            <td class="text-end">
+                                                <a href="{{ url_for('data_registry_web.import_batch_console', batch_id=batch.id) }}" class="btn btn-sm btn-primary">
+                                                    <i class="ri-arrow-right-line align-bottom me-1"></i> Buka Console Batch
+                                                </a>
+                                            </td>
+                                        </tr>
+                                        {% else %}
+                                        <tr>
+                                            <td colspan="6" class="text-center text-muted">Belum ada batch import untuk version ini. Upload/mapping berikutnya akan muncul di console ini.</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}

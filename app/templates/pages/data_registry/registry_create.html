@@ -1,0 +1,124 @@
+{% extends "partials/base.html" %}
+{% block title %}Buat Data Registry{% endblock title %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Buat Data Registry</h4>
+                            <p class="text-muted mb-0">Form paling tipis untuk membuat shell master data lalu langsung pindah ke import console buat uji browser.</p>
+                        </div>
+                        <div class="page-title-right">
+                            <a href="{{ url_for('data_registry_web.registry_index') }}" class="btn btn-soft-secondary btn-sm">
+                                <i class="ri-arrow-left-line align-bottom me-1"></i> Kembali ke List
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% with flashed_messages = get_flashed_messages(with_categories=true) %}
+            {% if flashed_messages %}
+            <div class="row">
+                <div class="col-12">
+                    {% for category, message in flashed_messages %}
+                    <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }}" role="alert">
+                        {{ message }}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            {% endwith %}
+
+            <div class="row g-3">
+                <div class="col-xl-8">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Informasi Data Registry</h5>
+                        </div>
+                        <div class="card-body">
+                            <form id="dataRegistryCreateForm" method="post" action="{{ url_for('data_registry_web.create_registry') }}" class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Nama Registry</label>
+                                    <input type="text" class="form-control" name="name" value="{{ form_values.name }}" placeholder="Contoh: Master Program" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Registry Slug</label>
+                                    <input type="text" class="form-control" name="registry_slug" value="{{ form_values.registry_slug }}" placeholder="contoh: master.program" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Registry Code</label>
+                                    <input type="text" class="form-control" name="registry_code" value="{{ form_values.registry_code }}" placeholder="Contoh: MASTER-PROGRAM">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Starter Template</label>
+                                    <select class="form-select" name="template_key">
+                                        {% for preset_key, preset in starter_presets.items() %}
+                                        <option value="{{ preset_key }}" {% if form_values.template_key == preset_key %}selected{% endif %}>{{ preset.label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Deskripsi</label>
+                                    <textarea class="form-control" name="description" rows="4" placeholder="Jelaskan tujuan master data ini.">{{ form_values.description }}</textarea>
+                                </div>
+                                <div class="col-12">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="dataRegistryYearScopedSwitch" name="is_year_scoped" value="1" {% if form_values.is_year_scoped %}checked{% endif %}>
+                                        <label class="form-check-label" for="dataRegistryYearScopedSwitch">Aktifkan year scoped bila registry ini ingin dibedakan per tahun pelaporan.</label>
+                                    </div>
+                                </div>
+                                <div class="col-12">
+                                    <div class="alert alert-info mb-0">
+                                        Draft version awal akan dibuat otomatis supaya kamu bisa langsung lanjut uji browser via import console tanpa setup teknis tambahan dulu.
+                                    </div>
+                                </div>
+                                <div class="col-12 d-flex justify-content-end gap-2">
+                                    <a href="{{ url_for('data_registry_web.registry_index') }}" class="btn btn-light">Batal</a>
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="ri-save-line align-bottom me-1"></i> Simpan &amp; Buka Import Console
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Starter Preset</h5>
+                        </div>
+                        <div class="card-body">
+                            {% for preset_key, preset in starter_presets.items() %}
+                            <div class="border rounded p-3 {% if not loop.last %}mb-3{% endif %}">
+                                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                    <h6 class="mb-0">{{ preset.label }}</h6>
+                                    <span class="badge bg-light text-body">{{ preset_key }}</span>
+                                </div>
+                                <p class="text-muted fs-13 mb-2">{{ preset.description }}</p>
+                                <ul class="text-muted fs-12 ps-3 mb-0">
+                                    <li>registry_type: {{ preset.registry_type }}</li>
+                                    <li>category_key: {{ preset.category_key }}</li>
+                                    <li>data_shape: {{ preset.data_shape }}</li>
+                                    <li>{{ preset.schema_json.fields|length }} field starter</li>
+                                </ul>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}

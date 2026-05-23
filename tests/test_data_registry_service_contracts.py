@@ -6,11 +6,15 @@ def test_data_registry_repository_contract_methods_exist():
 
     with app.app_context():
         from app.modules.data_registry.repositories import (
+            DataRegistryImportBatchRepository,
+            DataRegistryImportRowRepository,
             DataRegistryRecordRepository,
             DataRegistryRepository,
             DataRegistryVersionRepository,
         )
 
+        import_batch_repository = DataRegistryImportBatchRepository()
+        import_row_repository = DataRegistryImportRowRepository()
         registry_repository = DataRegistryRepository()
         version_repository = DataRegistryVersionRepository()
         record_repository = DataRegistryRecordRepository()
@@ -32,6 +36,19 @@ def test_data_registry_repository_contract_methods_exist():
             assert callable(getattr(version_repository, method_name))
 
         for method_name in [
+            'get_by_id',
+            'list_by_registry_version',
+        ]:
+            assert callable(getattr(import_batch_repository, method_name))
+
+        for method_name in [
+            'bulk_create',
+            'list_by_batch',
+            'count_by_batch_and_status',
+        ]:
+            assert callable(getattr(import_row_repository, method_name))
+
+        for method_name in [
             'get_by_key',
             'get_by_code',
             'list_children',
@@ -47,16 +64,33 @@ def test_data_registry_service_contract_methods_exist():
 
     with app.app_context():
         from app.modules.data_registry.services import (
+            DataRegistryImportBatchService,
+            DataRegistryImportValidationService,
             DataRegistryMaterializationService,
             DataRegistryQueryService,
             DataRegistryService,
             DataRegistryVersionService,
         )
 
+        import_batch_service = DataRegistryImportBatchService()
+        import_validation_service = DataRegistryImportValidationService()
         registry_service = DataRegistryService()
         version_service = DataRegistryVersionService()
         query_service = DataRegistryQueryService()
         materialization_service = DataRegistryMaterializationService()
+
+        for method_name in [
+            'create_batch',
+            'get_batch_detail',
+            'list_batch_rows',
+            'export_import_batch_errors',
+        ]:
+            assert callable(getattr(import_batch_service, method_name))
+
+        for method_name in [
+            'validate_batch',
+        ]:
+            assert callable(getattr(import_validation_service, method_name))
 
         for method_name in [
             'create_registry',
@@ -69,6 +103,7 @@ def test_data_registry_service_contract_methods_exist():
             'create_draft_version',
             'publish_version',
             'get_published_version',
+            'get_version_detail',
         ]:
             assert callable(getattr(version_service, method_name))
 
@@ -83,5 +118,6 @@ def test_data_registry_service_contract_methods_exist():
 
         for method_name in [
             'materialize_wilayah_rows',
+            'materialize_import_batch',
         ]:
             assert callable(getattr(materialization_service, method_name))
