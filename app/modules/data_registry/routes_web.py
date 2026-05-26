@@ -2,6 +2,7 @@ from io import BytesIO
 
 from flask import Blueprint, Response, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
+from flask_wtf.csrf import generate_csrf
 
 from app.modules.data_registry.services import (
     DataRegistryImportBatchService,
@@ -19,6 +20,7 @@ data_registry_web_bp = Blueprint(
 
 
 PREVIEW_ROW_LIMIT = 20
+FIELD_DESIGNER_EXTRA_ROWS = 3
 
 
 REGISTRY_STARTER_PRESETS = {
@@ -121,6 +123,57 @@ def _build_registry_create_payload(form_data):
     }
 
 
+def _build_field_designer_rows(fields, extra_rows=FIELD_DESIGNER_EXTRA_ROWS):
+    rows = []
+    for field in fields or []:
+        options = field.get('options') or field.get('allowed_values') or []
+        rows.append({
+            'key': field.get('key', ''),
+            'label': field.get('label', ''),
+            'type': field.get('type', 'text') or 'text',
+            'required': bool(field.get('required', False)),
+            'options_text': '\n'.join(str(option) for option in options if option not in (None, '')),
+        })
+
+    for _ in range(extra_rows):
+        rows.append({'key': '', 'label': '', 'type': 'text', 'required': False, 'options_text': ''})
+    return rows
+
+
+def _build_field_schema_payload(form_data):
+    keys = form_data.getlist('field_key[]')
+    labels = form_data.getlist('field_label[]')
+    types = form_data.getlist('field_type[]')
+    options_payload = form_data.getlist('field_options[]')
+    required_flags = set(form_data.getlist('field_required[]'))
+
+    fields = []
+    for index, raw_key in enumerate(keys):
+        field_key = (raw_key or '').strip()
+        if not field_key:
+            continue
+
+        field_label = (labels[index] if index < len(labels) else '') or field_key
+        field_type = (types[index] if index < len(types) else 'text') or 'text'
+        raw_options = options_payload[index] if index < len(options_payload) else ''
+        normalized_options = [
+            option.strip()
+            for option in str(raw_options).splitlines()
+            if option.strip()
+        ]
+        field_payload = {
+            'key': field_key,
+            'label': field_label.strip() or field_key,
+            'type': field_type.strip() or 'text',
+            'required': str(index) in required_flags,
+        }
+        if field_payload['type'] == 'select' and normalized_options:
+            field_payload['options'] = normalized_options
+        fields.append(field_payload)
+
+    return fields
+
+
 @data_registry_web_bp.route('/data-registries')
 @login_required
 def registry_index():
@@ -183,6 +236,56 @@ def create_registry():
         'pages/data_registry/registry_create.html',
         starter_presets=REGISTRY_STARTER_PRESETS,
         form_values=form_values,
+        csrf_token=generate_csrf,
+    )
+
+
+@data_registry_web_bp.route('/data-registries/versions/<int:version_id>/import-mapping', methods=['GET', 'POST'])
+@login_required
+def import_mapping(version_id):
+    detail = None
+    version = None
+    mapping_result = None
+    error_message = None
+    batch_service = DataRegistryImportBatchService()
+
+    try:
+        detail = DataRegistryVersionService().get_version_detail(version_id)
+        version = detail.get('version') if detail else None
+        if request.method == 'POST':
+            upload = request.files.get('excel_file')
+            action = request.form.get('action', 'preview_mapping')
+            if not upload:
+                raise ValueError('File Excel wajib dipilih.')
+            if action == 'create_batch':
+                mapping_config = {
+                    key.replace('mapping_', '', 1): value
+                    for key, value in request.form.items()
+                    if key.startswith('mapping_')
+                }
+                result = batch_service.create_batch_from_workbook(
+                    version_id,
+                    upload,
+                    mapping_config,
+                    actor=_current_actor(),
+                )
+                return redirect(url_for('data_registry_web.import_batch_console', batch_id=result['batch'].id))
+            mapping_result = batch_service.parse_mapping_workbook(version_id, upload)
+    except ValueError as error:
+        error_message = str(error)
+    except Exception as error:
+        current_app.logger.error(f'Data registry import mapping error: {str(error)}')
+        error_message = 'Gagal membaca file Excel untuk shell mapping registry.'
+
+    return render_template(
+        'pages/data_registry/import_mapping.html',
+        detail=detail,
+        version=version,
+        batches=detail.get('batches') if detail else [],
+        fields=(mapping_result.get('fields') if mapping_result else None) or (batch_service.extract_importable_fields(version) if version and hasattr(batch_service, 'extract_importable_fields') else []),
+        mapping_result=mapping_result,
+        error_message=error_message,
+        csrf_token=generate_csrf,
     )
 
 
@@ -191,9 +294,14 @@ def create_registry():
 def import_console(version_id):
     detail = None
     error_message = None
+    manual_entry_fields = []
+    field_designer_rows = []
 
     try:
         detail = DataRegistryVersionService().get_version_detail(version_id)
+        version = detail.get('version') if detail else None
+        manual_entry_fields = DataRegistryImportBatchService().extract_importable_fields(version) if version else []
+        field_designer_rows = _build_field_designer_rows(manual_entry_fields)
     except ValueError as error:
         error_message = str(error)
     except Exception as error:
@@ -205,8 +313,79 @@ def import_console(version_id):
         detail=detail,
         version=detail.get('version') if detail else None,
         batches=detail.get('batches') if detail else [],
+        manual_entry_fields=manual_entry_fields,
+        field_designer_rows=field_designer_rows,
         error_message=error_message,
+        csrf_token=generate_csrf,
     )
+
+
+@data_registry_web_bp.route('/data-registries/versions/<int:version_id>/field-designer', methods=['POST'])
+@login_required
+def update_registry_field_designer(version_id):
+    try:
+        fields = _build_field_schema_payload(request.form)
+        DataRegistryVersionService().update_draft_schema_fields(version_id, fields, actor=_current_actor())
+        flash('Field schema registry draft berhasil diperbarui.', 'success')
+    except ValueError as error:
+        flash(str(error), 'error')
+        current_app.logger.warning(f'Data registry field designer error: {str(error)}')
+    except Exception as error:
+        flash('Gagal memperbarui field schema registry.', 'error')
+        current_app.logger.error(f'Data registry field designer exception: {str(error)}')
+
+    return redirect(url_for('data_registry_web.import_console', version_id=version_id))
+
+
+@data_registry_web_bp.route('/data-registries/versions/<int:version_id>/template.xlsx')
+@login_required
+def download_registry_template(version_id):
+    try:
+        detail = DataRegistryVersionService().get_version_detail(version_id)
+        version = detail.get('version') if detail else None
+        registry = getattr(version, 'registry', None)
+        batch_service = DataRegistryImportBatchService()
+        workbook = batch_service.build_template_workbook(version, registry=registry)
+        return send_file(
+            BytesIO(workbook),
+            as_attachment=True,
+            download_name=batch_service.build_template_filename(version, registry=registry),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+    except ValueError as error:
+        return Response(str(error), status=400)
+    except Exception as error:
+        current_app.logger.error(f'Data registry export template error: {str(error)}')
+        return Response('Gagal mengunduh template registry.', status=500)
+
+
+@data_registry_web_bp.route('/data-registries/versions/<int:version_id>/manual-entry', methods=['POST'])
+@login_required
+def create_manual_entry_batch(version_id):
+    try:
+        detail = DataRegistryVersionService().get_version_detail(version_id)
+        version = detail.get('version') if detail else None
+        fields = DataRegistryImportBatchService().extract_importable_fields(version) if version else []
+        row_payload = {
+            field.get('key'): request.form.get(field.get('key'), '')
+            for field in fields
+            if field.get('key')
+        }
+        result = DataRegistryImportBatchService().create_manual_entry_batch(
+            version_id,
+            row_payload,
+            actor=_current_actor(),
+        )
+        flash('Entry manual berhasil dibuat sebagai batch staging.', 'success')
+        return redirect(url_for('data_registry_web.import_batch_console', batch_id=result['batch'].id))
+    except ValueError as error:
+        flash(str(error), 'error')
+        current_app.logger.warning(f'Data registry manual entry error: {str(error)}')
+    except Exception as error:
+        flash('Gagal membuat entry manual registry.', 'error')
+        current_app.logger.error(f'Data registry manual entry exception: {str(error)}')
+
+    return redirect(url_for('data_registry_web.import_console', version_id=version_id))
 
 
 @data_registry_web_bp.route('/data-registries/import-batches/<int:batch_id>/import-console')
@@ -239,6 +418,7 @@ def import_batch_console(batch_id):
         preview_row_limit=PREVIEW_ROW_LIMIT,
         row_status_filter=row_status_filter,
         error_message=error_message,
+        csrf_token=generate_csrf,
     )
 
 

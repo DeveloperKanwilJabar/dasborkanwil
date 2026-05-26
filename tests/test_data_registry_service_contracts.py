@@ -84,6 +84,8 @@ def test_data_registry_service_contract_methods_exist():
             'get_batch_detail',
             'list_batch_rows',
             'export_import_batch_errors',
+            'build_template_workbook',
+            'build_template_filename',
         ]:
             assert callable(getattr(import_batch_service, method_name))
 
@@ -104,6 +106,7 @@ def test_data_registry_service_contract_methods_exist():
             'publish_version',
             'get_published_version',
             'get_version_detail',
+            'update_draft_schema_fields',
         ]:
             assert callable(getattr(version_service, method_name))
 

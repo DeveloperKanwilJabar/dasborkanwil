@@ -1,0 +1,207 @@
+{% extends "partials/base.html" %}
+{% block title %}Shell Mapping Import Registry{% endblock title %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Shell Mapping Import Registry</h4>
+                            <p class="text-muted mb-0">Upload Excel, baca header sumber, lalu simpan mapping tipis sebagai batch staging registry.</p>
+                        </div>
+                        {% if version %}
+                        <div class="page-title-right">
+                            <a href="{{ url_for('data_registry_web.import_console', version_id=version.id) }}" class="btn btn-soft-primary btn-sm">
+                                <i class="ri-arrow-left-line align-bottom me-1"></i> Kembali ke Import Console
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            {% if error_message %}
+            <div class="alert alert-warning" role="alert">
+                <i class="ri-alert-line me-1 align-middle"></i> {{ error_message }}
+            </div>
+            {% endif %}
+
+            <div class="row">
+                <div class="col-xl-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Target Version</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Version</p>
+                                <h5 class="mb-0">{% if version %}v{{ version.version_number }}{% else %}-{% endif %}</h5>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Status</p>
+                                <div>{{ version.status if version else '-' }}</div>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Sumber Registry</p>
+                                <div>{{ (version.source_snapshot or {}).get('source_name', '-') if version else '-' }}</div>
+                            </div>
+                            <div class="mb-0">
+                                <p class="text-muted mb-1 fs-13">Field Importable</p>
+                                <h5 class="mb-0">{{ fields|length }}</h5>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Upload Excel</h5>
+                        </div>
+                        <div class="card-body">
+                            <form method="post" enctype="multipart/form-data">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="action" value="preview_mapping">
+                                <div class="mb-3">
+                                    <label class="form-label" for="excel_file">File Excel (.xlsx)</label>
+                                    <input type="file" class="form-control" id="excel_file" name="excel_file" accept=".xlsx" required>
+                                    <div class="form-text">Tahap ini hanya membaca header dan sample row, belum menyimpan batch registry.</div>
+                                </div>
+                                <button type="submit" class="btn btn-primary w-100">
+                                    <i class="ri-upload-cloud-2-line align-bottom me-1"></i> Upload & Baca Kolom Sumber
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-8">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-0">Preview Mapping</h5>
+                                <p class="text-muted mb-0 fs-13">Shell ini menjaga flow operator tetap tipis: review header, pastikan mapping, lalu simpan batch staging.</p>
+                            </div>
+                            {% if mapping_result %}
+                            <div class="flex-shrink-0">
+                                <span class="badge bg-info-subtle text-info">{{ mapping_result.headers|length }} header terdeteksi</span>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="card-body">
+                            {% if mapping_result %}
+                            <div class="alert alert-info">
+                                <i class="ri-information-line me-1 align-middle"></i>
+                                File <strong>{{ mapping_result.filename }}</strong> berhasil dibaca. Upload ulang file yang sama lalu simpan sebagai batch staging registry.
+                            </div>
+
+                            <form method="post" enctype="multipart/form-data">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="action" value="create_batch">
+                                <div class="table-responsive table-card mb-4">
+                                    <table class="table table-nowrap align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th style="width: 32%;">Field Registry</th>
+                                                <th style="width: 18%;">Tipe</th>
+                                                <th style="width: 18%;">Required</th>
+                                                <th>Kolom Sumber</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for field in mapping_result.fields %}
+                                            <tr>
+                                                <td>
+                                                    <div class="fw-semibold">{{ field.label }}</div>
+                                                    <code class="fs-12">{{ field.key }}</code>
+                                                </td>
+                                                <td><span class="badge bg-light text-body">{{ field.type }}</span></td>
+                                                <td>
+                                                    {% if field.required %}
+                                                    <span class="badge bg-danger-subtle text-danger">required</span>
+                                                    {% else %}
+                                                    <span class="text-muted">optional</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    <select class="form-select form-select-sm" name="mapping_{{ field.key }}">
+                                                        <option value="">-- Tidak dipetakan --</option>
+                                                        {% for header in mapping_result.headers %}
+                                                        <option value="{{ header }}" {% if mapping_result.auto_mapping.get(field.key) == header %}selected{% endif %}>{{ header }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div class="card border border-primary border-opacity-25 bg-primary-subtle mt-4">
+                                    <div class="card-body">
+                                        <h6 class="mb-2">Simpan Batch Staging</h6>
+                                        <p class="text-muted fs-13 mb-3">Pilihan mapping di atas akan dipakai saat batch disimpan. Upload ulang file yang sama lalu simpan sebagai batch staging registry.</p>
+                                        <div class="row g-2 align-items-end">
+                                            <div class="col-md-8">
+                                                <label class="form-label" for="excel_file_batch">File Excel sumber</label>
+                                                <input type="file" class="form-control" id="excel_file_batch" name="excel_file" accept=".xlsx" required>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <button type="submit" class="btn btn-primary w-100">
+                                                    <i class="ri-database-2-line align-bottom me-1"></i> Simpan Batch Import
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+
+                            <h6 class="mb-3 mt-4">Sample Data</h6>
+                            <div class="table-responsive table-card">
+                                <table class="table table-sm table-bordered align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            {% for header in mapping_result.headers %}
+                                            <th>{{ header }}</th>
+                                            {% endfor %}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for row in mapping_result.sample_rows %}
+                                        <tr>
+                                            {% for header in mapping_result.headers %}
+                                            <td>{{ row.get(header, '') }}</td>
+                                            {% endfor %}
+                                        </tr>
+                                        {% else %}
+                                        <tr>
+                                            <td colspan="{{ mapping_result.headers|length }}" class="text-muted text-center">Tidak ada sample row setelah header.</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="text-center py-5">
+                                <div class="avatar-md mx-auto mb-3">
+                                    <div class="avatar-title bg-light text-primary rounded-circle fs-24">
+                                        <i class="ri-file-search-line"></i>
+                                    </div>
+                                </div>
+                                <h5>Belum ada file diupload</h5>
+                                <p class="text-muted mb-0">Upload Excel untuk menampilkan header sumber, sample row, dan rekomendasi mapping otomatis.</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}

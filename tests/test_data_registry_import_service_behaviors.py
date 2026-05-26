@@ -2,7 +2,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from app import create_app
 
@@ -152,6 +152,24 @@ def create_batch_payload(rows=None):
     }
 
 
+def build_mapping_workbook_upload(rows):
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = 'Sheet1'
+    for row in rows:
+        worksheet.append(row)
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    payload = buffer.getvalue()
+    return SimpleNamespace(
+        filename='registry-import.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        read=lambda: payload,
+    )
+
+
 def test_get_batch_detail_returns_batch_and_version_context():
     app = create_app('testing')
 
@@ -278,6 +296,46 @@ def test_validate_batch_rejects_invalid_date_format_explicitly():
         assert result['batch'].error_rows == 1
         assert rows[0].status == 'error'
         assert 'effective_date' in rows[0].validation_errors
+
+
+def test_validate_batch_rejects_invalid_select_option_explicitly():
+    app = create_app('testing')
+
+    with app.app_context():
+        version = make_draft_version(
+            schema_json={
+                'fields': [
+                    {'key': 'record_code', 'type': 'string', 'required': True},
+                    {'key': 'label', 'type': 'string', 'required': True},
+                    {
+                        'key': 'status',
+                        'type': 'select',
+                        'required': True,
+                        'options': ['aktif', 'nonaktif'],
+                    },
+                ]
+            }
+        )
+        batch_service, validation_service, _batch_repository, row_repository = create_services(version=version)
+        payload = create_batch_payload(
+            rows=[
+                {
+                    'Kode Program': 'PRG-001',
+                    'Nama Program': 'Program A',
+                    'Status': 'draft',
+                }
+            ]
+        )
+        payload['mapping_snapshot']['fields']['status'] = {'source': 'Status'}
+        payload['source_headers'] = ['Kode Program', 'Nama Program', 'Status']
+
+        batch = batch_service.create_batch(31, payload)['batch']
+        result = validation_service.validate_batch(batch.id)
+        rows = row_repository.list_by_batch(batch.id)
+
+        assert result['batch'].error_rows == 1
+        assert rows[0].status == 'error'
+        assert rows[0].validation_errors['status'] == 'invalid_option'
 
 
 def test_validate_batch_marks_duplicate_record_code_within_batch():
@@ -649,3 +707,109 @@ def test_export_import_batch_errors_rejects_when_batch_has_no_error_rows():
 
         with pytest.raises(ValueError, match='row error atau duplikat'):
             service.export_import_batch_errors(batch.id)
+
+
+def test_parse_mapping_workbook_reads_headers_sample_rows_and_auto_mapping():
+    app = create_app('testing')
+
+    with app.app_context():
+        batch_service, _validation_service, _batch_repository, _row_repository = create_services()
+        upload = build_mapping_workbook_upload([
+            ['Kode Program', 'Nama Program', 'Tanggal Berlaku'],
+            ['PRG-001', 'Program A', '2026-05-21'],
+            ['PRG-002', 'Program B', '2026-05-22'],
+        ])
+
+        result = batch_service.parse_mapping_workbook(31, upload)
+
+        assert result['filename'] == 'registry-import.xlsx'
+        assert result['headers'] == ['Kode Program', 'Nama Program', 'Tanggal Berlaku']
+        assert result['sample_rows'][0]['Kode Program'] == 'PRG-001'
+        assert result['sample_rows'][1]['Nama Program'] == 'Program B'
+        assert result['auto_mapping']['record_code'] == 'Kode Program'
+        assert result['auto_mapping']['label'] == 'Nama Program'
+        assert result['auto_mapping']['effective_date'] == 'Tanggal Berlaku'
+        assert result['fields'][0]['key'] == 'record_code'
+
+
+def test_create_batch_from_workbook_builds_staged_rows_and_mapping_snapshot():
+    app = create_app('testing')
+
+    with app.app_context():
+        batch_service, _validation_service, batch_repository, row_repository = create_services()
+        actor = SimpleNamespace(id=9, uuid='actor-uuid')
+        upload = build_mapping_workbook_upload([
+            ['Kode Program', 'Nama Program', 'Tanggal Berlaku'],
+            ['PRG-001', 'Program A', '2026-05-21'],
+            ['PRG-002', 'Program B', '2026-05-22'],
+        ])
+
+        result = batch_service.create_batch_from_workbook(
+            31,
+            upload,
+            {
+                'record_code': 'Kode Program',
+                'label': 'Nama Program',
+                'effective_date': 'Tanggal Berlaku',
+            },
+            actor=actor,
+        )
+
+        batch = result['batch']
+        rows = row_repository.list_by_batch(batch.id)
+
+        assert batch.original_filename == 'registry-import.xlsx'
+        assert batch.source_headers == ['Kode Program', 'Nama Program', 'Tanggal Berlaku']
+        assert batch.mapping_snapshot['fields']['record_code']['source'] == 'Kode Program'
+        assert batch.mapping_snapshot['fields']['label']['label'] == 'label'
+        assert batch.total_rows == 2
+        assert batch.created_by == 9
+        assert batch_repository.batch.id == batch.id
+        assert len(rows) == 2
+        assert rows[0].mapped_payload['record_code'] == 'PRG-001'
+        assert rows[1].mapped_payload['label'] == 'Program B'
+
+
+def test_create_manual_entry_batch_builds_single_staged_row_and_mapping_snapshot():
+    app = create_app('testing')
+
+    with app.app_context():
+        version = make_draft_version(schema_json={
+            'fields': [
+                {'key': 'record_key', 'type': 'string', 'required': True},
+                {'key': 'record_code', 'type': 'string', 'required': True},
+                {'key': 'label', 'type': 'string', 'required': True},
+                {'key': 'parent_code', 'type': 'string', 'required': False},
+                {'key': 'admin_level', 'type': 'string', 'required': False},
+            ]
+        })
+        batch_service, _validation_service, batch_repository, row_repository = create_services(version=version)
+        actor = SimpleNamespace(id=9, uuid='actor-uuid')
+
+        result = batch_service.create_manual_entry_batch(
+            31,
+            {
+                'record_key': 'program:prg-001',
+                'record_code': 'PRG-001',
+                'label': 'Program A',
+                'parent_code': '',
+                'admin_level': 'program',
+            },
+            actor=actor,
+        )
+
+        batch = result['batch']
+        rows = row_repository.list_by_batch(batch.id)
+
+        assert batch.batch_type == 'manual_entry'
+        assert batch.original_filename == 'manual-entry-v31.xlsx'
+        assert batch.source_headers == ['record_key', 'record_code', 'label', 'parent_code', 'admin_level']
+        assert batch.mapping_snapshot['fields']['record_key']['source'] == 'record_key'
+        assert batch.mapping_snapshot['fields']['record_code']['source'] == 'record_code'
+        assert batch.source_snapshot['created_from'] == 'browser_manual_entry'
+        assert batch.total_rows == 1
+        assert batch.created_by == 9
+        assert batch_repository.batch.id == batch.id
+        assert len(rows) == 1
+        assert rows[0].raw_payload['record_code'] == 'PRG-001'
+        assert rows[0].mapped_payload['label'] == 'Program A'

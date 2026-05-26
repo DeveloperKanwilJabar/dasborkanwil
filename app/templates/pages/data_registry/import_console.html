@@ -10,7 +10,23 @@
                     <div class="page-title-box d-sm-flex align-items-center justify-content-between">
                         <div>
                             <h4 class="mb-sm-0">Import Console Registry</h4>
-                            <p class="text-muted mb-0">Console tipis untuk review batch import staging per registry version sebelum validasi dan materialisasi.</p>
+                            <p class="text-muted mb-0">Pilih jalur input untuk draft version ini: entry manual cepat atau upload Excel. Keduanya tetap masuk dulu ke batch staging sebelum validasi dan materialisasi.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-light border" role="alert">
+                        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                            <span class="badge bg-primary-subtle text-primary">Flow Ringkas Import</span>
+                            <span class="text-muted fs-13">Siapkan batch staging → validasi row → materialisasi registry.</span>
+                        </div>
+                        <div class="d-flex flex-wrap gap-3 fs-13 text-muted">
+                            <span>1. Siapkan batch staging</span>
+                            <span>2. Validasi row dan cek error/duplikat</span>
+                            <span>3. Materialisasi batch untuk refresh registry version</span>
                         </div>
                     </div>
                 </div>
@@ -21,6 +37,20 @@
                 <i class="ri-alert-line me-1 align-middle"></i> {{ error_message }}
             </div>
             {% endif %}
+
+            {% with flashed_messages = get_flashed_messages(with_categories=true) %}
+            {% if flashed_messages %}
+            <div class="row">
+                <div class="col-12">
+                    {% for category, message in flashed_messages %}
+                    <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }}" role="alert">
+                        {{ message }}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            {% endwith %}
 
             {% if version %}
             {% set version_status_labels = {
@@ -100,6 +130,183 @@
                             </div>
                         </div>
                     </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Pilih Jalur Entri</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3 mb-3">
+                                <div class="col-12">
+                                    <div class="border rounded p-3 h-100">
+                                        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                            <div>
+                                                <h6 class="mb-1">1. Entry Manual Cepat</h6>
+                                                <p class="text-muted fs-13 mb-0">Pakai ini kalau mau input 1 record dulu dari browser untuk ngetes contract field dan validasi.</p>
+                                            </div>
+                                            <span class="badge bg-primary-subtle text-primary">1 row</span>
+                                        </div>
+                                        <div class="text-muted fs-12">Hasil submit tetap dibungkus sebagai batch staging tipe <code>manual_entry</code>.</div>
+                                    </div>
+                                </div>
+                                <div class="col-12">
+                                    <div class="border rounded p-3 h-100">
+                                        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                            <div>
+                                                <h6 class="mb-1">2. Upload Excel</h6>
+                                                <p class="text-muted fs-13 mb-0">Pakai shell mapping kalau sumber datanya sudah ada di workbook dan perlu cocokkan kolom file dengan field registry.</p>
+                                            </div>
+                                            <a href="{{ url_for('data_registry_web.import_mapping', version_id=version.id) }}" class="btn btn-soft-primary btn-sm">
+                                                <i class="ri-file-upload-line align-bottom me-1"></i> Pilih Upload Excel
+                                            </a>
+                                        </div>
+                                        <div class="text-muted fs-12">Flow-nya: baca header → review mapping → simpan batch staging → validate → materialize.</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <hr>
+                            <p class="text-muted fs-13">Form di bawah ini merepresentasikan referensi field registry yang sama dengan yang dipakai untuk mapping Excel.</p>
+                            <form method="post" action="{{ url_for('data_registry_web.create_manual_entry_batch', version_id=version.id) }}" class="row g-3">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                {% for field in manual_entry_fields %}
+                                <div class="col-12">
+                                    <label class="form-label d-flex justify-content-between gap-2">
+                                        <span>{{ field.label }}</span>
+                                        <small class="text-muted"><code>{{ field.key }}</code>{% if field.required %} • required{% endif %}{% if field.type == 'select' and field.options %} • {{ field.options|length }} opsi{% endif %}</small>
+                                    </label>
+                                    {% if field.type == 'select' and field.options %}
+                                    <select class="form-select" name="{{ field.key }}" {% if field.required %}required{% endif %}>
+                                        <option value="">Pilih {{ field.label }}</option>
+                                        {% for option in field.options %}
+                                        <option value="{{ option }}">{{ option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <div class="form-text">Nilai yang valid: {{ field.options|join(', ') }}</div>
+                                    {% else %}
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        name="{{ field.key }}"
+                                        placeholder="{{ field.label }}"
+                                        {% if field.required %}required{% endif %}
+                                    >
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                                <div class="col-12">
+                                    <button type="submit" class="btn btn-primary w-100">
+                                        <i class="ri-add-line align-bottom me-1"></i> Simpan Entry Manual ke Batch Staging
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header d-flex align-items-center justify-content-between gap-2">
+                            <div>
+                                <h5 class="card-title mb-0">Referensi Kolom Registry</h5>
+                                <p class="text-muted fs-13 mb-0">Kolom ini berasal dari <code>schema_json.fields</code> milik version draft. Ini yang dipakai bersama oleh entry manual dan mapping Excel.</p>
+                            </div>
+                            <a href="{{ url_for('data_registry_web.download_registry_template', version_id=version.id) }}" class="btn btn-soft-success btn-sm">
+                                <i class="ri-file-excel-2-line align-bottom me-1"></i> Export Template Excel
+                            </a>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive table-card">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Field Key</th>
+                                            <th>Label</th>
+                                            <th>Tipe</th>
+                                            <th>Required</th>
+                                            <th>Allowed Values</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for field in manual_entry_fields %}
+                                        <tr>
+                                            <td><code>{{ field.key }}</code></td>
+                                            <td>{{ field.label }}</td>
+                                            <td>{{ field.type }}</td>
+                                            <td>{% if field.required %}<span class="badge bg-danger-subtle text-danger">required</span>{% else %}<span class="text-muted">optional</span>{% endif %}</td>
+                                            <td>
+                                                {% if field.options %}
+                                                <span class="text-muted fs-12">{{ field.options|join(', ') }}</span>
+                                                {% else %}
+                                                <span class="text-muted">-</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% else %}
+                                        <tr>
+                                            <td colspan="5" class="text-center text-muted">Belum ada field importable di schema registry draft ini.</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Field Designer Ringan</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted fs-13">Edit cepat <code>schema_json.fields</code> tanpa builder berat. Simpan dulu field kontraknya, lalu pakai lagi untuk entry manual, mapping, dan export template Excel.</p>
+                            <form id="dataRegistryFieldDesignerForm" method="post" action="{{ url_for('data_registry_web.update_registry_field_designer', version_id=version.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="table-responsive table-card mb-3">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th style="min-width: 180px;">Field Key</th>
+                                                <th style="min-width: 220px;">Label</th>
+                                                <th style="min-width: 140px;">Tipe</th>
+                                                <th style="width: 120px;">Required</th>
+                                                <th style="min-width: 220px;">Allowed Values</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for row in field_designer_rows %}
+                                            <tr>
+                                                <td>
+                                                    <input type="text" class="form-control form-control-sm" name="field_key[]" value="{{ row.key }}" placeholder="contoh: record_code">
+                                                </td>
+                                                <td>
+                                                    <input type="text" class="form-control form-control-sm" name="field_label[]" value="{{ row.label }}" placeholder="contoh: Record Code">
+                                                </td>
+                                                <td>
+                                                    <select class="form-select form-select-sm" name="field_type[]">
+                                                        {% for field_type in ['text', 'textarea', 'number', 'date', 'datetime', 'email', 'select'] %}
+                                                        <option value="{{ field_type }}" {% if row.type == field_type %}selected{% endif %}>{{ field_type }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" name="field_required[]" value="{{ loop.index0 }}" {% if row.required %}checked{% endif %}>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <textarea class="form-control form-control-sm" name="field_options[]" rows="2" placeholder="Satu opsi per baris. Dipakai saat tipe = select.">{{ row.options_text }}</textarea>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                                    <div class="text-muted fs-12">Kosongkan row yang tidak dipakai. Minimal harus ada 1 field dengan key unik. Jika tipe <code>select</code>, isi opsi satu baris satu nilai.</div>
+                                    <button type="submit" class="btn btn-primary btn-sm">
+                                        <i class="ri-save-line align-bottom me-1"></i> Simpan Field Schema
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
                 </div>
                 <div class="col-xl-8">
                     <div class="card">
@@ -107,6 +314,11 @@
                             <div class="flex-grow-1">
                                 <h5 class="card-title mb-0">Daftar Batch</h5>
                                 <p class="text-muted mb-0 fs-13">Status, warning, dan duplicate indicator diringkas di sini sebelum operator membuka batch console detail.</p>
+                            </div>
+                            <div class="flex-shrink-0">
+                                <a href="{{ url_for('data_registry_web.import_mapping', version_id=version.id) }}" class="btn btn-soft-primary btn-sm">
+                                    <i class="ri-file-upload-line align-bottom me-1"></i> Buka Shell Mapping
+                                </a>
                             </div>
                         </div>
                         <div class="card-body">

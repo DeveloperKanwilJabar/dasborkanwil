@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from io import BytesIO
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from app.core.extensions import db
 from app.core.services.base import BaseService
@@ -214,12 +214,81 @@ class DataRegistryVersionService(BaseService):
             'batches': batches,
         }
 
+    def update_draft_schema_fields(self, version_id, fields, actor=None):
+        version = self.repository.get_by_id(version_id)
+        if not version:
+            raise ValueError('Registry version tidak ditemukan.')
+        if version.status != 'draft':
+            raise ValueError('Hanya draft version registry yang boleh diubah field schema-nya.')
+
+        normalized_fields = self._normalize_schema_fields(fields)
+        schema_json = dict(version.schema_json or {})
+        schema_json['fields'] = normalized_fields
+        version.schema_json = schema_json
+        self._apply_actor_audit(version, actor, action='update')
+        return self.repository.save(version)
+
     def _validate_schema(self, schema_json):
         if not isinstance(schema_json, dict):
             raise ValueError('Schema registry wajib berupa object/dict.')
         if 'fields' not in schema_json:
             raise ValueError('Schema registry wajib memiliki key fields.')
         return True
+
+    def _normalize_schema_fields(self, fields):
+        if not isinstance(fields, list):
+            raise ValueError('Field schema registry wajib berupa list.')
+
+        normalized_fields = []
+        seen_keys = set()
+        for index, field in enumerate(fields, start=1):
+            if not isinstance(field, dict):
+                raise ValueError(f'Field schema ke-{index} wajib berupa object/dict.')
+
+            field_key = str(field.get('key') or '').strip()
+            if not field_key:
+                raise ValueError(f'Field schema ke-{index} wajib memiliki key.')
+            if field_key in seen_keys:
+                raise ValueError(f'Field schema dengan key {field_key} duplikat.')
+            seen_keys.add(field_key)
+
+            normalized_field = dict(field)
+            normalized_field['key'] = field_key
+            normalized_field['label'] = str(field.get('label') or field_key).strip() or field_key
+            normalized_field['type'] = str(field.get('type') or 'text').strip() or 'text'
+            normalized_field['required'] = bool(field.get('required', False))
+            normalized_options = self._normalize_field_options(field.get('options') or field.get('allowed_values'))
+            if normalized_field['type'] == 'select':
+                normalized_field['options'] = normalized_options
+            else:
+                normalized_field.pop('options', None)
+                normalized_field.pop('allowed_values', None)
+            normalized_fields.append(normalized_field)
+
+        if not normalized_fields:
+            raise ValueError('Schema registry wajib memiliki minimal satu field.')
+
+        return normalized_fields
+
+    def _normalize_field_options(self, raw_options):
+        if raw_options in (None, ''):
+            return []
+        if isinstance(raw_options, str):
+            candidates = raw_options.splitlines()
+        elif isinstance(raw_options, (list, tuple, set)):
+            candidates = raw_options
+        else:
+            raise ValueError('Opsi field select wajib berupa list atau string multiline.')
+
+        normalized = []
+        seen = set()
+        for candidate in candidates:
+            option = str(candidate or '').strip()
+            if not option or option in seen:
+                continue
+            seen.add(option)
+            normalized.append(option)
+        return normalized
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
         if not actor:
@@ -296,6 +365,177 @@ class DataRegistryImportBatchService:
 
         self.row_repository.bulk_create(rows)
         return {'batch': batch, 'rows': rows}
+
+    def extract_importable_fields(self, version_or_schema):
+        schema_json = getattr(version_or_schema, 'schema_json', version_or_schema) or {}
+        fields = (schema_json.get('fields') or []) if isinstance(schema_json, dict) else []
+        normalized_fields = []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            field_key = field.get('key')
+            if not field_key:
+                continue
+            normalized_fields.append({
+                'key': field_key,
+                'label': field.get('label') or field_key,
+                'type': field.get('type') or 'string',
+                'required': bool(field.get('required', False)),
+                'options': [
+                    str(option).strip()
+                    for option in (field.get('options') or field.get('allowed_values') or [])
+                    if str(option).strip()
+                ],
+            })
+        return normalized_fields
+
+    def build_template_workbook(self, version, registry=None):
+        if not version:
+            raise ValueError('Registry version tidak ditemukan.')
+
+        fields = self.extract_importable_fields(version)
+        if not fields:
+            raise ValueError('Schema registry belum memiliki field yang bisa diexport ke template Excel.')
+
+        generated_at = now_utc().to_iso8601_string()
+        data_sheet = [[field['label'] for field in fields]]
+        meta_sheet = [
+            ['meta_key', 'meta_value'],
+            ['registry_id', getattr(registry, 'id', getattr(version, 'registry_id', ''))],
+            ['registry_uuid', getattr(registry, 'uuid', '')],
+            ['registry_code', getattr(registry, 'registry_code', '')],
+            ['registry_name', getattr(registry, 'name', '')],
+            ['registry_version_id', getattr(version, 'id', '')],
+            ['registry_version_uuid', getattr(version, 'uuid', '')],
+            ['version_number', getattr(version, 'version_number', '')],
+            ['generated_at', generated_at],
+            [],
+            ['field_key', 'field_label', 'field_type', 'required', 'allowed_values'],
+        ]
+        dictionary_sheet = [
+            ['field_key', 'field_label', 'option_value', 'option_label'],
+        ]
+        for field in fields:
+            options = field.get('options') or []
+            meta_sheet.append([
+                field['key'],
+                field['label'],
+                field['type'],
+                'yes' if field['required'] else 'no',
+                ', '.join(options),
+            ])
+            for option in options:
+                dictionary_sheet.append([
+                    field['key'],
+                    field['label'],
+                    option,
+                    option,
+                ])
+
+        sheets = [
+            {'name': 'data', 'rows': data_sheet},
+            {'name': '_meta', 'rows': meta_sheet},
+        ]
+        if len(dictionary_sheet) > 1:
+            sheets.append({'name': '_dictionary', 'rows': dictionary_sheet})
+
+        return self._create_xlsx(sheets)
+
+    def build_template_filename(self, version, registry=None):
+        registry_ref = getattr(registry, 'registry_code', None) or getattr(registry, 'registry_slug', None) or f'registry-{getattr(version, "registry_id", "unknown")}'
+        safe_ref = re.sub(r'[^A-Za-z0-9._-]+', '-', str(registry_ref)).strip('-') or 'registry'
+        version_number = getattr(version, 'version_number', None) or 'draft'
+        return f'{safe_ref}-v{version_number}-template.xlsx'
+
+    def parse_mapping_workbook(self, version_id, file_storage, sample_limit=5):
+        version = self.version_repository.get_by_id(version_id)
+        if not version:
+            raise ValueError('Target version registry tidak ditemukan.')
+        if getattr(version, 'status', None) != 'draft':
+            raise ValueError('Shell mapping hanya tersedia untuk draft version registry.')
+
+        filename, content = self._read_upload_content(file_storage)
+        rows = self._read_first_sheet_rows(content, max_rows=sample_limit + 1)
+        headers, data_rows = self._split_headers_and_rows(rows)
+        fields = self.extract_importable_fields(version)
+        sample_rows = [self._row_to_payload(row, headers) for row in data_rows[:sample_limit]]
+        auto_mapping = self._build_auto_mapping(fields, headers)
+
+        return {
+            'filename': filename,
+            'headers': headers,
+            'sample_rows': sample_rows,
+            'fields': fields,
+            'auto_mapping': auto_mapping,
+        }
+
+    def create_batch_from_workbook(self, version_id, file_storage, mapping_config, actor=None):
+        version = self.version_repository.get_by_id(version_id)
+        if not version:
+            raise ValueError('Target version registry tidak ditemukan.')
+        if getattr(version, 'status', None) != 'draft':
+            raise ValueError('Target version registry harus draft.')
+
+        filename, content = self._read_upload_content(file_storage)
+        rows = self._read_first_sheet_rows(content, max_rows=None)
+        headers, data_rows = self._split_headers_and_rows(rows)
+        fields = self.extract_importable_fields(version)
+        normalized_mapping = self._normalize_mapping_config(mapping_config, fields, headers)
+        mapping_snapshot = self._build_mapping_snapshot(version, fields, normalized_mapping)
+
+        return self.create_batch(
+            version.id,
+            {
+                'batch_type': 'file_upload',
+                'original_filename': filename,
+                'mime_type': getattr(file_storage, 'mimetype', None),
+                'mapping_snapshot': mapping_snapshot,
+                'source_headers': headers,
+                'source_snapshot': {
+                    'source_name': filename,
+                    'created_from': 'browser_mapping_shell',
+                },
+                'rows': [self._row_to_payload(row, headers) for row in data_rows],
+            },
+            actor=actor,
+        )
+
+    def create_manual_entry_batch(self, version_id, row_payload, actor=None):
+        version = self.version_repository.get_by_id(version_id)
+        if not version:
+            raise ValueError('Target version registry tidak ditemukan.')
+        if getattr(version, 'status', None) != 'draft':
+            raise ValueError('Target version registry harus draft.')
+
+        fields = self.extract_importable_fields(version)
+        headers = [field.get('key') for field in fields if field.get('key')]
+        if not headers:
+            raise ValueError('Field import registry belum tersedia untuk entry manual.')
+
+        sanitized_row = {}
+        for header in headers:
+            value = (row_payload or {}).get(header, '')
+            sanitized_row[header] = '' if value is None else str(value).strip()
+
+        normalized_mapping = {header: header for header in headers}
+        mapping_snapshot = self._build_mapping_snapshot(version, fields, normalized_mapping)
+
+        return self.create_batch(
+            version.id,
+            {
+                'batch_type': 'manual_entry',
+                'original_filename': f'manual-entry-v{version.id}.xlsx',
+                'mime_type': 'application/x.manual-entry',
+                'mapping_snapshot': mapping_snapshot,
+                'source_headers': headers,
+                'source_snapshot': {
+                    'source_name': 'manual_entry_browser',
+                    'created_from': 'browser_manual_entry',
+                },
+                'rows': [sanitized_row],
+            },
+            actor=actor,
+        )
 
     def get_batch_detail(self, batch_id):
         batch = self.batch_repository.get_by_id(batch_id)
@@ -484,6 +724,97 @@ class DataRegistryImportBatchService:
         encoded = json.dumps(raw_payload or {}, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
 
+    def _read_upload_content(self, file_storage):
+        if not file_storage:
+            raise ValueError('File Excel wajib dipilih.')
+        filename = (getattr(file_storage, 'filename', None) or '').strip()
+        if not filename:
+            raise ValueError('Nama file upload tidak valid.')
+        content = file_storage.read()
+        if not content:
+            raise ValueError('File upload kosong.')
+        return filename, content
+
+    def _read_first_sheet_rows(self, content, max_rows=None):
+        workbook = load_workbook(filename=BytesIO(content), read_only=True, data_only=True)
+        worksheet = workbook[workbook.sheetnames[0]]
+        rows = []
+        for row in worksheet.iter_rows(values_only=True):
+            values = list(row or [])
+            while values and values[-1] is None:
+                values.pop()
+            rows.append(['' if value is None else str(value) for value in values])
+            if max_rows is not None and len(rows) >= max_rows:
+                break
+        workbook.close()
+        return rows
+
+    def _split_headers_and_rows(self, rows):
+        rows = rows or []
+        if not rows:
+            raise ValueError('File Excel belum memiliki header.')
+        headers = [str(value).strip() for value in (rows[0] or []) if str(value).strip()]
+        if not headers:
+            raise ValueError('Header file Excel kosong.')
+        return headers, rows[1:]
+
+    def _row_to_payload(self, row, headers):
+        payload = {}
+        for index, header in enumerate(headers):
+            payload[header] = row[index] if index < len(row) else ''
+        return payload
+
+    def _normalize_mapping_config(self, mapping_config, fields, headers):
+        mapping_config = mapping_config or {}
+        header_set = set(headers or [])
+        normalized = {}
+        for field in fields:
+            field_key = field.get('key')
+            header_name = (mapping_config.get(field_key) or '').strip()
+            normalized[field_key] = header_name if header_name in header_set else ''
+        return normalized
+
+    def _build_mapping_snapshot(self, version, fields, normalized_mapping):
+        version_mapping_spec = getattr(version, 'mapping_spec', None) or {}
+        snapshot_fields = {}
+        for field in fields:
+            field_key = field.get('key')
+            snapshot_fields[field_key] = {
+                'source': normalized_mapping.get(field_key, ''),
+                'label': field.get('key'),
+                'type': field.get('type'),
+                'required': field.get('required', False),
+            }
+        return {
+            'materialization_contract': version_mapping_spec.get('materialization_contract'),
+            'fields': snapshot_fields,
+        }
+
+    def _build_auto_mapping(self, fields, headers):
+        headers = headers or []
+        normalized_headers = {self._normalize_mapping_token(header): header for header in headers}
+        mapping = {}
+        alias_map = {
+            'recordcode': ['kodeprogram', 'kode', 'code'],
+            'label': ['namaprogram', 'nama', 'label'],
+            'effectivedate': ['tanggalberlaku', 'tanggal', 'date'],
+        }
+        for field in fields:
+            field_key = field.get('key') or ''
+            normalized_key = self._normalize_mapping_token(field_key)
+            normalized_label = self._normalize_mapping_token(field.get('label') or '')
+            candidates = [normalized_label, normalized_key] + alias_map.get(normalized_key, [])
+            selected = ''
+            for candidate in candidates:
+                if candidate and candidate in normalized_headers:
+                    selected = normalized_headers[candidate]
+                    break
+            mapping[field_key] = selected
+        return mapping
+
+    def _normalize_mapping_token(self, value):
+        return re.sub(r'[^a-z0-9]+', '', (value or '').strip().lower())
+
     def _apply_actor_audit(self, obj, actor=None, action='create'):
         if not actor:
             return obj
@@ -576,6 +907,19 @@ class DataRegistryImportValidationService:
                 normalized_value = self._normalize_date(value, mapping_fields.get(field_key) or {})
                 if normalized_value is None:
                     row.validation_errors[field_key] = 'invalid_date_format'
+                    continue
+                row.normalized_payload[field_key] = normalized_value
+                continue
+
+            if field_type == 'select':
+                allowed_options = [
+                    str(option).strip()
+                    for option in (field.get('options') or field.get('allowed_values') or [])
+                    if str(option).strip()
+                ]
+                normalized_value = str(value).strip()
+                if allowed_options and normalized_value not in allowed_options:
+                    row.validation_errors[field_key] = 'invalid_option'
                     continue
                 row.normalized_payload[field_key] = normalized_value
                 continue

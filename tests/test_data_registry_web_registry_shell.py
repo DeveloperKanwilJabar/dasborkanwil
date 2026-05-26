@@ -92,9 +92,32 @@ def test_data_registry_create_page_returns_browser_ready_form():
     assert 'name="registry_slug"' in html
     assert 'name="registry_code"' in html
     assert 'name="template_key"' in html
+    assert 'name="csrf_token"' in html
     assert 'master_data_hierarkis' in html
     assert 'wilayah_administratif' in html
     assert 'Draft version awal akan dibuat otomatis' in html
+    assert 'entry manual 1 record' in html
+    assert 'upload Excel sebagai batch staging' in html
+    assert 'Mekanisme Data Registry' in html
+    assert 'Referensi kolom starter' in html
+    assert 'schema_json.fields' in html
+
+
+def test_data_registry_create_post_requires_csrf_when_enabled():
+    app = create_app('testing')
+    app.config.update(WTF_CSRF_ENABLED=True)
+
+    client = app.test_client()
+    response = client.post(
+        '/data-registries/create',
+        data={
+            'name': 'Master Program',
+            'registry_slug': 'master.program',
+            'template_key': 'master_data_hierarkis',
+        },
+    )
+
+    assert response.status_code == 400
 
 
 def test_data_registry_create_post_redirects_to_import_console(monkeypatch):
@@ -138,3 +161,34 @@ def test_data_registry_create_post_redirects_to_import_console(monkeypatch):
     assert captured['data']['mapping_spec']['materialization_contract'] == 'generic_v1'
     assert captured['data']['schema_json']['fields'][0]['key'] == 'record_key'
     assert captured['data']['schema_meta']['starter_template'] == 'master_data_hierarkis'
+
+
+def test_data_registry_create_post_rerenders_form_on_validation_error(monkeypatch):
+    app = create_app('testing')
+
+    class StubRegistryService:
+        def create_registry(self, data, actor=None):
+            raise ValueError('Registry slug sudah digunakan.')
+
+    monkeypatch.setattr('app.modules.data_registry.routes_web.DataRegistryService', StubRegistryService)
+
+    client = app.test_client()
+    response = client.post(
+        '/data-registries/create',
+        data={
+            'name': 'Master Program',
+            'registry_slug': 'master.program',
+            'registry_code': 'MASTER-PROGRAM',
+            'description': 'Bank data program prioritas.',
+            'template_key': 'master_data_hierarkis',
+            'is_year_scoped': '1',
+        },
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'Registry slug sudah digunakan.' in html
+    assert 'value="Master Program"' in html
+    assert 'value="master.program"' in html
+    assert 'value="MASTER-PROGRAM"' in html
+    assert 'Bank data program prioritas.' in html

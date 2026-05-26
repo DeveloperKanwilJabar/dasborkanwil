@@ -1,4 +1,5 @@
 from decimal import Decimal
+from io import BytesIO
 from types import SimpleNamespace
 
 from app import create_app
@@ -273,6 +274,193 @@ def test_create_registry_returns_registry_and_initial_draft_version():
         assert result['draft_version'].schema_json == {'fields': [{'key': 'kode_wilayah'}]}
         assert result['draft_version'].mapping_spec == {'source': 'csv'}
         assert version_service.called_with['actor'] is actor
+
+
+def test_create_registry_rejects_duplicate_registry_code():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryService
+
+        existing_registry = DataRegistry(
+            id=99,
+            registry_slug='existing.registry',
+            registry_code='MASTER-PROGRAM',
+            name='Existing Registry',
+            status='draft',
+        )
+        registry_repository = StubDataRegistryRepository(registry=existing_registry)
+        version_service = StubDraftRegistryVersionService()
+        service = DataRegistryService(
+            registry_repository=registry_repository,
+            version_service=version_service,
+        )
+
+        try:
+            service.create_registry(
+                {
+                    'registry_slug': 'master.program',
+                    'registry_code': 'MASTER-PROGRAM',
+                    'name': 'Master Program',
+                    'schema_json': {'fields': [{'key': 'record_code'}]},
+                }
+            )
+            assert False, 'Expected ValueError for duplicate registry code'
+        except ValueError as error:
+            assert str(error) == 'Registry code sudah digunakan.'
+
+        assert version_service.called_with is None
+        assert registry_repository.saved == []
+
+
+def test_create_registry_accepts_master_data_hierarchical_contract():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryService
+
+        registry_repository = StubDataRegistryRepository()
+        version_service = StubDraftRegistryVersionService()
+        service = DataRegistryService(
+            registry_repository=registry_repository,
+            version_service=version_service,
+        )
+
+        result = service.create_registry(
+            {
+                'registry_slug': 'master.program',
+                'registry_code': 'MASTER-PROGRAM',
+                'name': 'Master Program',
+                'description': 'Registry master data bertingkat.',
+                'registry_type': 'master_data',
+                'category_key': 'master_data',
+                'source_mode': 'import_file',
+                'data_shape': 'hierarchical',
+                'schema_json': {
+                    'fields': [
+                        {'key': 'record_key', 'type': 'text', 'required': True},
+                        {'key': 'record_code', 'type': 'text', 'required': True},
+                        {'key': 'label', 'type': 'text', 'required': True},
+                    ]
+                },
+                'mapping_spec': {'materialization_contract': 'generic_v1'},
+                'source_snapshot': {'source_name': 'browser_manual_setup'},
+            }
+        )
+
+        assert result['registry'].registry_type == 'master_data'
+        assert result['registry'].data_shape == 'hierarchical'
+        assert result['draft_version'].schema_json['fields'][0]['key'] == 'record_key'
+        assert version_service.called_with['mapping_spec']['materialization_contract'] == 'generic_v1'
+
+
+def test_update_draft_schema_fields_rewrites_schema_json_fields_only():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryVersionService
+
+        version = DataRegistryVersion(
+            id=31,
+            registry_id=10,
+            version_number=2,
+            status='draft',
+            schema_json={
+                'fields': [
+                    {'key': 'record_code', 'type': 'text', 'required': True},
+                ],
+                'layout': {'mode': 'simple'},
+            },
+            mapping_spec={'materialization_contract': 'generic_v1'},
+            source_snapshot={'source_name': 'browser_manual_setup'},
+            freshness_status='unknown',
+        )
+        version_repository = StubDataRegistryVersionRepository(version=version)
+        registry_repository = StubDataRegistryRepository(
+            registry=DataRegistry(id=10, registry_slug='master.program', name='Master Program', status='draft')
+        )
+        service = DataRegistryVersionService(
+            version_repository=version_repository,
+            registry_repository=registry_repository,
+        )
+
+        saved_version = service.update_draft_schema_fields(
+            31,
+            [
+                {'key': 'record_key', 'label': 'Record Key', 'type': 'text', 'required': True},
+                {
+                    'key': 'record_code',
+                    'label': 'Record Code',
+                    'type': 'select',
+                    'required': True,
+                    'options': ['aktif', 'nonaktif'],
+                },
+                {'key': 'label', 'label': 'Label', 'type': 'text', 'required': True},
+                {'key': 'effective_date', 'label': 'Tanggal Berlaku', 'type': 'date', 'required': False},
+            ],
+        )
+
+        assert saved_version.schema_json['layout'] == {'mode': 'simple'}
+        assert [field['key'] for field in saved_version.schema_json['fields']] == [
+            'record_key',
+            'record_code',
+            'label',
+            'effective_date',
+        ]
+        assert saved_version.schema_json['fields'][1]['options'] == ['aktif', 'nonaktif']
+        assert saved_version.schema_json['fields'][3]['type'] == 'date'
+        assert version_repository.saved[-1] is saved_version
+
+
+def test_build_registry_template_workbook_uses_schema_fields_as_headers():
+    app = create_app('testing')
+
+    with app.app_context():
+        from openpyxl import load_workbook
+        from app.modules.data_registry.services import DataRegistryImportBatchService
+
+        registry = DataRegistry(
+            id=10,
+            uuid='registry-uuid',
+            registry_slug='master.program',
+            registry_code='MASTER-PROGRAM',
+            name='Master Program',
+            status='draft',
+        )
+        version = DataRegistryVersion(
+            id=31,
+            uuid='version-uuid',
+            registry_id=10,
+            version_number=2,
+            status='draft',
+            schema_json={
+                'fields': [
+                    {'key': 'record_key', 'label': 'Record Key', 'type': 'text', 'required': True},
+                    {
+                        'key': 'record_code',
+                        'label': 'Record Code',
+                        'type': 'select',
+                        'required': True,
+                        'options': ['aktif', 'nonaktif'],
+                    },
+                    {'key': 'effective_date', 'label': 'Tanggal Berlaku', 'type': 'date', 'required': False},
+                ]
+            },
+            freshness_status='unknown',
+        )
+        service = DataRegistryImportBatchService()
+
+        workbook_bytes = service.build_template_workbook(version, registry=registry)
+        workbook = load_workbook(filename=BytesIO(workbook_bytes))
+
+        assert workbook.sheetnames == ['data', '_meta', '_dictionary']
+        assert [cell.value for cell in workbook['data'][1]] == ['Record Key', 'Record Code', 'Tanggal Berlaku']
+        assert workbook['_meta']['A11'].value == 'field_key'
+        assert workbook['_meta']['B12'].value == 'Record Key'
+        assert workbook['_meta']['E13'].value == 'aktif, nonaktif'
+        assert workbook['_dictionary']['A2'].value == 'record_code'
+        assert workbook['_dictionary']['C2'].value == 'aktif'
+        assert service.build_template_filename(version, registry=registry) == 'MASTER-PROGRAM-v2-template.xlsx'
 
 
 def test_create_draft_version_can_clone_from_source_version_when_schema_not_provided():

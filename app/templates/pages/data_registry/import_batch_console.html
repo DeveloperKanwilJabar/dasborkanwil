@@ -156,9 +156,14 @@
                             <h6 class="alert-heading mb-1">Kembali ke Version Console</h6>
                             <p class="mb-0">Batch terakhir ini sudah {{ batch_status_labels.get(batch.status, batch.status) }} dengan {{ batch.error_rows }} error row dan {{ batch.duplicate_rows }} duplikat.</p>
                         </div>
-                        <a href="{{ url_for('data_registry_web.import_console', version_id=version.id) }}" class="btn btn-info btn-sm text-white flex-shrink-0">
-                            Lihat Ringkasan Version
-                        </a>
+                        <div class="d-flex flex-column flex-sm-row gap-2">
+                            <a href="{{ url_for('data_registry_web.import_console', version_id=version.id) }}" class="btn btn-info btn-sm text-white flex-shrink-0">
+                                Lihat Ringkasan Version
+                            </a>
+                            <a href="{{ url_for('data_registry_web.import_mapping', version_id=version.id) }}" class="btn btn-soft-primary btn-sm flex-shrink-0">
+                                Upload Batch Baru
+                            </a>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -226,6 +231,13 @@
                                 <h5 class="card-title mb-0">Aksi Batch</h5>
                             </div>
                             <div class="card-body">
+                                <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between mb-3">
+                                    <span class="badge bg-primary-subtle text-primary">Mode Operator Cepat</span>
+                                    <span class="text-muted fs-12">Review row → validasi batch → materialisasi registry.</span>
+                                </div>
+                                <div class="alert alert-light border fs-13 py-2 px-3 mb-3">
+                                    Preview dibatasi 20 row pertama agar console tetap ringan dibaca.
+                                </div>
                                 <div class="mb-3">
                                     <p class="text-muted mb-1 fs-13">File</p>
                                     <h6 class="mb-0">{{ batch.original_filename or '-' }}</h6>
@@ -241,6 +253,10 @@
                                 <div class="mb-3">
                                     <p class="text-muted mb-1 fs-13">Materialized At</p>
                                     <div class="fs-13">{{ batch_materialized_display }}</div>
+                                </div>
+                                <div class="mb-3">
+                                    <p class="text-muted mb-1 fs-13">Sumber Upload</p>
+                                    <div class="fs-13">{{ (batch.source_snapshot or {}).get('source_name', '-') }}</div>
                                 </div>
                                 <div class="mb-0">
                                     <p class="text-muted mb-1 fs-13">Header Sumber</p>
@@ -258,11 +274,13 @@
                             <div class="card-footer bg-transparent">
                                 <div class="d-grid gap-2">
                                     <form id="dataRegistryBatchValidateForm" method="post" action="{{ url_for('data_registry_web.validate_import_batch', batch_id=batch.id) }}">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button id="dataRegistryBatchValidateBtn" type="submit" class="btn btn-primary w-100" {% if batch.status not in ['mapped', 'validating', 'validated', 'materialized'] %}disabled{% endif %}>
                                             <i class="ri-shield-check-line align-bottom me-1"></i> Validasi Batch
                                         </button>
                                     </form>
                                     <form id="dataRegistryBatchMaterializeForm" method="post" action="{{ url_for('data_registry_web.materialize_import_batch', batch_id=batch.id) }}">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button id="dataRegistryBatchMaterializeBtn" type="submit" class="btn btn-soft-success w-100" {% if batch.status not in ['validated', 'materialized'] %}disabled{% endif %}>
                                             <i class="ri-stack-line align-bottom me-1"></i> Materialisasi Batch
                                         </button>
