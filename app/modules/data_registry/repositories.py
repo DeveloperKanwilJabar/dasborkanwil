@@ -132,6 +132,21 @@ class DataRegistryRecordRepository(BaseRepository):
             query = query.filter(DataRegistryRecord.admin_level == admin_level)
         return query.order_by(DataRegistryRecord.sort_order.asc(), DataRegistryRecord.label.asc()).all()
 
+    def list_by_registry_version(self, registry_version_id, limit=None):
+        query = self.model.query.filter(
+            DataRegistryRecord.registry_version_id == registry_version_id,
+            DataRegistryRecord.deleted_at == None,
+        ).order_by(DataRegistryRecord.sort_order.asc(), DataRegistryRecord.label.asc(), DataRegistryRecord.id.asc())
+        if limit is not None:
+            query = query.limit(limit)
+        return query.all()
+
+    def count_by_registry_version(self, registry_version_id):
+        return self.model.query.filter(
+            DataRegistryRecord.registry_version_id == registry_version_id,
+            DataRegistryRecord.deleted_at == None,
+        ).count()
+
     def delete_by_registry_version(self, registry_version_id):
         self.model.query.filter(
             DataRegistryRecord.registry_version_id == registry_version_id,

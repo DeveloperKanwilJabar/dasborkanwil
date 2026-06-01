@@ -1099,3 +1099,250 @@ def test_materialize_wilayah_rows_nulls_duplicate_bps_external_codes_for_conflic
         assert len(villages) == 2
         assert all(item.external_code is None for item in villages)
 
+
+class StubVersionRepositoryForWorkspace:
+    def __init__(self, draft_version=None, published_version=None):
+        self.draft_version = draft_version
+        self.published_version = published_version
+
+    def get_draft_version(self, registry_id):
+        return self.draft_version if self.draft_version and self.draft_version.registry_id == registry_id else None
+
+    def get_published_version(self, registry_id):
+        return self.published_version if self.published_version and self.published_version.registry_id == registry_id else None
+
+
+class StubVersionServiceForWorkspace:
+    def __init__(self, draft_version=None, published_version=None):
+        self.repository = StubVersionRepositoryForWorkspace(draft_version=draft_version, published_version=published_version)
+
+
+class StubWorkspaceRecordRepository(SaveMixin):
+    def __init__(self, record=None, records=None):
+        super().__init__()
+        self.record = record
+        self.records = records or ([] if record is None else [record])
+
+    def get_by_id(self, record_id):
+        if self.record and self.record.id == record_id:
+            return self.record
+        for item in self.records:
+            if item.id == record_id:
+                return item
+        return None
+
+    def list_by_registry_version(self, registry_version_id, limit=None):
+        items = [item for item in self.records if item.registry_version_id == registry_version_id]
+        if limit is not None:
+            items = items[:limit]
+        return items
+
+    def count_by_registry_version(self, registry_version_id):
+        return len([item for item in self.records if item.registry_version_id == registry_version_id])
+
+
+class StubBatchRepositoryForWorkspace:
+    def list_by_registry_version(self, registry_version_id):
+        return []
+
+
+class StubImportBatchServiceForWorkspace:
+    def extract_importable_fields(self, version):
+        return version.schema_json.get('fields', [])
+
+
+def test_get_registry_record_list_serializes_grid_columns_and_rows_for_generic_registry():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryService
+
+        registry = DataRegistry(
+            id=10,
+            registry_slug='master.program',
+            registry_code='MASTER-PROGRAM',
+            name='Master Program',
+            registry_type='master_data',
+            category_key='master_data',
+            source_mode='import_file',
+            data_shape='hierarchical',
+            status='draft',
+        )
+        draft_version = DataRegistryVersion(
+            id=31,
+            registry_id=10,
+            version_number=2,
+            schema_json={
+                'fields': [
+                    {'key': 'record_key', 'label': 'Record Key', 'type': 'text', 'required': True},
+                    {'key': 'record_code', 'label': 'Kode Record', 'type': 'text', 'required': True},
+                    {'key': 'label', 'label': 'Nama Program', 'type': 'text', 'required': True},
+                    {'key': 'tipe', 'label': 'Tipe', 'type': 'select', 'required': False, 'options': ['D', 'E']},
+                    {'key': 'jenis', 'label': 'Jenis', 'type': 'text', 'required': False},
+                ]
+            },
+            status='draft',
+            freshness_status='fresh',
+        )
+        records = [
+            make_record(
+                id=501,
+                registry_id=10,
+                registry_version_id=31,
+                record_key='master_data:A1',
+                record_code='A1',
+                label='Program A1',
+                admin_level='master_data',
+                admin_level_code='MASTER_DATA',
+                payload={'kode': 'A1', 'tipe': 'D', 'jenis': 'A'},
+            ),
+            make_record(
+                id=502,
+                registry_id=10,
+                registry_version_id=31,
+                record_key='master_data:B2',
+                record_code='B2',
+                label='Program B2',
+                admin_level='master_data',
+                admin_level_code='MASTER_DATA',
+                is_active=False,
+                payload={'kode': 'B2', 'tipe': 'E', 'jenis': 'B'},
+            ),
+        ]
+        service = DataRegistryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_service=StubVersionServiceForWorkspace(draft_version=draft_version),
+            record_repository=StubWorkspaceRecordRepository(records=records),
+            batch_repository=StubBatchRepositoryForWorkspace(),
+            import_batch_service=StubImportBatchServiceForWorkspace(),
+        )
+
+        result = service.get_registry_record_list(10, record_limit=100)
+
+        assert result['record_count'] == 2
+        assert [column['label'] for column in result['record_columns']] == ['Kode Record', 'Nama Program', 'Tipe', 'Jenis']
+        assert result['edit_fields'][0]['key'] == 'record_code'
+        assert result['edit_fields'][1]['key'] == 'label'
+        assert result['record_rows'][0]['record_key'] == 'master_data:A1'
+        assert result['record_rows'][0]['column_values']['tipe'] == 'D'
+        assert result['record_rows'][1]['column_values']['jenis'] == 'B'
+        assert result['record_rows'][1]['is_active'] is False
+
+
+def test_update_registry_record_updates_generic_payload_and_identity_fields():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryService
+
+        registry = DataRegistry(id=10, registry_slug='master.program', name='Master Program', status='draft')
+        version = DataRegistryVersion(
+            id=31,
+            registry_id=10,
+            version_number=2,
+            schema_json={
+                'fields': [
+                    {'key': 'record_code', 'label': 'Kode Record', 'type': 'text', 'required': True},
+                    {'key': 'label', 'label': 'Nama Program', 'type': 'text', 'required': True},
+                    {'key': 'tipe', 'label': 'Tipe', 'type': 'select', 'required': False, 'options': ['D', 'E']},
+                    {'key': 'jenis', 'label': 'Jenis', 'type': 'text', 'required': False},
+                ]
+            },
+            status='draft',
+            freshness_status='fresh',
+        )
+        record = make_record(
+            id=501,
+            registry_id=10,
+            registry_version_id=31,
+            record_key='master_data:A1',
+            record_code='A1',
+            label='Program A1',
+            display_label='Program A1',
+            normalized_label='program a1',
+            admin_level='master_data',
+            admin_level_code='MASTER_DATA',
+            payload={'record_code': 'A1', 'label': 'Program A1', 'tipe': 'D', 'jenis': 'A'},
+            registry_version=version,
+        )
+        actor = SimpleNamespace(id=7, uuid='actor-uuid')
+        record_repository = StubWorkspaceRecordRepository(record=record)
+        service = DataRegistryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_service=StubVersionServiceForWorkspace(draft_version=version),
+            record_repository=record_repository,
+            batch_repository=StubBatchRepositoryForWorkspace(),
+            import_batch_service=StubImportBatchServiceForWorkspace(),
+        )
+
+        result = service.update_registry_record(
+            501,
+            {
+                'registry_id': '10',
+                'record_code': 'A1-REV',
+                'label': 'Program A1 Revisi',
+                'tipe': 'E',
+                'jenis': 'A+',
+            },
+            actor=actor,
+        )
+
+        assert result['record'] is record
+        assert record.record_code == 'A1-REV'
+        assert record.label == 'Program A1 Revisi'
+        assert record.display_label == 'Program A1 Revisi'
+        assert record.normalized_label == 'program a1 revisi'
+        assert record.payload['record_code'] == 'A1-REV'
+        assert record.payload['label'] == 'Program A1 Revisi'
+        assert record.payload['tipe'] == 'E'
+        assert record.payload['jenis'] == 'A+'
+        assert record.updated_by == 7
+        assert record.updated_by_uuid == 'actor-uuid'
+        assert record_repository.saved[-1] is record
+
+
+def test_set_registry_record_active_updates_record_status():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryService
+
+        registry = DataRegistry(id=10, registry_slug='master.program', name='Master Program', status='draft')
+        version = DataRegistryVersion(
+            id=31,
+            registry_id=10,
+            version_number=2,
+            schema_json={'fields': []},
+            status='draft',
+            freshness_status='fresh',
+        )
+        record = make_record(
+            id=501,
+            registry_id=10,
+            registry_version_id=31,
+            record_key='master_data:A1',
+            record_code='A1',
+            label='Program A1',
+            admin_level='master_data',
+            admin_level_code='MASTER_DATA',
+            is_active=True,
+            registry_version=version,
+        )
+        actor = SimpleNamespace(id=8, uuid='actor-uuid-2')
+        record_repository = StubWorkspaceRecordRepository(record=record)
+        service = DataRegistryService(
+            registry_repository=StubDataRegistryRepository(registry=registry),
+            version_service=StubVersionServiceForWorkspace(draft_version=version),
+            record_repository=record_repository,
+            batch_repository=StubBatchRepositoryForWorkspace(),
+            import_batch_service=StubImportBatchServiceForWorkspace(),
+        )
+
+        result = service.set_registry_record_active(501, False, registry_id=10, actor=actor)
+
+        assert result['record'] is record
+        assert record.is_active is False
+        assert record.updated_by == 8
+        assert record.updated_by_uuid == 'actor-uuid-2'
+        assert record_repository.saved[-1] is record
+

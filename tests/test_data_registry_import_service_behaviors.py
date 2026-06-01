@@ -36,6 +36,28 @@ class StubDataRegistryVersionRepository:
         return version
 
 
+class StubDataRegistryRepository:
+    def __init__(self, registry=None):
+        self.registry = registry or SimpleNamespace(id=10, category_key='master_data', name='Master Data')
+
+    def get_by_id(self, registry_id):
+        if self.registry and self.registry.id == registry_id:
+            return self.registry
+        return None
+
+
+class StubDataRegistryRecordRepository(SaveMixin):
+    def __init__(self):
+        super().__init__()
+        self.deleted_registry_version_ids = []
+
+    def delete_by_registry_version(self, registry_version_id):
+        self.deleted_registry_version_ids.append(registry_version_id)
+        self.saved = [
+            record for record in self.saved if getattr(record, 'registry_version_id', None) != registry_version_id
+        ]
+
+
 class StubImportBatchRepository(SaveMixin):
     def __init__(self):
         super().__init__()
@@ -387,6 +409,82 @@ def test_materialize_import_batch_rejects_batch_that_is_not_validated():
             service.materialize_import_batch(batch.id)
 
 
+def test_materialize_import_batch_generic_contract_builds_records_from_alias_fields():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.data_registry.services import DataRegistryMaterializationService
+
+        version = make_draft_version(
+            registry_id=10,
+            schema_json={
+                'fields': [
+                    {'key': 'kode', 'type': 'text', 'label': 'Kode', 'required': True},
+                    {'key': 'tipe', 'type': 'select', 'label': 'Tipe', 'options': ['D', 'E'], 'required': True},
+                    {'key': 'jenis', 'type': 'select', 'label': 'Jenis', 'options': ['A', 'B'], 'required': True},
+                ]
+            },
+            mapping_spec={'materialization_contract': 'generic_v1'},
+            source_snapshot={'source_name': 'manual_entry_browser'},
+        )
+        batch_service, validation_service, batch_repository, row_repository = create_services(version=version)
+        batch = batch_service.create_batch(
+            31,
+            {
+                'batch_type': 'manual_entry',
+                'original_filename': 'manual-entry-v2.xlsx',
+                'mime_type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'reporting_year': 2026,
+                'mapping_snapshot': {
+                    'materialization_contract': 'generic_v1',
+                    'fields': {
+                        'kode': {'source': 'kode', 'label': 'kode', 'type': 'text', 'required': True},
+                        'tipe': {'source': 'tipe', 'label': 'tipe', 'type': 'select', 'required': True},
+                        'jenis': {'source': 'jenis', 'label': 'jenis', 'type': 'select', 'required': True},
+                    },
+                },
+                'source_headers': ['kode', 'tipe', 'jenis'],
+                'source_snapshot': {'source_name': 'manual_entry_browser'},
+                'rows': [
+                    {'kode': 'A1', 'tipe': 'D', 'jenis': 'A'},
+                ],
+            },
+        )['batch']
+        actor = SimpleNamespace(id=7, uuid='actor-uuid')
+        validation_service.validate_batch(batch.id, actor=actor)
+
+        record_repository = StubDataRegistryRecordRepository()
+        service = DataRegistryMaterializationService(
+            registry_repository=StubDataRegistryRepository(),
+            version_repository=StubDataRegistryVersionRepository(version=version),
+            record_repository=record_repository,
+            batch_repository=batch_repository,
+            row_repository=row_repository,
+        )
+
+        result = service.materialize_import_batch(batch.id, actor=actor)
+
+        assert result['batch'].status == 'materialized'
+        assert result['materialization'] == {
+            'record_count': 1,
+            'source_row_count': 1,
+            'materialization_contract': 'generic_v1',
+        }
+        assert record_repository.deleted_registry_version_ids == [version.id]
+        assert len(record_repository.saved) == 1
+        saved_record = record_repository.saved[0]
+        assert saved_record.record_key == 'master_data:A1'
+        assert saved_record.record_code == 'A1'
+        assert saved_record.label == 'A1'
+        assert saved_record.normalized_label == 'a1'
+        assert saved_record.admin_level == 'master_data'
+        assert saved_record.admin_level_code == 'MASTER_DATA'
+        assert saved_record.payload['kode'] == 'A1'
+        assert saved_record.payload['tipe'] == 'D'
+        assert saved_record.payload['jenis'] == 'A'
+        assert result['version'].materialization_metadata['record_count'] == 1
+
+
 def test_materialize_import_batch_allows_re_materialization_for_existing_materialized_batch(monkeypatch):
     app = create_app('testing')
 
@@ -420,7 +518,7 @@ def test_materialize_import_batch_allows_re_materialization_for_existing_materia
         )
         calls = []
 
-        def fake_materialize_wilayah_rows(registry_version_id, source_rows, actor=None):
+        def fake_materialize_generic_rows(registry_version_id, source_rows, actor=None):
             rows = list(source_rows)
             calls.append(
                 {
@@ -436,7 +534,7 @@ def test_materialize_import_batch_allows_re_materialization_for_existing_materia
                 'source_row_count': len(rows),
             }
 
-        monkeypatch.setattr(service, 'materialize_wilayah_rows', fake_materialize_wilayah_rows)
+        monkeypatch.setattr(service, 'materialize_generic_rows', fake_materialize_generic_rows)
 
         first_result = service.materialize_import_batch(batch.id, actor=actor)
         second_result = service.materialize_import_batch(batch.id, actor=actor)

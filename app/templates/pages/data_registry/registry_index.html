@@ -80,13 +80,16 @@
                                                 {% endif %}
                                             </td>
                                             <td class="text-end">
-                                                {% if draft_version %}
-                                                <a href="{{ url_for('data_registry_web.import_console', version_id=draft_version.id) }}" class="btn btn-sm btn-primary">Buka Import Console</a>
-                                                {% elif published_version %}
-                                                <a href="{{ url_for('data_registry_web.import_console', version_id=published_version.id) }}" class="btn btn-sm btn-soft-primary">Lihat Version Console</a>
-                                                {% else %}
-                                                <span class="text-muted fs-12">Belum ada console</span>
-                                                {% endif %}
+                                                <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
+                                                    <a href="{{ url_for('data_registry_web.registry_workspace', registry_id=registry.id) }}" class="btn btn-sm btn-soft-secondary">Buka Workspace Registry</a>
+                                                    {% if draft_version %}
+                                                    <a href="{{ url_for('data_registry_web.import_console', version_id=draft_version.id) }}" class="btn btn-sm btn-primary">Buka Import Console</a>
+                                                    {% elif published_version %}
+                                                    <a href="{{ url_for('data_registry_web.import_console', version_id=published_version.id) }}" class="btn btn-sm btn-soft-primary">Lihat Version Console</a>
+                                                    {% else %}
+                                                    <span class="text-muted fs-12">Belum ada console</span>
+                                                    {% endif %}
+                                                </div>
                                             </td>
                                         </tr>
                                         {% endfor %}

@@ -1,0 +1,216 @@
+{% extends "partials/base.html" %}
+{% block title %}Daftar Record Registry{% endblock title %}
+
+{% block extra_css %}
+<link href="{{ url_for('static', filename='libs/gridjs/dist/theme/mermaid.min.css') }}" rel="stylesheet" />
+<style>
+    .registry-record-toolbar .form-select,
+    .registry-record-toolbar .form-control {
+        min-width: 180px;
+    }
+    .registry-record-grid .gridjs-search {
+        width: 100%;
+    }
+    .registry-record-grid .gridjs-search-input {
+        width: 100%;
+    }
+    .registry-record-summary code {
+        word-break: break-all;
+    }
+    .registry-record-json {
+        max-height: 240px;
+        overflow: auto;
+        white-space: pre-wrap;
+        font-size: 0.8rem;
+    }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Daftar Record Registry</h4>
+                            <p class="text-muted mb-0">Tampilan operasional record hasil entry manual dan materialisasi batch registry.</p>
+                        </div>
+                        <div class="page-title-right d-flex gap-2 flex-wrap justify-content-end">
+                            {% if registry %}
+                            <a href="{{ url_for('data_registry_web.registry_workspace', registry_id=registry.id) }}" class="btn btn-soft-secondary btn-sm">Kembali ke Workspace</a>
+                            {% endif %}
+                            <a href="{{ url_for('data_registry_web.registry_index') }}" class="btn btn-soft-primary btn-sm">Daftar Registry</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if error_message %}
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-warning">{{ error_message }}</div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="row g-4">
+                <div class="col-12 col-xxl-3">
+                    <div class="card h-100 registry-record-summary">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">{{ registry.name if registry else 'Registry belum tersedia' }}</h5>
+                            <p class="text-muted mb-0">{{ registry.description if registry else 'Belum ada detail registry.' }}</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0">
+                                    <tbody>
+                                        <tr><th class="text-muted">Slug</th><td><code>{{ registry.registry_slug if registry else '-' }}</code></td></tr>
+                                        <tr><th class="text-muted">Kode</th><td>{{ registry.registry_code if registry else '-' }}</td></tr>
+                                        <tr><th class="text-muted">Status Registry</th><td>{{ registry.status if registry else '-' }}</td></tr>
+                                        <tr><th class="text-muted">Versi Record</th><td>{% if record_list_version %}v{{ record_list_version.version_number }}{% else %}-{% endif %}</td></tr>
+                                        <tr><th class="text-muted">Total Record</th><td>{{ record_count }} record</td></tr>
+                                        <tr><th class="text-muted">Kolom Operasional</th><td>{{ record_columns|length }} kolom</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="mt-3 d-grid gap-2">
+                                {% if registry %}
+                                <a href="{{ url_for('data_registry_web.registry_workspace', registry_id=registry.id) }}" class="btn btn-outline-secondary btn-sm">Kembali ke Workspace</a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 col-xxl-9">
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <div>
+                                <h5 class="card-title mb-1">Tabel Record Operasional</h5>
+                                <p class="text-muted mb-0">Grid dapat di-search, disaring, dan dipakai untuk edit cepat maupun nonaktifkan record.</p>
+                            </div>
+                            <span class="badge bg-info-subtle text-info">{{ record_count }} record</span>
+                        </div>
+                        <div class="card-body">
+                            {% if record_rows %}
+                            <div class="row g-3 align-items-end registry-record-toolbar mb-3">
+                                <div class="col-md-4">
+                                    <label for="recordSearchInput" class="form-label">Search cepat</label>
+                                    <input type="search" id="recordSearchInput" class="form-control" placeholder="Cari kode, label, payload, atau record key...">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="recordStatusFilter" class="form-label">Filter status</label>
+                                    <select id="recordStatusFilter" class="form-select">
+                                        <option value="all">Semua status</option>
+                                        <option value="active">Hanya aktif</option>
+                                        <option value="inactive">Hanya nonaktif</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="recordLevelFilter" class="form-label">Filter level</label>
+                                    <select id="recordLevelFilter" class="form-select">
+                                        <option value="all">Semua level</option>
+                                        {% for level in record_rows | map(attribute='admin_level') | unique | list %}
+                                        <option value="{{ level }}">{{ level }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <button type="button" id="recordFilterReset" class="btn btn-light w-100">Reset Filter</button>
+                                </div>
+                            </div>
+                            <div id="registry-records-grid" class="registry-record-grid"></div>
+                            {% else %}
+                            <div class="alert alert-light border mb-0">Belum ada record hasil materialisasi untuk registry ini.</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
+
+{% block extra_content %}
+{% if record_rows %}
+<div class="modal fade" id="recordEditModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <form id="recordEditForm" method="post">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title">Edit Record Registry</h5>
+                        <p class="text-muted mb-0 small">Perubahan akan langsung mengubah record materialized pada registry ini.</p>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="registry_id" value="{{ registry.id if registry else '' }}">
+                    <div class="mb-3">
+                        <label class="form-label">Record Key</label>
+                        <input type="text" id="recordEditKey" class="form-control" readonly>
+                    </div>
+                    <div class="row g-3">
+                        {% for field in edit_fields %}
+                        <div class="col-md-6" data-record-field-wrap="{{ field.key }}">
+                            <label class="form-label" for="record-edit-{{ field.key }}">{{ field.label }}</label>
+                            {% if field.type == 'select' and field.options %}
+                            <select class="form-select" id="record-edit-{{ field.key }}" name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.readonly %}readonly{% endif %}>
+                                <option value="">Pilih {{ field.label }}</option>
+                                {% for option in field.options %}
+                                <option value="{{ option }}">{{ option }}</option>
+                                {% endfor %}
+                            </select>
+                            {% else %}
+                            <input type="text" class="form-control" id="record-edit-{{ field.key }}" name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.readonly %}readonly{% endif %}>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="mt-4">
+                        <label class="form-label">Payload JSON Saat Ini</label>
+                        <pre id="recordPayloadPreview" class="border rounded p-3 bg-light registry-record-json mb-0"></pre>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Tutup</button>
+                    <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<form id="recordToggleForm" method="post" class="d-none">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="registry_id" value="{{ registry.id if registry else '' }}">
+    <input type="hidden" name="is_active" id="recordToggleActiveInput" value="true">
+</form>
+
+<script>
+window.recordRowsData = {{ record_rows | tojson }};
+window.recordColumnsData = {{ record_columns | tojson }};
+window.recordEditFieldsData = {{ edit_fields | tojson }};
+window.recordRegistryMeta = {{ {
+    'registryId': registry.id if registry else None,
+    'updateUrlTemplate': update_url_template,
+    'toggleActiveUrlTemplate': toggle_active_url_template,
+} | tojson }};
+</script>
+{% endif %}
+{% endblock extra_content %}
+
+{% block extra_js %}
+{% if record_rows %}
+<script src="{{ url_for('static', filename='libs/gridjs/dist/gridjs.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/data-registry-records.js') }}"></script>
+{% endif %}
+{% endblock extra_js %}

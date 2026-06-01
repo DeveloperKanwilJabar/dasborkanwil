@@ -174,6 +174,13 @@ def _build_field_schema_payload(form_data):
     return fields
 
 
+def _coerce_form_boolean(value):
+    if isinstance(value, bool):
+        return value
+    text = str(value or '').strip().lower()
+    return text in {'1', 'true', 'yes', 'on', 'aktif'}
+
+
 @data_registry_web_bp.route('/data-registries')
 @login_required
 def registry_index():
@@ -194,6 +201,122 @@ def registry_index():
         registry_items=registry_items,
         error_message=error_message,
     )
+
+
+@data_registry_web_bp.route('/data-registries/<int:registry_id>')
+@login_required
+def registry_workspace(registry_id):
+    workspace = None
+    error_message = None
+
+    try:
+        workspace = DataRegistryService().get_registry_workspace(registry_id, record_limit=PREVIEW_ROW_LIMIT)
+    except ValueError as error:
+        error_message = str(error)
+    except Exception as error:
+        current_app.logger.error(f'Data registry workspace error: {str(error)}')
+        error_message = 'Gagal memuat workspace data registry.'
+
+    return render_template(
+        'pages/data_registry/registry_workspace.html',
+        workspace=workspace or {},
+        registry=(workspace or {}).get('registry'),
+        draft_version=(workspace or {}).get('draft_version'),
+        published_version=(workspace or {}).get('published_version'),
+        manual_entry_version=(workspace or {}).get('manual_entry_version'),
+        manual_entry_fields=(workspace or {}).get('manual_entry_fields') or [],
+        record_preview_version=(workspace or {}).get('record_preview_version'),
+        records=(workspace or {}).get('records') or [],
+        record_count=(workspace or {}).get('record_count') or 0,
+        recent_batches=(workspace or {}).get('recent_batches') or [],
+        error_message=error_message,
+        csrf_token=generate_csrf,
+    )
+
+
+@data_registry_web_bp.route('/data-registries/<int:registry_id>/records')
+@login_required
+def registry_records(registry_id):
+    detail = None
+    error_message = None
+
+    try:
+        detail = DataRegistryService().get_registry_record_list(registry_id, record_limit=100)
+    except ValueError as error:
+        error_message = str(error)
+    except Exception as error:
+        current_app.logger.error(f'Data registry record list error: {str(error)}')
+        error_message = 'Gagal memuat daftar record data registry.'
+
+    return render_template(
+        'pages/data_registry/registry_records.html',
+        detail=detail or {},
+        registry=(detail or {}).get('registry'),
+        draft_version=(detail or {}).get('draft_version'),
+        published_version=(detail or {}).get('published_version'),
+        record_list_version=(detail or {}).get('record_list_version'),
+        records=(detail or {}).get('records') or [],
+        record_count=(detail or {}).get('record_count') or 0,
+        record_columns=(detail or {}).get('record_columns') or [],
+        record_rows=(detail or {}).get('record_rows') or [],
+        edit_fields=(detail or {}).get('edit_fields') or [],
+        update_url_template=url_for('data_registry_web.update_registry_record', record_id=0),
+        toggle_active_url_template=url_for('data_registry_web.toggle_registry_record_active', record_id=0),
+        error_message=error_message,
+        csrf_token=generate_csrf,
+    )
+
+
+@data_registry_web_bp.route('/data-registries/records/<int:record_id>/update', methods=['POST'])
+@login_required
+def update_registry_record(record_id):
+    try:
+        result = DataRegistryService().update_registry_record(
+            record_id,
+            request.form.to_dict(flat=True),
+            actor=_current_actor(),
+        )
+        registry = result.get('registry')
+        flash('Record registry berhasil diperbarui.', 'success')
+        return redirect(url_for('data_registry_web.registry_records', registry_id=registry.id))
+    except ValueError as error:
+        flash(str(error), 'error')
+        current_app.logger.warning(f'Data registry record update validation error: {str(error)}')
+    except Exception as error:
+        flash('Gagal memperbarui record registry.', 'error')
+        current_app.logger.error(f'Data registry record update exception: {str(error)}')
+
+    registry_id = request.form.get('registry_id') or request.args.get('registry_id')
+    if registry_id:
+        return redirect(url_for('data_registry_web.registry_records', registry_id=registry_id))
+    return redirect(url_for('data_registry_web.registry_index'))
+
+
+@data_registry_web_bp.route('/data-registries/records/<int:record_id>/toggle-active', methods=['POST'])
+@login_required
+def toggle_registry_record_active(record_id):
+    registry_id = request.form.get('registry_id') or request.args.get('registry_id')
+    try:
+        parsed_registry_id = int(registry_id) if str(registry_id or '').strip() else None
+        result = DataRegistryService().set_registry_record_active(
+            record_id,
+            _coerce_form_boolean(request.form.get('is_active')),
+            registry_id=parsed_registry_id,
+            actor=_current_actor(),
+        )
+        registry = result.get('registry')
+        flash('Status record registry berhasil diperbarui.', 'success')
+        return redirect(url_for('data_registry_web.registry_records', registry_id=registry.id))
+    except ValueError as error:
+        flash(str(error), 'error')
+        current_app.logger.warning(f'Data registry record status validation error: {str(error)}')
+    except Exception as error:
+        flash('Gagal memperbarui status record registry.', 'error')
+        current_app.logger.error(f'Data registry record status exception: {str(error)}')
+
+    if registry_id:
+        return redirect(url_for('data_registry_web.registry_records', registry_id=registry_id))
+    return redirect(url_for('data_registry_web.registry_index'))
 
 
 @data_registry_web_bp.route('/data-registries/create', methods=['GET', 'POST'])

@@ -30,9 +30,12 @@ from .repositories import (
 
 
 class DataRegistryService(BaseService):
-    def __init__(self, registry_repository=None, version_service=None):
+    def __init__(self, registry_repository=None, version_service=None, record_repository=None, batch_repository=None, import_batch_service=None):
         super().__init__(repository=registry_repository or DataRegistryRepository())
         self.version_service = version_service or DataRegistryVersionService()
+        self.record_repository = record_repository or DataRegistryRecordRepository()
+        self.batch_repository = batch_repository or DataRegistryImportBatchRepository()
+        self.import_batch_service = import_batch_service or DataRegistryImportBatchService()
 
     def create_registry(self, data, actor=None):
         registry_slug = data.get('registry_slug')
@@ -105,6 +108,288 @@ class DataRegistryService(BaseService):
 
     def get_registry_detail(self, registry_id):
         return self.repository.get_by_id(registry_id)
+
+    def get_registry_workspace(self, registry_id, record_limit=20):
+        registry = self.repository.get_by_id(registry_id)
+        if not registry:
+            raise ValueError('Registry tidak ditemukan.')
+
+        draft_version = self.version_service.repository.get_draft_version(registry_id)
+        published_version = self.version_service.repository.get_published_version(registry_id)
+        manual_entry_version = draft_version or published_version
+        record_preview_version = draft_version or published_version
+
+        manual_entry_fields = []
+        records = []
+        record_count = 0
+        recent_batches = []
+
+        if manual_entry_version:
+            manual_entry_fields = self.import_batch_service.extract_importable_fields(manual_entry_version)
+            recent_batches = self.batch_repository.list_by_registry_version(manual_entry_version.id)
+
+        if record_preview_version:
+            records = self.record_repository.list_by_registry_version(
+                record_preview_version.id,
+                limit=record_limit,
+            )
+            record_count = self.record_repository.count_by_registry_version(record_preview_version.id)
+
+        return {
+            'registry': registry,
+            'draft_version': draft_version,
+            'published_version': published_version,
+            'manual_entry_version': manual_entry_version,
+            'manual_entry_fields': manual_entry_fields,
+            'record_preview_version': record_preview_version,
+            'records': records,
+            'record_count': record_count,
+            'recent_batches': recent_batches[:record_limit],
+        }
+
+    def get_registry_record_list(self, registry_id, record_limit=100):
+        workspace = self.get_registry_workspace(registry_id, record_limit=record_limit)
+        record_list_version = workspace.get('record_preview_version')
+        schema_fields = self.import_batch_service.extract_importable_fields(record_list_version) if record_list_version else []
+        record_columns = self._build_record_columns(schema_fields)
+        record_rows = [
+            self._serialize_record_row(record, record_columns)
+            for record in (workspace.get('records') or [])
+        ]
+        edit_fields = self._build_record_edit_fields(schema_fields)
+        return {
+            **workspace,
+            'record_list_version': record_list_version,
+            'record_columns': record_columns,
+            'record_rows': record_rows,
+            'edit_fields': edit_fields,
+        }
+
+    def update_registry_record(self, record_id, data, actor=None):
+        record = self.record_repository.get_by_id(record_id)
+        if not record:
+            raise ValueError('Record registry tidak ditemukan.')
+
+        registry = self.repository.get_by_id(record.registry_id)
+        if not registry:
+            raise ValueError('Registry tidak ditemukan.')
+
+        requested_registry_id = data.get('registry_id')
+        if requested_registry_id is not None and str(requested_registry_id).strip():
+            try:
+                if int(str(requested_registry_id).strip()) != record.registry_id:
+                    raise ValueError('Record tidak sesuai dengan registry tujuan.')
+            except ValueError:
+                raise ValueError('Registry tujuan tidak valid.')
+
+        version = getattr(record, 'registry_version', None)
+        if version is None and record.registry_version_id:
+            version = self.version_service.repository.get_by_id(record.registry_version_id)
+
+        schema_fields = self.import_batch_service.extract_importable_fields(version) if version else []
+        edit_fields = self._build_record_edit_fields(schema_fields)
+        editable_keys = {field['key'] for field in edit_fields if field.get('key')}
+
+        payload = dict(record.payload or {})
+        normalized_data = self._normalize_record_form_data(data)
+        for key in editable_keys:
+            if key in normalized_data:
+                payload[key] = normalized_data.get(key)
+
+        submitted_record_code = self._first_non_empty(
+            normalized_data.get('record_code'),
+            payload.get('record_code'),
+            payload.get('kode'),
+            payload.get('code'),
+            payload.get('value'),
+            record.record_code,
+        )
+        submitted_label = self._first_non_empty(
+            normalized_data.get('label'),
+            payload.get('label'),
+            payload.get('nama'),
+            payload.get('name'),
+            payload.get('title'),
+            record.label,
+        )
+
+        if not submitted_record_code:
+            raise ValueError('Record code wajib diisi.')
+        if not submitted_label:
+            raise ValueError('Label record wajib diisi.')
+
+        payload['record_code'] = submitted_record_code
+        payload['label'] = submitted_label
+        record.payload = payload
+        record.record_code = submitted_record_code
+        record.label = submitted_label
+        record.display_label = submitted_label
+        record.normalized_label = self._normalize_text(submitted_label)
+        self._apply_actor_audit(record, actor, action='update')
+        record.updated_at = now_utc()
+        saved_record = self.record_repository.save(record)
+
+        return {
+            'registry': registry,
+            'record': saved_record,
+        }
+
+    def set_registry_record_active(self, record_id, is_active, registry_id=None, actor=None):
+        record = self.record_repository.get_by_id(record_id)
+        if not record:
+            raise ValueError('Record registry tidak ditemukan.')
+
+        registry = self.repository.get_by_id(record.registry_id)
+        if not registry:
+            raise ValueError('Registry tidak ditemukan.')
+
+        if registry_id is not None and int(registry_id) != record.registry_id:
+            raise ValueError('Record tidak sesuai dengan registry tujuan.')
+
+        record.is_active = bool(is_active)
+        self._apply_actor_audit(record, actor, action='update')
+        record.updated_at = now_utc()
+        saved_record = self.record_repository.save(record)
+        return {
+            'registry': registry,
+            'record': saved_record,
+        }
+
+    def _build_record_columns(self, schema_fields):
+        field_map = {
+            (field.get('key') or '').strip(): field
+            for field in (schema_fields or [])
+            if (field.get('key') or '').strip()
+        }
+        ordered_keys = []
+        for preferred_key in ['record_code', 'label']:
+            if preferred_key in field_map:
+                ordered_keys.append(preferred_key)
+
+        for field in schema_fields or []:
+            key = (field.get('key') or '').strip()
+            if not key or key in ordered_keys:
+                continue
+            if key in {'record_key', 'parent_code', 'admin_level', 'is_active', 'active'}:
+                continue
+            ordered_keys.append(key)
+
+        if not ordered_keys:
+            ordered_keys = ['record_code', 'label']
+
+        columns = []
+        for key in ordered_keys:
+            field = field_map.get(key, {})
+            columns.append({
+                'key': key,
+                'label': (field.get('label') or self._humanize_key(key)).strip(),
+                'source': 'system' if key in {'record_code', 'label'} else 'payload',
+                'type': (field.get('type') or 'text').strip() or 'text',
+            })
+        return columns
+
+    def _build_record_edit_fields(self, schema_fields):
+        field_map = {
+            (field.get('key') or '').strip(): field
+            for field in (schema_fields or [])
+            if (field.get('key') or '').strip()
+        }
+        ordered_keys = []
+        for preferred_key in ['record_code', 'label']:
+            if preferred_key in field_map:
+                ordered_keys.append(preferred_key)
+        for field in schema_fields or []:
+            key = (field.get('key') or '').strip()
+            if not key or key in ordered_keys:
+                continue
+            if key in {'record_key', 'parent_code', 'admin_level'}:
+                continue
+            ordered_keys.append(key)
+
+        if 'record_code' not in ordered_keys:
+            ordered_keys.insert(0, 'record_code')
+        if 'label' not in ordered_keys:
+            ordered_keys.insert(1 if ordered_keys else 0, 'label')
+
+        result = []
+        for key in ordered_keys:
+            field = field_map.get(key, {})
+            options = field.get('options') or field.get('allowed_values') or []
+            result.append({
+                'key': key,
+                'label': (field.get('label') or self._humanize_key(key)).strip(),
+                'type': (field.get('type') or 'text').strip() or 'text',
+                'required': bool(field.get('required', key in {'record_code', 'label'})),
+                'readonly': False,
+                'options': [str(option) for option in options if option not in (None, '')],
+            })
+        return result
+
+    def _serialize_record_row(self, record, record_columns):
+        payload = dict(record.payload or {})
+        column_values = {}
+        for column in record_columns:
+            key = column['key']
+            if column['source'] == 'system':
+                value = getattr(record, key, None)
+            else:
+                value = payload.get(key)
+            column_values[key] = self._stringify_record_value(value)
+
+        updated_at = getattr(record, 'updated_at', None) or getattr(record, 'created_at', None)
+        updated_at_iso = updated_at.isoformat() if hasattr(updated_at, 'isoformat') and updated_at else None
+        return {
+            'id': record.id,
+            'registry_id': record.registry_id,
+            'record_key': record.record_key,
+            'record_code': record.record_code,
+            'label': record.label,
+            'admin_level': record.admin_level,
+            'parent_record_id': record.parent_record_id,
+            'is_active': bool(record.is_active),
+            'updated_at': updated_at_iso,
+            'payload': payload,
+            'column_values': column_values,
+        }
+
+    def _normalize_record_form_data(self, data):
+        normalized = {}
+        for key, value in (data or {}).items():
+            if key in {'csrf_token'}:
+                continue
+            normalized[str(key)] = self._normalize_form_value(value)
+        return normalized
+
+    def _normalize_form_value(self, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        return value
+
+    def _normalize_text(self, value):
+        if value is None:
+            return ''
+        return re.sub(r'\s+', ' ', str(value).strip().lower())
+
+    def _humanize_key(self, key):
+        text = str(key or '').replace('_', ' ').replace('-', ' ').strip()
+        return text.title() if text else 'Field'
+
+    def _first_non_empty(self, *values):
+        for value in values:
+            normalized = self._normalize_form_value(value)
+            if normalized not in (None, ''):
+                return normalized
+        return None
+
+    def _stringify_record_value(self, value):
+        if value is None:
+            return ''
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
 
     def _registry_code_exists(self, registry_code):
         matches = self.repository.find_by(registry_code=registry_code)
@@ -926,8 +1211,23 @@ class DataRegistryImportValidationService:
 
             row.normalized_payload[field_key] = value
 
-        row.record_key_candidate = row.record_key_candidate or row.normalized_payload.get('record_key')
-        row.record_code_candidate = row.record_code_candidate or row.normalized_payload.get('record_code')
+        row.record_key_candidate = row.record_key_candidate or self._resolve_identity_candidate(
+            row.normalized_payload,
+            ['record_key', 'key', 'slug'],
+        )
+        row.record_code_candidate = row.record_code_candidate or self._resolve_identity_candidate(
+            row.normalized_payload,
+            ['record_code', 'kode', 'code', 'value'],
+        )
+
+    def _resolve_identity_candidate(self, payload, candidate_keys):
+        payload = payload or {}
+        for key in candidate_keys:
+            value = payload.get(key)
+            if self._is_blank(value):
+                continue
+            return str(value).strip()
+        return None
 
     def _normalize_date(self, value, field_mapping):
         accepted_formats = field_mapping.get('accepted_input_formats') or ['%Y-%m-%d']
@@ -1244,7 +1544,8 @@ class DataRegistryMaterializationService:
             materialization_contract=materialization_contract,
         )
 
-        materialization = self.materialize_wilayah_rows(batch.registry_version_id, source_rows, actor=actor)
+        materializer = self.materialize_wilayah_rows if materialization_contract == 'wilayah_v1' else self.materialize_generic_rows
+        materialization = materializer(batch.registry_version_id, source_rows, actor=actor)
         summary = {
             'record_count': materialization.get('record_count', 0),
             'source_row_count': materialization.get('source_row_count', 0),
@@ -1377,6 +1678,127 @@ class DataRegistryMaterializationService:
             text = value.strip()
             return text or None
         return value
+
+    def materialize_generic_rows(self, registry_version_id, source_rows, actor=None):
+        version = self.version_repository.get_by_id(registry_version_id)
+        if not version:
+            raise ValueError('Registry version tidak ditemukan.')
+
+        registry = self.registry_repository.get_by_id(version.registry_id)
+        rows = list(source_rows or [])
+        self.record_repository.delete_by_registry_version(registry_version_id)
+
+        records = []
+        row_hashes = []
+        seen_record_codes = set()
+        source_name = (
+            (getattr(version, 'source_snapshot', None) or {}).get('source_name')
+            or (getattr(registry, 'registry_slug', None) if registry else None)
+            or 'generic_v1'
+        )
+        admin_level = self._normalize_text(getattr(registry, 'category_key', None) if registry else None) or 'master_data'
+        admin_level_code = re.sub(r'[^A-Z0-9]+', '_', admin_level.upper()).strip('_') or 'MASTER_DATA'
+
+        for row_number, raw_row in enumerate(rows, start=1):
+            payload = dict(raw_row or {})
+            identity = self._resolve_generic_record_identity(payload)
+            record_code = identity['record_code']
+            if record_code in seen_record_codes:
+                raise ValueError(f'Duplikasi record code terdeteksi saat materialisasi generic: {record_code}')
+            seen_record_codes.add(record_code)
+
+            record_key = identity['record_key'] or f'{admin_level}:{record_code}'
+            label = identity['label'] or record_code
+            row_hash = hashlib.sha256(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode('utf-8')
+            ).hexdigest()
+            row_hashes.append(row_hash)
+
+            record = DataRegistryRecord(
+                uuid=str(uuid.uuid4()),
+                registry_id=version.registry_id,
+                registry_version_id=version.id,
+                parent_record_id=None,
+                record_key=record_key,
+                record_code=record_code,
+                external_code=None,
+                label=label,
+                display_label=label,
+                normalized_label=self._normalize_label(label) or record_code.lower(),
+                admin_level=admin_level,
+                admin_level_code=admin_level_code,
+                city_regency_kind=None,
+                province_code=None,
+                city_regency_code=None,
+                district_code=None,
+                village_code=None,
+                village_adm_status=None,
+                sort_order=row_number,
+                is_active=self._resolve_generic_is_active(payload),
+                valid_from=None,
+                valid_to=None,
+                centroid_lat=None,
+                centroid_lng=None,
+                bbox_min_lat=None,
+                bbox_min_lng=None,
+                bbox_max_lat=None,
+                bbox_max_lng=None,
+                geometry_json=None,
+                source_row_number=row_number,
+                source_row_hash=row_hash,
+                source_snapshot={
+                    'source_name': source_name,
+                    'source_row': payload,
+                },
+                payload=payload,
+            )
+            self._apply_actor_audit(record, actor, action='create')
+            records.append(self.record_repository.save(record))
+
+        version.materialized_watermark = f'rows:{len(rows)}:{now_utc().isoformat()}'
+        version.freshness_signature = self._build_freshness_signature(row_hashes)
+        version.freshness_status = 'fresh'
+        self._apply_actor_audit(version, actor, action='update')
+        self.version_repository.save(version)
+
+        return {
+            'registry': registry,
+            'version': version,
+            'record_count': len(records),
+            'source_row_count': len(rows),
+        }
+
+    def _resolve_generic_record_identity(self, payload):
+        payload = payload or {}
+        record_code = self._first_non_blank(payload, ['record_code', 'kode', 'code', 'value'])
+        if not record_code:
+            raise ValueError('Materialisasi generic membutuhkan field kode bisnis seperti record_code/kode/code/value.')
+
+        record_key = self._first_non_blank(payload, ['record_key', 'key', 'slug']) or None
+        label = self._first_non_blank(payload, ['label', 'nama', 'name', 'title']) or record_code
+        return {
+            'record_key': record_key,
+            'record_code': record_code,
+            'label': label,
+        }
+
+    def _resolve_generic_is_active(self, payload):
+        payload = payload or {}
+        raw_status = self._first_non_blank(payload, ['is_active', 'active', 'status_aktif', 'aktif', 'status'])
+        if raw_status is None:
+            return True
+        normalized = str(raw_status).strip().lower()
+        if normalized in {'0', 'false', 'no', 'tidak', 'nonaktif', 'inactive'}:
+            return False
+        return True
+
+    def _first_non_blank(self, payload, keys):
+        for key in keys:
+            value = payload.get(key)
+            normalized = self._normalize_text(value)
+            if normalized is not None:
+                return normalized
+        return None
 
     def materialize_wilayah_rows(self, registry_version_id, source_rows, actor=None):
         version = self.version_repository.get_by_id(registry_version_id)

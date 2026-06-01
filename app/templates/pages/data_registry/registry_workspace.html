@@ -1,0 +1,199 @@
+{% extends "partials/base.html" %}
+{% block title %}Workspace Data Registry{% endblock title %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Workspace Data Registry</h4>
+                            <p class="text-muted mb-0">Area kerja untuk entry manual ke batch staging sambil memantau preview record registry.</p>
+                        </div>
+                        <div class="page-title-right d-flex gap-2 flex-wrap justify-content-end">
+                            <a href="{{ url_for('data_registry_web.registry_index') }}" class="btn btn-soft-secondary btn-sm">Kembali ke Daftar Registry</a>
+                            {% if manual_entry_version %}
+                            <a href="{{ url_for('data_registry_web.import_console', version_id=manual_entry_version.id) }}" class="btn btn-primary btn-sm">Buka Import Console</a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if error_message %}
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-warning">{{ error_message }}</div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="row g-4">
+                <div class="col-12 col-xl-4">
+                    <div class="card h-100">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">{{ registry.name if registry else 'Registry belum tersedia' }}</h5>
+                            <p class="text-muted mb-0">{{ registry.description if registry else 'Workspace belum menemukan data registry.' }}</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0">
+                                    <tbody>
+                                        <tr><th class="text-muted">Slug</th><td><code>{{ registry.registry_slug if registry else '-' }}</code></td></tr>
+                                        <tr><th class="text-muted">Kode</th><td>{{ registry.registry_code if registry else '-' }}</td></tr>
+                                        <tr><th class="text-muted">Status Registry</th><td>{{ registry.status if registry else '-' }}</td></tr>
+                                        <tr><th class="text-muted">Draft Aktif</th><td>{% if draft_version %}v{{ draft_version.version_number }}{% else %}-{% endif %}</td></tr>
+                                        <tr><th class="text-muted">Published</th><td>{% if published_version %}v{{ published_version.version_number }}{% else %}-{% endif %}</td></tr>
+                                        <tr><th class="text-muted">Workspace Input</th><td>{% if manual_entry_version %}v{{ manual_entry_version.version_number }}{% else %}-{% endif %}</td></tr>
+                                        <tr><th class="text-muted">Preview Record</th><td>{{ record_count }} record</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 col-xl-8">
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-start">
+                            <div>
+                                <h5 class="card-title mb-1">Input Manual Cepat</h5>
+                                <p class="text-muted mb-0">Form ini tidak langsung membuat record final. Semua input dikirim dulu ke batch staging agar jalur manual dan upload Excel tetap konsisten.</p>
+                            </div>
+                            {% if manual_entry_version %}
+                            <div class="d-flex gap-2 flex-wrap justify-content-end">
+                                <a href="{{ url_for('data_registry_web.create_manual_entry_batch', version_id=manual_entry_version.id) }}" class="btn btn-soft-primary btn-sm disabled" aria-disabled="true">Endpoint Manual Entry</a>
+                                <a href="{{ url_for('data_registry_web.import_console', version_id=manual_entry_version.id) }}" class="btn btn-soft-secondary btn-sm">Lanjut ke Import Console</a>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="card-body">
+                            {% if manual_entry_version and manual_entry_fields %}
+                            <form method="POST" action="{{ url_for('data_registry_web.create_manual_entry_batch', version_id=manual_entry_version.id) }}" class="row g-3">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                {% for field in manual_entry_fields %}
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label" for="field_{{ field.key }}">
+                                        {{ field.label or field.key }}
+                                        {% if field.required %}<span class="text-danger">*</span>{% endif %}
+                                    </label>
+                                    {% if field.type == 'select' %}
+                                    <select class="form-select" id="field_{{ field.key }}" name="{{ field.key }}" {% if field.required %}required{% endif %}>
+                                        <option value="">Pilih {{ field.label or field.key }}</option>
+                                        {% for option in field.options or [] %}
+                                        <option value="{{ option }}">{{ option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% else %}
+                                    <input type="text" class="form-control" id="field_{{ field.key }}" name="{{ field.key }}" {% if field.required %}required{% endif %}>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                                <div class="col-12 d-flex gap-2 flex-wrap">
+                                    <button type="submit" class="btn btn-primary">Kirim ke Batch Staging</button>
+                                    <a href="{{ url_for('data_registry_web.import_console', version_id=manual_entry_version.id) }}" class="btn btn-soft-secondary">Buka Console Batch</a>
+                                </div>
+                            </form>
+                            {% else %}
+                            <div class="alert alert-light border mb-0">Belum ada versi registry yang siap dipakai untuk input manual.</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mt-1">
+                <div class="col-12 col-xl-7">
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <div>
+                                <h5 class="card-title mb-1">Preview Record Tersimpan</h5>
+                                <p class="text-muted mb-0">Menampilkan potongan record hasil materialisasi pada versi workspace aktif.</p>
+                            </div>
+                            <div class="d-flex gap-2 align-items-center">
+                                <span class="badge bg-info-subtle text-info">{{ record_count }} record</span>
+                                {% if registry %}
+                                <a href="{{ url_for('data_registry_web.registry_records', registry_id=registry.id) }}" class="btn btn-soft-primary btn-sm">Lihat Semua Record</a>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            {% if records %}
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Record Key</th>
+                                            <th>Record Code</th>
+                                            <th>Label</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for record in records %}
+                                        <tr>
+                                            <td><code>{{ record.record_key }}</code></td>
+                                            <td>{{ record.record_code or (record.payload or {}).get('record_code', '-') }}</td>
+                                            <td>{{ record.label or (record.payload or {}).get('label', '-') }}</td>
+                                            <td>
+                                                {% if record.is_active %}
+                                                <span class="badge bg-success-subtle text-success">aktif</span>
+                                                {% else %}
+                                                <span class="badge bg-secondary-subtle text-secondary">nonaktif</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="alert alert-light border mb-0">Belum ada record tersimpan pada versi preview saat ini.</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 col-xl-5">
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <div>
+                                <h5 class="card-title mb-1">Batch Manual / Import Terbaru</h5>
+                                <p class="text-muted mb-0">Histori batch terbaru untuk membantu lanjut ke validasi dan materialisasi.</p>
+                            </div>
+                            {% if manual_entry_version %}
+                            <a href="{{ url_for('data_registry_web.import_console', version_id=manual_entry_version.id) }}" class="btn btn-soft-primary btn-sm">Lihat Semua</a>
+                            {% endif %}
+                        </div>
+                        <div class="card-body">
+                            {% if recent_batches %}
+                            <div class="list-group list-group-flush">
+                                {% for batch in recent_batches %}
+                                <div class="list-group-item px-0">
+                                    <div class="d-flex justify-content-between align-items-start gap-3">
+                                        <div>
+                                            <div class="fw-semibold">{{ batch.original_filename or ('batch-' ~ batch.id) }}</div>
+                                            <div class="text-muted fs-12">Status {{ batch.status }} · {{ batch.total_rows or 0 }} baris</div>
+                                        </div>
+                                        <a href="{{ url_for('data_registry_web.import_batch_console', batch_id=batch.id) }}" class="btn btn-sm btn-soft-secondary">Buka Batch</a>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <div class="alert alert-light border mb-0">Belum ada batch untuk versi workspace ini.</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
