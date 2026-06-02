@@ -3,12 +3,12 @@ from pathlib import Path
 
 
 MIGRATION_PATH = Path(
-    'migrations/versions/f1b2c3d4e5f6_allow_master_data_admin_level_for_data_registry_records.py'
+    'migrations/versions/c4d7a9e2b1f0_backfill_data_registry_materialization_metadata.py'
 )
 
 
 def load_migration_module():
-    spec = spec_from_file_location('allow_master_data_admin_level_for_data_registry_records', MIGRATION_PATH)
+    spec = spec_from_file_location('backfill_data_registry_materialization_metadata', MIGRATION_PATH)
     assert spec is not None and spec.loader is not None
     module = module_from_spec(spec)
     spec.loader.exec_module(module)

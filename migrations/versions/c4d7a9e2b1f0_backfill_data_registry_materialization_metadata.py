@@ -22,6 +22,12 @@ LEGACY_REGISTRY_TYPE_CHECK = "registry_type IN ('geo')"
 LEGACY_REGISTRY_DATA_SHAPE_CHECK = "data_shape IN ('hierarchical_geo', 'geojson')"
 UPDATED_REGISTRY_TYPE_CHECK = "registry_type IN ('geo', 'master_data')"
 UPDATED_REGISTRY_DATA_SHAPE_CHECK = "data_shape IN ('hierarchical_geo', 'geojson', 'hierarchical', 'tabular')"
+LEGACY_IMPORT_BATCH_TYPE_CHECK = "batch_type IN ('file_upload', 'manual_seed', 'sync_snapshot')"
+UPDATED_IMPORT_BATCH_TYPE_CHECK = "batch_type IN ('file_upload', 'manual_seed', 'manual_entry', 'sync_snapshot')"
+LEGACY_RECORD_ADMIN_LEVEL_CHECK = "admin_level IN ('province', 'city_regency', 'district', 'village')"
+UPDATED_RECORD_ADMIN_LEVEL_CHECK = (
+    "admin_level IN ('province', 'city_regency', 'district', 'village', 'master_data')"
+)
 
 
 batch_table = sa.table(
@@ -140,6 +146,20 @@ def upgrade():
             UPDATED_REGISTRY_DATA_SHAPE_CHECK,
         )
 
+    with op.batch_alter_table('data_registry_import_batches', schema=None) as batch_op:
+        batch_op.drop_constraint('ck_data_registry_import_batches_batch_type_valid', type_='check')
+        batch_op.create_check_constraint(
+            'ck_data_registry_import_batches_batch_type_valid',
+            UPDATED_IMPORT_BATCH_TYPE_CHECK,
+        )
+
+    with op.batch_alter_table('data_registry_records', schema=None) as batch_op:
+        batch_op.drop_constraint('ck_data_registry_records_admin_level_valid', type_='check')
+        batch_op.create_check_constraint(
+            'ck_data_registry_records_admin_level_valid',
+            UPDATED_RECORD_ADMIN_LEVEL_CHECK,
+        )
+
     bind = op.get_bind()
     projections = bind.execute(
         sa.text(
@@ -221,6 +241,20 @@ def upgrade():
 
 
 def downgrade():
+    with op.batch_alter_table('data_registry_records', schema=None) as batch_op:
+        batch_op.drop_constraint('ck_data_registry_records_admin_level_valid', type_='check')
+        batch_op.create_check_constraint(
+            'ck_data_registry_records_admin_level_valid',
+            LEGACY_RECORD_ADMIN_LEVEL_CHECK,
+        )
+
+    with op.batch_alter_table('data_registry_import_batches', schema=None) as batch_op:
+        batch_op.drop_constraint('ck_data_registry_import_batches_batch_type_valid', type_='check')
+        batch_op.create_check_constraint(
+            'ck_data_registry_import_batches_batch_type_valid',
+            LEGACY_IMPORT_BATCH_TYPE_CHECK,
+        )
+
     with op.batch_alter_table('data_registries', schema=None) as batch_op:
         batch_op.drop_constraint('ck_data_registries_registry_type_valid', type_='check')
         batch_op.drop_constraint('ck_data_registries_data_shape_valid', type_='check')
