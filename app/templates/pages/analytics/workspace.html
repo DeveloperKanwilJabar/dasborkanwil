@@ -1,0 +1,226 @@
+{% extends "partials/base.html" %}
+{% block title %}Workspace Analytics Domain 5{% endblock title %}
+
+{% block extra_css %}
+<link href="{{ url_for('static', filename='libs/gridjs/dist/theme/mermaid.min.css') }}" rel="stylesheet" />
+<style>
+    .analytics-summary-card .display-6 {
+        line-height: 1;
+    }
+    .analytics-detail-panel pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 280px;
+        overflow: auto;
+    }
+    .analytics-grid-shell .gridjs-search {
+        width: 100%;
+    }
+    .analytics-grid-shell .gridjs-search-input {
+        width: 100%;
+    }
+    .indicator-detail-tabs .nav-link {
+        white-space: nowrap;
+    }
+    .indicator-detail-tab-pane {
+        display: none;
+    }
+    .indicator-detail-tab-pane.active {
+        display: block;
+    }
+    .indicator-history-list .list-group-item {
+        border-left: 0;
+        border-right: 0;
+    }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Workspace Analytics Domain 5</h4>
+                            <p class="text-muted mb-0">Shell awal untuk melihat daftar report, indikator, hasil, dan meta description/narasi kualitatif.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4" id="analyticsWorkspaceSummaryCards">
+                <div class="col-md-4">
+                    <div class="card analytics-summary-card h-100">
+                        <div class="card-body">
+                            <p class="text-muted mb-2">Total Report</p>
+                            <div class="display-6" data-summary-value="reports">0</div>
+                            <small class="text-muted">Report definition + draft/published version aktif.</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card analytics-summary-card h-100">
+                        <div class="card-body">
+                            <p class="text-muted mb-2">Total Indikator</p>
+                            <div class="display-6" data-summary-value="indicators">0</div>
+                            <small class="text-muted">Siap untuk indikator dinamis, target, dan meta description.</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card analytics-summary-card h-100">
+                        <div class="card-body">
+                            <p class="text-muted mb-2">Recent Result</p>
+                            <div class="display-6" data-summary-value="results">0</div>
+                            <small class="text-muted">Snapshot hasil indikator yang sudah masuk ke result store.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mt-1">
+                <div class="col-12 col-xxl-7">
+                    <div class="card analytics-grid-shell h-100">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Daftar Report Analytics</h5>
+                            <p class="text-muted mb-0">Klik tombol detail untuk melihat versi, mapping indikator, dan narasi report.</p>
+                        </div>
+                        <div class="card-body">
+                            <div id="analyticsReportsGrid"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-12 col-xxl-5">
+                    <div class="card analytics-detail-panel h-100">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Detail Report</h5>
+                            <p class="text-muted mb-0">Panel ini akan menampilkan draft/published version dan mapping indikator.</p>
+                        </div>
+                        <div class="card-body" id="analyticsReportDetailPanel">
+                            <div class="text-muted">Pilih salah satu report untuk melihat detail.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mt-1">
+                <div class="col-12 col-xxl-7">
+                    <div class="card analytics-grid-shell h-100">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Daftar Indikator Analytics</h5>
+                            <p class="text-muted mb-0">Menampilkan source mode, status versi, meta description, dan snapshot progress/result terbaru.</p>
+                        </div>
+                        <div class="card-body">
+                            <div id="analyticsIndicatorsGrid"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-12 col-xxl-5">
+                    <div class="card analytics-detail-panel h-100">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Detail Indikator</h5>
+                            <p class="text-muted mb-0">Mockup awal tab indikator dinamis untuk validasi UI sebelum CRUD penuh.</p>
+                        </div>
+                        <div class="card-body">
+                            <div id="analyticsIndicatorDetailPanel" class="mb-3">
+                                <div class="text-muted">Pilih salah satu indikator untuk melihat ringkasan utama.</div>
+                            </div>
+                            <div class="indicator-detail-tabs">
+                                <ul class="nav nav-pills nav-custom gap-2 flex-nowrap overflow-auto pb-2" id="indicatorDetailTabNavigation" role="tablist">
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link active" id="indicatorDetailTabDefinition" type="button" data-tab-key="definition">Definition</button>
+                                    </li>
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link" id="indicatorDetailTabFormula" type="button" data-tab-key="formula">Formula</button>
+                                    </li>
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link" id="indicatorDetailTabTarget" type="button" data-tab-key="target">Target</button>
+                                    </li>
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link" id="indicatorDetailTabNarrative" type="button" data-tab-key="narrative">Narrative</button>
+                                    </li>
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link" id="indicatorDetailTabProgressHistory" type="button" data-tab-key="progress-history">Progress History</button>
+                                    </li>
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link" id="indicatorDetailTabResultHistory" type="button" data-tab-key="result-history">Result History</button>
+                                    </li>
+                                </ul>
+                                <div class="border rounded p-3 bg-light-subtle mt-3">
+                                    <div id="indicatorDetailTabContentDefinition" class="indicator-detail-tab-pane active" data-tab-pane="definition">
+                                        <div class="text-muted">Belum ada data definition.</div>
+                                    </div>
+                                    <div id="indicatorDetailTabContentFormula" class="indicator-detail-tab-pane" data-tab-pane="formula">
+                                        <div class="text-muted">Belum ada data formula.</div>
+                                    </div>
+                                    <div id="indicatorDetailTabContentTarget" class="indicator-detail-tab-pane" data-tab-pane="target">
+                                        <div class="text-muted">Belum ada data target.</div>
+                                    </div>
+                                    <div id="indicatorDetailTabContentNarrative" class="indicator-detail-tab-pane" data-tab-pane="narrative">
+                                        <div class="text-muted">Belum ada data narrative.</div>
+                                    </div>
+                                    <div id="indicatorDetailTabContentProgressHistory" class="indicator-detail-tab-pane" data-tab-pane="progress-history">
+                                        <div class="text-muted">Belum ada data progress history.</div>
+                                    </div>
+                                    <div id="indicatorDetailTabContentResultHistory" class="indicator-detail-tab-pane" data-tab-pane="result-history">
+                                        <div class="text-muted">Belum ada data result history.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mt-1">
+                <div class="col-12">
+                    <div class="card h-100">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Recent Indicator Results</h5>
+                            <p class="text-muted mb-0">Gambaran awal tabel hasil indikator untuk mempermudah desain UI berikutnya.</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0" id="analyticsResultsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Indicator Version</th>
+                                            <th>Tahun</th>
+                                            <th>Status</th>
+                                            <th>Measured</th>
+                                            <th>Target</th>
+                                            <th>Achievement</th>
+                                            <th>Summary</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td colspan="7" class="text-muted">Memuat data...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
+
+{% block extra_content %}
+<script>
+window.analyticsWorkspaceConfig = {{ workspace_config | tojson }};
+</script>
+{% endblock extra_content %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='libs/gridjs/dist/gridjs.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/analytics-workspace.js') }}"></script>
+{% endblock extra_js %}

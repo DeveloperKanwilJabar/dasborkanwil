@@ -640,3 +640,153 @@ class AnalyticsReportVersionIndicator(db.Model):
         ),
         db.Index('ix_analytics_report_version_indicators_deleted_at', 'deleted_at'),
     )
+
+
+class AnalyticsIndicatorResult(db.Model):
+    """Hasil periodik indikator analytics yang bisa dihitung dari dataset atau input hybrid."""
+
+    __tablename__ = 'analytics_indicator_results'
+
+    STATUS_DRAFT = 'draft'
+    STATUS_PUBLISHED = 'published'
+    STATUS_FAILED = 'failed'
+
+    COMPLETION_NOT_STARTED = 'not_started'
+    COMPLETION_IN_PROGRESS = 'in_progress'
+    COMPLETION_COMPLETED = 'completed'
+
+    id = db.Column('id', db.Integer(), primary_key=True)
+    uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    indicator_version_id = db.Column('indicator_version_id', db.Integer(), db.ForeignKey('analytics_indicator_versions.id'), nullable=False, index=True)
+    dataset_run_id = db.Column('dataset_run_id', db.Integer(), db.ForeignKey('analytics_dataset_runs.id'), nullable=True, index=True)
+    reporting_year = db.Column('reporting_year', db.Integer(), nullable=True, index=True)
+    reporting_period_id = db.Column('reporting_period_id', db.Integer(), db.ForeignKey('reporting_periods.id'), nullable=True, index=True)
+
+    status = db.Column('status', db.String(30), nullable=False, server_default=STATUS_DRAFT, index=True)
+    completion_status = db.Column('completion_status', db.String(30), nullable=False, server_default=COMPLETION_NOT_STARTED, index=True)
+    measured_value = db.Column('measured_value', db.Numeric(18, 4), nullable=True)
+    target_value = db.Column('target_value', db.Numeric(18, 4), nullable=True)
+    achievement_percentage = db.Column('achievement_percentage', db.Numeric(10, 4), nullable=True)
+    qualitative_summary = db.Column('qualitative_summary', db.Text(), nullable=True)
+    constraint_notes = db.Column('constraint_notes', db.Text(), nullable=True)
+    narrative_context_json = db.Column('narrative_context_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    source_snapshot_json = db.Column('source_snapshot_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    calculated_at = db.Column('calculated_at', db.DateTime(timezone=True), nullable=True, index=True)
+
+    created_at = db.Column('created_at', db.DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = db.Column('updated_at', db.DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = db.Column('deleted_at', db.DateTime(timezone=True), nullable=True)
+
+    created_by = db.Column('created_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    created_by_uuid = db.Column('created_by_uuid', db.String(36), nullable=True)
+    updated_by = db.Column('updated_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    updated_by_uuid = db.Column('updated_by_uuid', db.String(36), nullable=True)
+    deleted_by = db.Column('deleted_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    deleted_by_uuid = db.Column('deleted_by_uuid', db.String(36), nullable=True)
+
+    indicator_version = relationship(
+        'AnalyticsIndicatorVersion',
+        back_populates='results',
+        lazy='joined',
+    )
+    dataset_run = relationship('AnalyticsDatasetRun', lazy='joined')
+    reporting_period = relationship('ReportingPeriod', lazy='joined')
+
+    __table_args__ = (
+        db.Index('ix_analytics_indicator_results_deleted_at', 'deleted_at'),
+    )
+
+
+class AnalyticsIndicatorProgressEntry(db.Model):
+    """Entri progres manual atau hybrid untuk satu indikator per periode."""
+
+    __tablename__ = 'analytics_indicator_progress_entries'
+
+    STATUS_DRAFT = 'draft'
+    STATUS_IN_PROGRESS = 'in_progress'
+    STATUS_COMPLETED = 'completed'
+
+    id = db.Column('id', db.Integer(), primary_key=True)
+    uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    indicator_version_id = db.Column('indicator_version_id', db.Integer(), db.ForeignKey('analytics_indicator_versions.id'), nullable=False, index=True)
+    reporting_year = db.Column('reporting_year', db.Integer(), nullable=True, index=True)
+    reporting_period_id = db.Column('reporting_period_id', db.Integer(), db.ForeignKey('reporting_periods.id'), nullable=True, index=True)
+
+    status = db.Column('status', db.String(30), nullable=False, server_default=STATUS_DRAFT, index=True)
+    progress_percent = db.Column('progress_percent', db.Numeric(10, 4), nullable=True)
+    qualitative_summary = db.Column('qualitative_summary', db.Text(), nullable=True)
+    constraint_notes = db.Column('constraint_notes', db.Text(), nullable=True)
+    narrative_context_json = db.Column('narrative_context_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    summary_json = db.Column('summary_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+
+    created_at = db.Column('created_at', db.DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = db.Column('updated_at', db.DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = db.Column('deleted_at', db.DateTime(timezone=True), nullable=True)
+
+    created_by = db.Column('created_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    created_by_uuid = db.Column('created_by_uuid', db.String(36), nullable=True)
+    updated_by = db.Column('updated_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    updated_by_uuid = db.Column('updated_by_uuid', db.String(36), nullable=True)
+    deleted_by = db.Column('deleted_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    deleted_by_uuid = db.Column('deleted_by_uuid', db.String(36), nullable=True)
+
+    indicator_version = relationship(
+        'AnalyticsIndicatorVersion',
+        back_populates='progress_entries',
+        lazy='joined',
+    )
+    reporting_period = relationship('ReportingPeriod', lazy='joined')
+    items = relationship(
+        'AnalyticsIndicatorProgressItem',
+        back_populates='progress_entry',
+        lazy='select',
+        cascade='save-update, merge',
+    )
+
+    __table_args__ = (
+        db.Index('ix_analytics_indicator_progress_entries_deleted_at', 'deleted_at'),
+    )
+
+
+class AnalyticsIndicatorProgressItem(db.Model):
+    """Butir progres rinci di bawah satu entri progres indikator."""
+
+    __tablename__ = 'analytics_indicator_progress_items'
+
+    STATUS_PENDING = 'pending'
+    STATUS_IN_PROGRESS = 'in_progress'
+    STATUS_DONE = 'done'
+    STATUS_BLOCKED = 'blocked'
+
+    id = db.Column('id', db.Integer(), primary_key=True)
+    uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    progress_entry_id = db.Column('progress_entry_id', db.Integer(), db.ForeignKey('analytics_indicator_progress_entries.id'), nullable=False, index=True)
+    item_order = db.Column('item_order', db.Integer(), nullable=False, server_default='1')
+    status = db.Column('status', db.String(30), nullable=False, server_default=STATUS_PENDING, index=True)
+    title = db.Column('title', db.String(255), nullable=False)
+    description = db.Column('description', db.Text(), nullable=True)
+    narrative_context_json = db.Column('narrative_context_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+
+    created_at = db.Column('created_at', db.DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = db.Column('updated_at', db.DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = db.Column('deleted_at', db.DateTime(timezone=True), nullable=True)
+
+    created_by = db.Column('created_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    created_by_uuid = db.Column('created_by_uuid', db.String(36), nullable=True)
+    updated_by = db.Column('updated_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    updated_by_uuid = db.Column('updated_by_uuid', db.String(36), nullable=True)
+    deleted_by = db.Column('deleted_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    deleted_by_uuid = db.Column('deleted_by_uuid', db.String(36), nullable=True)
+
+    progress_entry = relationship(
+        'AnalyticsIndicatorProgressEntry',
+        back_populates='items',
+        lazy='joined',
+    )
+
+    __table_args__ = (
+        db.Index('ix_analytics_indicator_progress_items_deleted_at', 'deleted_at'),
+    )

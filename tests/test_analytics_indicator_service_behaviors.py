@@ -326,6 +326,90 @@ def test_create_publish_indicator_and_report_flow_archives_previous_versions():
 
 
 
+def test_record_progress_entry_with_items_and_sync_result_updates_narrative_without_losing_dataset_trace():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsIndicatorResultService
+
+        existing_result = AnalyticsIndicatorResult(
+            id=61,
+            uuid='result-uuid-1',
+            indicator_version_id=51,
+            dataset_run_id=701,
+            reporting_year=2026,
+            reporting_period_id=3,
+            measured_value=Decimal('8.5000'),
+            target_value=Decimal('10.0000'),
+            completion_status=AnalyticsIndicatorResult.COMPLETION_NOT_STARTED,
+            source_snapshot_json={
+                'dataset_run_id': 701,
+                'dataset_id': 99,
+                'dataset_version_id': 199,
+                'source_mode': 'dataset_driven',
+            },
+        )
+        result_repository = StubResultRepository([existing_result])
+        progress_repository = StubProgressEntryRepository()
+        service = AnalyticsIndicatorResultService(
+            result_repository=result_repository,
+            progress_entry_repository=progress_repository,
+        )
+        actor = SimpleNamespace(id=9, uuid='reviewer-uuid')
+
+        progress_entry = service.record_progress_entry(
+            {
+                'indicator_version_id': 51,
+                'reporting_year': 2026,
+                'reporting_period_id': 3,
+                'status': 'completed',
+                'progress_percent': Decimal('85.0000'),
+                'qualitative_summary': 'Sebagian besar target tercapai melalui percepatan tindak lanjut.',
+                'constraint_notes': 'Masih ada hambatan koordinasi lintas unit.',
+                'narrative_context_json': {
+                    'highlights': ['koordinasi meningkat'],
+                    'risks': ['keterlambatan verifikasi'],
+                },
+                'summary_json': {'completed_items': 2, 'total_items': 3},
+                'items': [
+                    {
+                        'item_order': 1,
+                        'status': AnalyticsIndicatorProgressItem.STATUS_DONE,
+                        'title': 'Konsolidasi data',
+                        'description': 'Konsolidasi data capaian indikator.',
+                    },
+                    {
+                        'item_order': 2,
+                        'status': AnalyticsIndicatorProgressItem.STATUS_BLOCKED,
+                        'title': 'Validasi lintas unit',
+                        'description': 'Menunggu klarifikasi final.',
+                    },
+                ],
+            },
+            actor=actor,
+        )
+        synced_result = service.sync_result_from_progress(progress_entry.id, actor=actor)
+
+        assert len(progress_entry.items) == 2
+        assert progress_entry.items[0].progress_entry_id == progress_entry.id
+        assert progress_entry.items[0].title == 'Konsolidasi data'
+        assert progress_entry.items[1].status == AnalyticsIndicatorProgressItem.STATUS_BLOCKED
+
+        assert synced_result.id == 61
+        assert synced_result.dataset_run_id == 701
+        assert synced_result.measured_value == Decimal('8.5000')
+        assert synced_result.target_value == Decimal('10.0000')
+        assert synced_result.completion_status == AnalyticsIndicatorResult.COMPLETION_COMPLETED
+        assert synced_result.qualitative_summary == 'Sebagian besar target tercapai melalui percepatan tindak lanjut.'
+        assert synced_result.constraint_notes == 'Masih ada hambatan koordinasi lintas unit.'
+        assert synced_result.narrative_context_json == {
+            'highlights': ['koordinasi meningkat'],
+            'risks': ['keterlambatan verifikasi'],
+        }
+        assert synced_result.source_snapshot_json['dataset_run_id'] == 701
+
+
+
 def test_attach_indicator_to_report_version_rejects_unpublished_indicator_version():
     app = create_app('testing')
 
@@ -404,3 +488,63 @@ def test_create_indicator_version_rejects_dataset_manual_source_mode_mismatch():
             assert str(error) == 'Indicator manual_input tidak boleh membawa dataset_id atau dataset_version_id.'
 
         assert indicator_version_repository.saved == []
+
+
+
+def test_record_result_for_dataset_driven_indicator_builds_default_source_trace():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsIndicatorResultService
+
+        indicator_version = AnalyticsIndicatorVersion(
+            id=88,
+            uuid='indicator-version-uuid-88',
+            indicator_definition_id=41,
+            dataset_id=77,
+            dataset_version_id=78,
+            status=AnalyticsIndicatorVersion.STATUS_PUBLISHED,
+            is_current_published=True,
+            period_mode=AnalyticsIndicatorVersion.PERIOD_MODE_YEARLY,
+            aggregation_strategy=AnalyticsIndicatorVersion.AGGREGATION_SUM,
+        )
+        indicator_version.definition = AnalyticsIndicatorDefinition(
+            id=41,
+            uuid='indicator-def-uuid-41',
+            indicator_key='indikator.dataset',
+            source_mode=AnalyticsIndicatorDefinition.SOURCE_MODE_DATASET_DRIVEN,
+            calculation_type=AnalyticsIndicatorDefinition.CALCULATION_ABSOLUTE_COUNT,
+            name='Indikator Dataset',
+            status=AnalyticsIndicatorDefinition.STATUS_ACTIVE,
+        )
+
+        result_repository = StubResultRepository()
+        progress_repository = StubProgressEntryRepository()
+        indicator_version_repository = StubIndicatorVersionRepository([indicator_version])
+        service = AnalyticsIndicatorResultService(
+            result_repository=result_repository,
+            progress_entry_repository=progress_repository,
+            indicator_version_repository=indicator_version_repository,
+        )
+
+        result = service.record_result(
+            {
+                'indicator_version_id': 88,
+                'dataset_run_id': 900,
+                'reporting_year': 2026,
+                'reporting_period_id': 12,
+                'measured_value': Decimal('42.0000'),
+                'target_value': Decimal('50.0000'),
+            }
+        )
+
+        assert result.dataset_run_id == 900
+        assert result.measured_value == Decimal('42.0000')
+        assert result.target_value == Decimal('50.0000')
+        assert result.source_snapshot_json == {
+            'source_mode': 'dataset_driven',
+            'dataset_id': 77,
+            'dataset_version_id': 78,
+            'dataset_run_id': 900,
+            'indicator_version_id': 88,
+        }

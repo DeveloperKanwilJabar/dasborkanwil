@@ -52,12 +52,14 @@ def create_app(config_mode='default'):
 
     with app.app_context():
         # Import model tambahan agar terdaftar di SQLAlchemy metadata untuk autogenerate migration
+        from .modules.analytics.models import AnalyticsDataset, AnalyticsDatasetVersion, AnalyticsDatasetRun
         from .modules.data_registry.models import DataRegistry, DataRegistryVersion, DataRegistryRecord
         from .modules.form.models import Form, FormVersion
         from .modules.import_pipeline.models import ImportBatch, ImportBatchRow
         from .modules.submission.models import ReportingPeriod, Submission, SubmissionEvent
 
         # Registrasi Blueprint
+        from .api.v1.analytics.routes import api_analytics_bp
         from .api.v1.auth.routes import api_auth_bp
         from .api.v1.data_registries.routes import api_data_registry_bp
         from .api.v1.forms.routes import api_form_bp
@@ -67,12 +69,14 @@ def create_app(config_mode='default'):
         from .modules.employee.routes_web import employee_bp
         from .modules.form.routes_web import form_web_bp
         from .modules.data_registry.routes_web import data_registry_web_bp
+        from .modules.analytics.routes_web import analytics_web_bp
 
         # web routes
         app.register_blueprint(user_bp)
         app.register_blueprint(employee_bp)
         app.register_blueprint(form_web_bp)
         app.register_blueprint(data_registry_web_bp)
+        app.register_blueprint(analytics_web_bp)
 
         # api routes
         app.register_blueprint(api_auth_bp)
@@ -83,6 +87,8 @@ def create_app(config_mode='default'):
         csrf.exempt(api_form_bp) # Menonaktifkan CSRF untuk semua route di api_form_bp
         app.register_blueprint(api_submission_bp)
         csrf.exempt(api_submission_bp) # Menonaktifkan CSRF untuk semua route di api_submission_bp
+        app.register_blueprint(api_analytics_bp)
+        csrf.exempt(api_analytics_bp) # Menonaktifkan CSRF untuk semua route di api_analytics_bp
         app.register_blueprint(api_data_registry_bp)
         csrf.exempt(api_data_registry_bp) # Menonaktifkan CSRF untuk semua route di api_data_registry_bp
 
