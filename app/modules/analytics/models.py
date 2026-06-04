@@ -298,3 +298,345 @@ class AnalyticsDatasetRun(db.Model):
 
     def __repr__(self):
         return f"<AnalyticsDatasetRun {self.run_key}>"
+
+
+
+class AnalyticsReportDefinition(db.Model):
+    """Definisi report analytics yang menjadi container versioned untuk indikator."""
+
+    __tablename__ = 'analytics_report_definitions'
+
+    TYPE_PK = 'pk'
+    TYPE_RENAKSI = 'renaksi'
+    TYPE_SCORECARD = 'scorecard'
+    TYPE_MONITORING = 'monitoring'
+    TYPE_CUSTOM = 'custom'
+
+    STATUS_DRAFT = 'draft'
+    STATUS_ACTIVE = 'active'
+    STATUS_ARCHIVED = 'archived'
+
+    id = db.Column('id', db.Integer(), primary_key=True)
+    uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    report_key = db.Column('report_key', db.String(150), unique=True, nullable=False)
+    name = db.Column('name', db.String(255), nullable=False)
+    description = db.Column('description', db.Text(), nullable=True)
+    report_type = db.Column('report_type', db.String(50), nullable=False, server_default=TYPE_CUSTOM, index=True)
+    category_key = db.Column('category_key', db.String(100), nullable=True, index=True)
+    status = db.Column('status', db.String(30), nullable=False, server_default=STATUS_DRAFT, index=True)
+    is_active = db.Column('is_active', db.Boolean(), nullable=False, server_default='true', index=True)
+
+    settings_json = db.Column('settings_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    tags_json = db.Column('tags_json', JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+
+    created_at = db.Column('created_at', db.DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = db.Column('updated_at', db.DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = db.Column('deleted_at', db.DateTime(timezone=True), nullable=True)
+
+    created_by = db.Column('created_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    created_by_uuid = db.Column('created_by_uuid', db.String(36), nullable=True)
+    updated_by = db.Column('updated_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    updated_by_uuid = db.Column('updated_by_uuid', db.String(36), nullable=True)
+    deleted_by = db.Column('deleted_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    deleted_by_uuid = db.Column('deleted_by_uuid', db.String(36), nullable=True)
+
+    versions = relationship(
+        'AnalyticsReportVersion',
+        back_populates='definition',
+        lazy='select',
+        cascade='save-update, merge',
+    )
+
+    __table_args__ = (
+        db.Index('ix_analytics_report_definitions_deleted_at', 'deleted_at'),
+    )
+
+
+class AnalyticsReportVersion(db.Model):
+    """Versi definisional report analytics yang memaketkan susunan indikator."""
+
+    __tablename__ = 'analytics_report_versions'
+
+    STATUS_DRAFT = 'draft'
+    STATUS_PUBLISHED = 'published'
+    STATUS_ARCHIVED = 'archived'
+
+    id = db.Column('id', db.Integer(), primary_key=True)
+    uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    report_definition_id = db.Column('report_definition_id', db.Integer(), db.ForeignKey('analytics_report_definitions.id'), nullable=False, index=True)
+    version_number = db.Column('version_number', db.Integer(), nullable=False)
+
+    status = db.Column('status', db.String(30), nullable=False, server_default=STATUS_DRAFT, index=True)
+    is_current_draft = db.Column('is_current_draft', db.Boolean(), nullable=False, server_default='true', index=True)
+    is_current_published = db.Column('is_current_published', db.Boolean(), nullable=False, server_default='false', index=True)
+
+    title = db.Column('title', db.String(255), nullable=False)
+    meta_description = db.Column('meta_description', db.Text(), nullable=True)
+    structure_json = db.Column('structure_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    narrative_guidance_json = db.Column('narrative_guidance_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    published_at = db.Column('published_at', db.DateTime(timezone=True), nullable=True, index=True)
+
+    created_at = db.Column('created_at', db.DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = db.Column('updated_at', db.DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = db.Column('deleted_at', db.DateTime(timezone=True), nullable=True)
+
+    created_by = db.Column('created_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    created_by_uuid = db.Column('created_by_uuid', db.String(36), nullable=True)
+    updated_by = db.Column('updated_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    updated_by_uuid = db.Column('updated_by_uuid', db.String(36), nullable=True)
+    deleted_by = db.Column('deleted_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    deleted_by_uuid = db.Column('deleted_by_uuid', db.String(36), nullable=True)
+
+    definition = relationship(
+        'AnalyticsReportDefinition',
+        back_populates='versions',
+        lazy='joined',
+    )
+    indicator_mappings = relationship(
+        'AnalyticsReportVersionIndicator',
+        back_populates='report_version',
+        lazy='select',
+        cascade='save-update, merge',
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'report_definition_id',
+            'version_number',
+            name='uq_analytics_report_versions_def_ver_no',
+        ),
+        db.Index('ix_analytics_report_versions_deleted_at', 'deleted_at'),
+        db.Index(
+            'ux_analytics_report_versions_one_cur_draft_per_def',
+            'report_definition_id',
+            unique=True,
+            postgresql_where=text('is_current_draft = true AND deleted_at IS NULL'),
+            sqlite_where=text('is_current_draft = 1 AND deleted_at IS NULL'),
+        ),
+        db.Index(
+            'ux_analytics_report_versions_one_cur_pub_per_def',
+            'report_definition_id',
+            unique=True,
+            postgresql_where=text('is_current_published = true AND deleted_at IS NULL'),
+            sqlite_where=text('is_current_published = 1 AND deleted_at IS NULL'),
+        ),
+    )
+
+
+class AnalyticsIndicatorDefinition(db.Model):
+    """Definisi indikator analytics yang tetap stabil lintas versi formula/target."""
+
+    __tablename__ = 'analytics_indicator_definitions'
+
+    STATUS_DRAFT = 'draft'
+    STATUS_ACTIVE = 'active'
+    STATUS_ARCHIVED = 'archived'
+
+    SOURCE_MODE_DATASET_DRIVEN = 'dataset_driven'
+    SOURCE_MODE_MANUAL_INPUT = 'manual_input'
+    SOURCE_MODE_HYBRID = 'hybrid'
+
+    CALCULATION_ABSOLUTE_COUNT = 'absolute_count'
+    CALCULATION_PERCENTAGE = 'percentage'
+    CALCULATION_RATIO = 'ratio'
+    CALCULATION_SCORE = 'score'
+    CALCULATION_WEIGHTED_SCORE = 'weighted_score'
+    CALCULATION_CHECKLIST_COMPLETION = 'checklist_completion'
+    CALCULATION_BOOLEAN_COMPLETION = 'boolean_completion'
+    CALCULATION_CUSTOM_FORMULA = 'custom_formula'
+
+    TARGET_SOURCE_MANUAL_CENTRAL = 'manual_central_target'
+    TARGET_SOURCE_MANUAL_LOCAL = 'manual_local_target'
+    TARGET_SOURCE_DERIVED_DATASET = 'derived_from_dataset'
+    TARGET_SOURCE_DERIVED_MANUAL = 'derived_from_manual_input'
+    TARGET_SOURCE_HYBRID = 'hybrid'
+
+    id = db.Column('id', db.Integer(), primary_key=True)
+    uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    indicator_key = db.Column('indicator_key', db.String(150), unique=True, nullable=False)
+    indicator_code = db.Column('indicator_code', db.String(100), nullable=True, index=True)
+    name = db.Column('name', db.String(255), nullable=False)
+    description = db.Column('description', db.Text(), nullable=True)
+    source_mode = db.Column('source_mode', db.String(50), nullable=False, server_default=SOURCE_MODE_DATASET_DRIVEN, index=True)
+    calculation_type = db.Column('calculation_type', db.String(60), nullable=False, server_default=CALCULATION_ABSOLUTE_COUNT, index=True)
+    target_source_type = db.Column('target_source_type', db.String(60), nullable=False, server_default=TARGET_SOURCE_MANUAL_CENTRAL, index=True)
+    status = db.Column('status', db.String(30), nullable=False, server_default=STATUS_DRAFT, index=True)
+    is_active = db.Column('is_active', db.Boolean(), nullable=False, server_default='true', index=True)
+
+    settings_json = db.Column('settings_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    tags_json = db.Column('tags_json', JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+
+    created_at = db.Column('created_at', db.DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = db.Column('updated_at', db.DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = db.Column('deleted_at', db.DateTime(timezone=True), nullable=True)
+
+    created_by = db.Column('created_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    created_by_uuid = db.Column('created_by_uuid', db.String(36), nullable=True)
+    updated_by = db.Column('updated_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    updated_by_uuid = db.Column('updated_by_uuid', db.String(36), nullable=True)
+    deleted_by = db.Column('deleted_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    deleted_by_uuid = db.Column('deleted_by_uuid', db.String(36), nullable=True)
+
+    versions = relationship(
+        'AnalyticsIndicatorVersion',
+        back_populates='definition',
+        lazy='select',
+        cascade='save-update, merge',
+    )
+
+    __table_args__ = (
+        db.Index('ix_analytics_indicator_definitions_deleted_at', 'deleted_at'),
+    )
+
+
+class AnalyticsIndicatorVersion(db.Model):
+    """Versi formula/target/narasi definisional indikator analytics."""
+
+    __tablename__ = 'analytics_indicator_versions'
+
+    STATUS_DRAFT = 'draft'
+    STATUS_PUBLISHED = 'published'
+    STATUS_ARCHIVED = 'archived'
+
+    PERIOD_MODE_QUARTERLY = 'quarterly'
+    PERIOD_MODE_SEMESTER = 'semester'
+    PERIOD_MODE_YEARLY = 'yearly'
+    PERIOD_MODE_MULTI_PERIOD = 'multi_period'
+
+    AGGREGATION_SUM = 'sum'
+    AGGREGATION_AVG = 'avg'
+    AGGREGATION_LAST_VALUE = 'last_value'
+    AGGREGATION_MAX = 'max'
+    AGGREGATION_CUSTOM_FORMULA = 'custom_formula'
+
+    id = db.Column('id', db.Integer(), primary_key=True)
+    uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    indicator_definition_id = db.Column('indicator_definition_id', db.Integer(), db.ForeignKey('analytics_indicator_definitions.id'), nullable=False, index=True)
+    version_number = db.Column('version_number', db.Integer(), nullable=False)
+    dataset_id = db.Column('dataset_id', db.Integer(), db.ForeignKey('analytics_datasets.id'), nullable=True, index=True)
+    dataset_version_id = db.Column('dataset_version_id', db.Integer(), db.ForeignKey('analytics_dataset_versions.id'), nullable=True, index=True)
+
+    status = db.Column('status', db.String(30), nullable=False, server_default=STATUS_DRAFT, index=True)
+    is_current_draft = db.Column('is_current_draft', db.Boolean(), nullable=False, server_default='true', index=True)
+    is_current_published = db.Column('is_current_published', db.Boolean(), nullable=False, server_default='false', index=True)
+
+    period_mode = db.Column('period_mode', db.String(50), nullable=False, server_default=PERIOD_MODE_YEARLY, index=True)
+    aggregation_strategy = db.Column('aggregation_strategy', db.String(50), nullable=False, server_default=AGGREGATION_SUM, index=True)
+    unit_label = db.Column('unit_label', db.String(100), nullable=True)
+    meta_description = db.Column('meta_description', db.Text(), nullable=True)
+    formula_json = db.Column('formula_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    target_config_json = db.Column('target_config_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    narrative_guidance_json = db.Column('narrative_guidance_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    threshold_rules_json = db.Column('threshold_rules_json', JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    published_at = db.Column('published_at', db.DateTime(timezone=True), nullable=True, index=True)
+
+    created_at = db.Column('created_at', db.DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = db.Column('updated_at', db.DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = db.Column('deleted_at', db.DateTime(timezone=True), nullable=True)
+
+    created_by = db.Column('created_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    created_by_uuid = db.Column('created_by_uuid', db.String(36), nullable=True)
+    updated_by = db.Column('updated_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    updated_by_uuid = db.Column('updated_by_uuid', db.String(36), nullable=True)
+    deleted_by = db.Column('deleted_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    deleted_by_uuid = db.Column('deleted_by_uuid', db.String(36), nullable=True)
+
+    definition = relationship(
+        'AnalyticsIndicatorDefinition',
+        back_populates='versions',
+        lazy='joined',
+    )
+    dataset = relationship('AnalyticsDataset', lazy='joined')
+    dataset_version = relationship('AnalyticsDatasetVersion', lazy='joined')
+    report_mappings = relationship(
+        'AnalyticsReportVersionIndicator',
+        back_populates='indicator_version',
+        lazy='select',
+        cascade='save-update, merge',
+    )
+    results = relationship(
+        'AnalyticsIndicatorResult',
+        back_populates='indicator_version',
+        lazy='select',
+        cascade='save-update, merge',
+    )
+    progress_entries = relationship(
+        'AnalyticsIndicatorProgressEntry',
+        back_populates='indicator_version',
+        lazy='select',
+        cascade='save-update, merge',
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'indicator_definition_id',
+            'version_number',
+            name='uq_analytics_indicator_versions_def_ver_no',
+        ),
+        db.Index('ix_analytics_indicator_versions_deleted_at', 'deleted_at'),
+        db.Index(
+            'ux_analytics_indicator_versions_one_cur_draft_per_def',
+            'indicator_definition_id',
+            unique=True,
+            postgresql_where=text('is_current_draft = true AND deleted_at IS NULL'),
+            sqlite_where=text('is_current_draft = 1 AND deleted_at IS NULL'),
+        ),
+        db.Index(
+            'ux_analytics_indicator_versions_one_cur_pub_per_def',
+            'indicator_definition_id',
+            unique=True,
+            postgresql_where=text('is_current_published = true AND deleted_at IS NULL'),
+            sqlite_where=text('is_current_published = 1 AND deleted_at IS NULL'),
+        ),
+    )
+
+
+class AnalyticsReportVersionIndicator(db.Model):
+    """Mapping indikator ke satu versi report analytics."""
+
+    __tablename__ = 'analytics_report_version_indicators'
+
+    id = db.Column('id', db.Integer(), primary_key=True)
+    uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    report_version_id = db.Column('report_version_id', db.Integer(), db.ForeignKey('analytics_report_versions.id'), nullable=False, index=True)
+    indicator_version_id = db.Column('indicator_version_id', db.Integer(), db.ForeignKey('analytics_indicator_versions.id'), nullable=False, index=True)
+    item_order = db.Column('item_order', db.Integer(), nullable=False, server_default='1')
+    display_label = db.Column('display_label', db.String(255), nullable=True)
+    section_key = db.Column('section_key', db.String(100), nullable=True, index=True)
+    config_json = db.Column('config_json', JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+
+    created_at = db.Column('created_at', db.DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = db.Column('updated_at', db.DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    deleted_at = db.Column('deleted_at', db.DateTime(timezone=True), nullable=True)
+
+    created_by = db.Column('created_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    created_by_uuid = db.Column('created_by_uuid', db.String(36), nullable=True)
+    updated_by = db.Column('updated_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    updated_by_uuid = db.Column('updated_by_uuid', db.String(36), nullable=True)
+    deleted_by = db.Column('deleted_by', db.Integer(), db.ForeignKey('users.id'), nullable=True)
+    deleted_by_uuid = db.Column('deleted_by_uuid', db.String(36), nullable=True)
+
+    report_version = relationship(
+        'AnalyticsReportVersion',
+        back_populates='indicator_mappings',
+        lazy='joined',
+    )
+    indicator_version = relationship(
+        'AnalyticsIndicatorVersion',
+        back_populates='report_mappings',
+        lazy='joined',
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'report_version_id',
+            'indicator_version_id',
+            name='uq_analytics_report_ver_indicators_rv_iv',
+        ),
+        db.Index('ix_analytics_report_version_indicators_deleted_at', 'deleted_at'),
+    )
