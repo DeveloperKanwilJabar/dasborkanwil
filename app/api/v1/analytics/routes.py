@@ -4,6 +4,7 @@ from flask_login import current_user
 from app.core.extensions import db
 from app.core.utils import json_response
 from app.modules.analytics.services import (
+    AnalyticsDatasetRunService,
     AnalyticsIndicatorResultService,
     AnalyticsIndicatorService,
     AnalyticsQueryService,
@@ -232,6 +233,115 @@ def serialize_progress_entry(entry):
     }
 
 
+def serialize_dataset_definition(dataset):
+    if not dataset:
+        return None
+    if isinstance(dataset, dict):
+        return dataset
+    return {
+        'id': dataset.id,
+        'uuid': dataset.uuid,
+        'dataset_key': dataset.dataset_key,
+        'name': dataset.name,
+        'description': getattr(dataset, 'description', None),
+        'source_domain': dataset.source_domain,
+        'source_type': dataset.source_type,
+        'primary_source_ref': getattr(dataset, 'primary_source_ref', None),
+        'status': dataset.status,
+        'is_active': dataset.is_active,
+        'is_year_scoped': getattr(dataset, 'is_year_scoped', None),
+        'default_reporting_year_mode': getattr(dataset, 'default_reporting_year_mode', None),
+        'owner_scope_type': getattr(dataset, 'owner_scope_type', None),
+        'owner_scope_code': getattr(dataset, 'owner_scope_code', None),
+        'owner_scope_name': getattr(dataset, 'owner_scope_name', None),
+        'owner_scope_path': getattr(dataset, 'owner_scope_path', []) or [],
+        'settings_json': getattr(dataset, 'settings_json', {}) or {},
+        'tags_json': getattr(dataset, 'tags_json', []) or [],
+        'created_at': iso_or_none(getattr(dataset, 'created_at', None)),
+        'updated_at': iso_or_none(getattr(dataset, 'updated_at', None)),
+    }
+
+
+def serialize_dataset_version(version):
+    if not version:
+        return None
+    if isinstance(version, dict):
+        return version
+    return {
+        'id': version.id,
+        'uuid': version.uuid,
+        'dataset_id': version.dataset_id,
+        'version_number': version.version_number,
+        'status': version.status,
+        'is_current_draft': version.is_current_draft,
+        'is_current_published': version.is_current_published,
+        'source_contract_json': getattr(version, 'source_contract_json', {}) or {},
+        'query_spec_json': getattr(version, 'query_spec_json', {}) or {},
+        'transform_spec_json': getattr(version, 'transform_spec_json', {}) or {},
+        'join_registry_spec_json': getattr(version, 'join_registry_spec_json', []) or [],
+        'grain_key': version.grain_key,
+        'output_schema_json': getattr(version, 'output_schema_json', []) or [],
+        'dimension_definitions_json': getattr(version, 'dimension_definitions_json', []) or [],
+        'metric_definitions_json': getattr(version, 'metric_definitions_json', []) or [],
+        'default_filters_json': getattr(version, 'default_filters_json', {}) or {},
+        'sort_spec_json': getattr(version, 'sort_spec_json', []) or [],
+        'freshness_source_type': version.freshness_source_type,
+        'freshness_source_ref': getattr(version, 'freshness_source_ref', None),
+        'freshness_strategy': version.freshness_strategy,
+        'freshness_policy_json': getattr(version, 'freshness_policy_json', {}) or {},
+        'publish_notes': getattr(version, 'publish_notes', None),
+        'published_at': iso_or_none(getattr(version, 'published_at', None)),
+        'created_at': iso_or_none(getattr(version, 'created_at', None)),
+        'updated_at': iso_or_none(getattr(version, 'updated_at', None)),
+    }
+
+
+def serialize_dataset_run(run):
+    if not run:
+        return None
+    if isinstance(run, dict):
+        return run
+    return {
+        'id': run.id,
+        'uuid': run.uuid,
+        'dataset_id': run.dataset_id,
+        'dataset_version_id': run.dataset_version_id,
+        'run_key': run.run_key,
+        'trigger_type': run.trigger_type,
+        'trigger_ref': getattr(run, 'trigger_ref', None),
+        'requested_reporting_year': getattr(run, 'requested_reporting_year', None),
+        'requested_reporting_period_id': getattr(run, 'requested_reporting_period_id', None),
+        'requested_filters_json': getattr(run, 'requested_filters_json', {}) or {},
+        'status': run.status,
+        'started_at': iso_or_none(getattr(run, 'started_at', None)),
+        'finished_at': iso_or_none(getattr(run, 'finished_at', None)),
+        'duration_ms': getattr(run, 'duration_ms', None),
+        'source_watermark': getattr(run, 'source_watermark', None),
+        'freshness_status': getattr(run, 'freshness_status', None),
+        'source_snapshot_json': getattr(run, 'source_snapshot_json', {}) or {},
+        'freshness_evaluated_at': iso_or_none(getattr(run, 'freshness_evaluated_at', None)),
+        'result_row_count': getattr(run, 'result_row_count', None),
+        'result_schema_json': getattr(run, 'result_schema_json', []) or [],
+        'result_preview_json': getattr(run, 'result_preview_json', []) or [],
+        'materialization_ref': getattr(run, 'materialization_ref', None),
+        'summary_json': getattr(run, 'summary_json', {}) or {},
+        'error_code': getattr(run, 'error_code', None),
+        'error_message': getattr(run, 'error_message', None),
+        'error_detail_json': getattr(run, 'error_detail_json', {}) or {},
+        'created_at': iso_or_none(getattr(run, 'created_at', None)),
+        'updated_at': iso_or_none(getattr(run, 'updated_at', None)),
+    }
+
+
+def serialize_dataset_workspace_item(item):
+    return {
+        'dataset': serialize_dataset_definition(item.get('dataset')),
+        'draft_version': serialize_dataset_version(item.get('draft_version')),
+        'published_version': serialize_dataset_version(item.get('published_version')),
+        'latest_run': serialize_dataset_run(item.get('latest_run')),
+    }
+
+
 
 def parse_int_query_arg(name, default=None):
     raw_value = request.args.get(name, default)
@@ -262,6 +372,103 @@ def serialize_indicator_workspace_item(item):
         'latest_result': serialize_indicator_result(item.get('latest_result')),
         'latest_progress_entry': serialize_progress_entry(item.get('latest_progress_entry')),
     }
+
+
+@api_analytics_bp.route('/datasets', methods=['GET'])
+def list_dataset_definitions():
+    try:
+        datasets = AnalyticsQueryService().list_datasets()
+        return json_response(
+            True,
+            'Daftar analytics dataset berhasil diambil.',
+            {'datasets': [serialize_dataset_workspace_item(item) for item in datasets]},
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except Exception as error:
+        current_app.logger.error('List analytics dataset API error: %s', str(error))
+        return json_response(False, 'Gagal mengambil daftar analytics dataset.', status=500)
+
+
+@api_analytics_bp.route('/datasets/<int:dataset_id>', methods=['GET'])
+def get_dataset_workspace(dataset_id):
+    try:
+        workspace = AnalyticsQueryService().get_dataset_workspace(dataset_id)
+        return json_response(
+            True,
+            'Detail analytics dataset berhasil diambil.',
+            {
+                'dataset': serialize_dataset_definition(workspace.get('dataset')),
+                'draft_version': serialize_dataset_version(workspace.get('draft_version')),
+                'published_version': serialize_dataset_version(workspace.get('published_version')),
+                'versions': [serialize_dataset_version(version) for version in workspace.get('versions', [])],
+                'runs': [serialize_dataset_run(run) for run in workspace.get('runs', [])],
+            },
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except Exception as error:
+        current_app.logger.error('Get analytics dataset detail API error: %s', str(error))
+        return json_response(False, 'Gagal mengambil detail analytics dataset.', status=500)
+
+
+@api_analytics_bp.route('/datasets/<int:dataset_id>/runs', methods=['GET'])
+def list_dataset_runs(dataset_id):
+    try:
+        runs = AnalyticsQueryService().list_dataset_runs(dataset_id)
+        return json_response(
+            True,
+            'Daftar analytics dataset run berhasil diambil.',
+            {'runs': [serialize_dataset_run(run) for run in runs]},
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except Exception as error:
+        current_app.logger.error('List analytics dataset run API error: %s', str(error))
+        return json_response(False, 'Gagal mengambil daftar analytics dataset run.', status=500)
+
+
+@api_analytics_bp.route('/runs/<int:run_id>', methods=['GET'])
+def get_dataset_run_detail(run_id):
+    try:
+        run = AnalyticsQueryService().get_dataset_run_detail(run_id)
+        return json_response(
+            True,
+            'Detail analytics dataset run berhasil diambil.',
+            {'run': serialize_dataset_run(run)},
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except Exception as error:
+        current_app.logger.error('Get analytics dataset run detail API error: %s', str(error))
+        return json_response(False, 'Gagal mengambil detail analytics dataset run.', status=500)
+
+
+@api_analytics_bp.route('/datasets/<int:dataset_id>/versions/<int:dataset_version_id>/runs', methods=['POST'])
+def create_dataset_run(dataset_id, dataset_version_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        run = AnalyticsDatasetRunService().start_run(
+            dataset_id=dataset_id,
+            dataset_version_id=dataset_version_id,
+            data=data,
+            actor=current_actor(),
+        )
+        return json_response(
+            True,
+            'Analytics dataset run berhasil dimulai.',
+            {'run': serialize_dataset_run(run)},
+            status=201,
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except PermissionError as error:
+        current_app.logger.warning('Create analytics dataset run API authorization error: %s', str(error))
+        return authorization_error_response(error)
+    except Exception as error:
+        db.session.rollback()
+        current_app.logger.error('Create analytics dataset run API error: %s', str(error))
+        return json_response(False, 'Gagal memulai analytics dataset run.', status=500)
 
 
 @api_analytics_bp.route('/reports', methods=['GET'])

@@ -5,6 +5,9 @@ from app.core.services.base import BaseService
 from app.core.utils import now_utc
 
 from .models import (
+    AnalyticsDataset,
+    AnalyticsDatasetRun,
+    AnalyticsDatasetVersion,
     AnalyticsIndicatorDefinition,
     AnalyticsIndicatorProgressEntry,
     AnalyticsIndicatorProgressItem,
@@ -15,6 +18,9 @@ from .models import (
     AnalyticsReportVersionIndicator,
 )
 from .repositories import (
+    AnalyticsDatasetRepository,
+    AnalyticsDatasetRunRepository,
+    AnalyticsDatasetVersionRepository,
     AnalyticsIndicatorDefinitionRepository,
     AnalyticsIndicatorProgressEntryRepository,
     AnalyticsIndicatorResultRepository,
@@ -23,6 +29,204 @@ from .repositories import (
     AnalyticsReportVersionIndicatorRepository,
     AnalyticsReportVersionRepository,
 )
+
+
+class AnalyticsDatasetService(BaseService):
+    def __init__(self, dataset_repository=None, dataset_version_repository=None):
+        super().__init__(repository=dataset_repository or AnalyticsDatasetRepository())
+        self.version_repository = dataset_version_repository or AnalyticsDatasetVersionRepository()
+
+    def create_dataset(self, data, actor=None):
+        dataset = AnalyticsDataset(
+            uuid=str(uuid.uuid4()),
+            dataset_key=data.get('dataset_key'),
+            name=data.get('name') or data.get('dataset_key') or 'Untitled dataset',
+            description=data.get('description'),
+            source_domain=data.get('source_domain', AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION),
+            source_type=data.get('source_type', AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT),
+            primary_source_ref=data.get('primary_source_ref'),
+            status=data.get('status', AnalyticsDataset.STATUS_DRAFT),
+            is_active=data.get('is_active', True),
+            is_year_scoped=data.get('is_year_scoped', True),
+            default_reporting_year_mode=data.get(
+                'default_reporting_year_mode',
+                AnalyticsDataset.REPORTING_YEAR_MODE_ACTIVE,
+            ),
+            owner_scope_type=data.get('owner_scope_type'),
+            owner_scope_code=data.get('owner_scope_code'),
+            owner_scope_name=data.get('owner_scope_name'),
+            owner_scope_path=data.get('owner_scope_path') or [],
+            settings_json=data.get('settings_json') or {},
+            tags_json=data.get('tags_json') or [],
+        )
+        self._apply_actor_audit(dataset, actor, action='create')
+        return self.repository.save(dataset)
+
+    def create_dataset_version(self, dataset_id, data, actor=None):
+        dataset = self.repository.get_by_id(dataset_id)
+        if not dataset:
+            raise ValueError('Analytics dataset tidak ditemukan.')
+
+        version = AnalyticsDatasetVersion(
+            uuid=str(uuid.uuid4()),
+            dataset_id=dataset_id,
+            version_number=self.version_repository.get_next_version_number(dataset_id),
+            status=data.get('status', AnalyticsDatasetVersion.STATUS_DRAFT),
+            is_current_draft=data.get('is_current_draft', True),
+            is_current_published=data.get('is_current_published', False),
+            source_contract_json=data.get('source_contract_json') or {},
+            query_spec_json=data.get('query_spec_json') or {},
+            transform_spec_json=data.get('transform_spec_json') or {},
+            join_registry_spec_json=data.get('join_registry_spec_json') or [],
+            grain_key=data.get('grain_key', AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR),
+            output_schema_json=data.get('output_schema_json') or [],
+            dimension_definitions_json=data.get('dimension_definitions_json') or [],
+            metric_definitions_json=data.get('metric_definitions_json') or [],
+            default_filters_json=data.get('default_filters_json') or {},
+            sort_spec_json=data.get('sort_spec_json') or [],
+            freshness_source_type=data.get(
+                'freshness_source_type',
+                AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT,
+            ),
+            freshness_source_ref=data.get('freshness_source_ref'),
+            freshness_strategy=data.get(
+                'freshness_strategy',
+                AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP,
+            ),
+            freshness_policy_json=data.get('freshness_policy_json') or {},
+            publish_notes=data.get('publish_notes'),
+            published_at=data.get('published_at'),
+        )
+        self._apply_actor_audit(version, actor, action='create')
+        return self.version_repository.save(version)
+
+    def publish_dataset_version(self, version_id, actor=None):
+        version = self.version_repository.get_by_id(version_id)
+        if not version:
+            raise ValueError('Analytics dataset version tidak ditemukan.')
+
+        try:
+            self.version_repository.archive_published_others(
+                version.dataset_id,
+                except_version_id=version.id,
+            )
+            version.status = AnalyticsDatasetVersion.STATUS_PUBLISHED
+            version.is_current_draft = False
+            version.is_current_published = True
+            version.published_at = now_utc()
+            self._apply_actor_audit(version, actor, action='update')
+            saved_version = self.version_repository.save(version)
+
+            dataset = self.repository.get_by_id(version.dataset_id)
+            if dataset:
+                dataset.status = AnalyticsDataset.STATUS_ACTIVE
+                dataset.is_active = True
+                self._apply_actor_audit(dataset, actor, action='update')
+                self.repository.save(dataset)
+
+            return saved_version
+        except Exception:
+            db.session.rollback()
+            raise
+
+    def _apply_actor_audit(self, obj, actor=None, action='create'):
+        if not actor:
+            return obj
+        actor_id = getattr(actor, 'id', None)
+        actor_uuid = getattr(actor, 'uuid', None)
+        if action == 'create':
+            obj.created_by = actor_id
+            obj.created_by_uuid = actor_uuid
+        obj.updated_by = actor_id
+        obj.updated_by_uuid = actor_uuid
+        return obj
+
+
+class AnalyticsDatasetRunService(BaseService):
+    def __init__(
+        self,
+        dataset_repository=None,
+        dataset_version_repository=None,
+        dataset_run_repository=None,
+    ):
+        super().__init__(repository=dataset_run_repository or AnalyticsDatasetRunRepository())
+        self.dataset_repository = dataset_repository or AnalyticsDatasetRepository()
+        self.dataset_version_repository = dataset_version_repository or AnalyticsDatasetVersionRepository()
+
+    def start_run(self, dataset_id, dataset_version_id, data=None, actor=None):
+        data = data or {}
+        dataset = self.dataset_repository.get_by_id(dataset_id)
+        if not dataset:
+            raise ValueError('Analytics dataset tidak ditemukan.')
+
+        dataset_version = self.dataset_version_repository.get_by_id(dataset_version_id)
+        if not dataset_version or dataset_version.dataset_id != dataset_id:
+            raise ValueError('Analytics dataset version tidak ditemukan.')
+        if getattr(dataset_version, 'status', None) != AnalyticsDatasetVersion.STATUS_PUBLISHED:
+            raise ValueError('Hanya dataset version published yang boleh menjalankan run.')
+
+        run = AnalyticsDatasetRun(
+            uuid=str(uuid.uuid4()),
+            dataset_id=dataset_id,
+            dataset_version_id=dataset_version_id,
+            run_key=data.get('run_key') or f'dataset-run-{uuid.uuid4()}',
+            trigger_type=data.get('trigger_type', AnalyticsDatasetRun.TRIGGER_MANUAL),
+            trigger_ref=data.get('trigger_ref'),
+            requested_reporting_year=data.get('requested_reporting_year'),
+            requested_reporting_period_id=data.get('requested_reporting_period_id'),
+            requested_filters_json=data.get('requested_filters_json') or {},
+            status=AnalyticsDatasetRun.STATUS_RUNNING,
+            started_at=data.get('started_at') or now_utc(),
+            freshness_status=data.get('freshness_status', AnalyticsDatasetRun.FRESHNESS_UNKNOWN),
+            source_snapshot_json=data.get('source_snapshot_json') or {},
+        )
+        self._apply_actor_audit(run, actor, action='create')
+        return self.repository.save(run)
+
+    def complete_run(self, run_id, data=None, actor=None):
+        data = data or {}
+        run = self.repository.get_by_id(run_id)
+        if not run:
+            raise ValueError('Analytics dataset run tidak ditemukan.')
+
+        run.status = AnalyticsDatasetRun.STATUS_SUCCEEDED
+        run.finished_at = data.get('finished_at') or now_utc()
+        run.result_row_count = data.get('result_row_count')
+        run.result_schema_json = data.get('result_schema_json') or []
+        run.result_preview_json = data.get('result_preview_json') or []
+        run.materialization_ref = data.get('materialization_ref')
+        run.summary_json = data.get('summary_json') or {}
+        run.error_code = None
+        run.error_message = None
+        run.error_detail_json = {}
+        self._apply_actor_audit(run, actor, action='update')
+        return self.repository.save(run)
+
+    def fail_run(self, run_id, data=None, actor=None):
+        data = data or {}
+        run = self.repository.get_by_id(run_id)
+        if not run:
+            raise ValueError('Analytics dataset run tidak ditemukan.')
+
+        run.status = AnalyticsDatasetRun.STATUS_FAILED
+        run.finished_at = data.get('finished_at') or now_utc()
+        run.error_code = data.get('error_code')
+        run.error_message = data.get('error_message')
+        run.error_detail_json = data.get('error_detail_json') or {}
+        self._apply_actor_audit(run, actor, action='update')
+        return self.repository.save(run)
+
+    def _apply_actor_audit(self, obj, actor=None, action='create'):
+        if not actor:
+            return obj
+        actor_id = getattr(actor, 'id', None)
+        actor_uuid = getattr(actor, 'uuid', None)
+        if action == 'create':
+            obj.created_by = actor_id
+            obj.created_by_uuid = actor_uuid
+        obj.updated_by = actor_id
+        obj.updated_by_uuid = actor_uuid
+        return obj
 
 
 class AnalyticsReportService(BaseService):
@@ -382,6 +586,9 @@ class AnalyticsQueryService(BaseService):
         report_version_indicator_repository=None,
         result_repository=None,
         progress_entry_repository=None,
+        dataset_repository=None,
+        dataset_version_repository=None,
+        dataset_run_repository=None,
     ):
         super().__init__(repository=report_definition_repository or AnalyticsReportDefinitionRepository())
         self.report_version_repository = report_version_repository or AnalyticsReportVersionRepository()
@@ -398,6 +605,56 @@ class AnalyticsQueryService(BaseService):
         self.progress_entry_repository = (
             progress_entry_repository or AnalyticsIndicatorProgressEntryRepository()
         )
+        self.dataset_repository = dataset_repository or AnalyticsDatasetRepository()
+        self.dataset_version_repository = dataset_version_repository or AnalyticsDatasetVersionRepository()
+        self.dataset_run_repository = dataset_run_repository or AnalyticsDatasetRunRepository()
+
+    def list_datasets(self):
+        items = []
+        for dataset in self.dataset_repository.get_all():
+            draft_version = self.dataset_version_repository.get_draft_version(dataset.id)
+            published_version = self.dataset_version_repository.get_published_version(dataset.id)
+            active_version = draft_version or published_version
+            latest_run = None
+            if active_version:
+                latest_run = self.dataset_run_repository.get_latest_for_dataset_version(active_version.id)
+            items.append({
+                'dataset': dataset,
+                'draft_version': draft_version,
+                'published_version': published_version,
+                'latest_run': latest_run,
+            })
+        return items
+
+    def get_dataset_workspace(self, dataset_id):
+        dataset = self.dataset_repository.get_by_id(dataset_id)
+        if not dataset:
+            raise ValueError('Analytics dataset tidak ditemukan.')
+
+        draft_version = self.dataset_version_repository.get_draft_version(dataset_id)
+        published_version = self.dataset_version_repository.get_published_version(dataset_id)
+        versions = self.dataset_version_repository.list_versions(dataset_id)
+        runs = self.dataset_run_repository.list_by_dataset(dataset_id)
+
+        return {
+            'dataset': dataset,
+            'draft_version': draft_version,
+            'published_version': published_version,
+            'versions': versions,
+            'runs': runs,
+        }
+
+    def list_dataset_runs(self, dataset_id):
+        dataset = self.dataset_repository.get_by_id(dataset_id)
+        if not dataset:
+            raise ValueError('Analytics dataset tidak ditemukan.')
+        return self.dataset_run_repository.list_by_dataset(dataset_id)
+
+    def get_dataset_run_detail(self, run_id):
+        run = self.dataset_run_repository.get_by_id(run_id)
+        if not run:
+            raise ValueError('Analytics dataset run tidak ditemukan.')
+        return run
 
     def list_reports(self):
         items = []

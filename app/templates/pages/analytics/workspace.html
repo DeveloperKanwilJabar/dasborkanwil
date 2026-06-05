@@ -32,6 +32,21 @@
         border-left: 0;
         border-right: 0;
     }
+    .analytics-grid-shell .btn[data-selected="true"] {
+        box-shadow: 0 0 0 0.2rem rgba(64, 81, 137, 0.18);
+    }
+    .analytics-quick-flow-card {
+        border: 1px dashed var(--vz-border-color, #d9dee3);
+        border-radius: 0.75rem;
+        background: var(--vz-secondary-bg, #f8f9fa);
+        padding: 1rem;
+    }
+    .analytics-chart-box {
+        min-height: 260px;
+    }
+    .analytics-chart-box .apexcharts-canvas {
+        margin: 0 auto;
+    }
 </style>
 {% endblock extra_css %}
 
@@ -175,6 +190,33 @@
             </div>
 
             <div class="row g-4 mt-1">
+                <div class="col-12 col-xxl-4">
+                    <div class="card analytics-detail-panel h-100" id="analyticsDatasetRunsPanel">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Dataset Runs</h5>
+                            <p class="text-muted mb-0">Observability tipis untuk lifecycle dataset run sebelum dashboard final dibangun.</p>
+                        </div>
+                        <div class="card-body">
+                            <div id="analyticsDatasetRunsList" class="list-group list-group-flush">
+                                <div class="text-muted">Memuat dataset runs...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-12 col-xxl-8">
+                    <div class="card analytics-detail-panel h-100" id="analyticsDatasetDetailCard">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Detail Dataset</h5>
+                            <p class="text-muted mb-0">Ringkasan contract, preview hasil run, dan histori singkat dataset demo yang sedang dipilih.</p>
+                        </div>
+                        <div class="card-body" id="analyticsDatasetDetailPanel">
+                            <div class="text-muted">Pilih salah satu dataset untuk melihat contract dan preview hasil run.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mt-1">
                 <div class="col-12">
                     <div class="card h-100">
                         <div class="card-header">
@@ -206,6 +248,7 @@
                     </div>
                 </div>
             </div>
+            </div>
         </div>
     </div>
     {% block footer %}
@@ -221,6 +264,7 @@ window.analyticsWorkspaceConfig = {{ workspace_config | tojson }};
 {% endblock extra_content %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='libs/apexcharts/dist/apexcharts.min.js') }}"></script>
 <script src="{{ url_for('static', filename='libs/gridjs/dist/gridjs.umd.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pages/analytics-workspace.js') }}"></script>
 {% endblock extra_js %}

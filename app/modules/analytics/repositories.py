@@ -4,14 +4,106 @@ from app.core.extensions import db
 from app.core.repositories.base import BaseRepository
 
 from .models import (
+    AnalyticsDataset,
+    AnalyticsDatasetRun,
+    AnalyticsDatasetVersion,
     AnalyticsIndicatorDefinition,
     AnalyticsIndicatorProgressEntry,
+    AnalyticsIndicatorProgressItem,
     AnalyticsIndicatorResult,
     AnalyticsIndicatorVersion,
     AnalyticsReportDefinition,
     AnalyticsReportVersion,
     AnalyticsReportVersionIndicator,
 )
+
+
+class AnalyticsDatasetRepository(BaseRepository):
+    def __init__(self):
+        super().__init__(model=AnalyticsDataset)
+
+    def get_by_key(self, dataset_key):
+        return self.find_one_by(dataset_key=dataset_key)
+
+    def list_by_status(self, status):
+        return self.find_by(status=status)
+
+
+class AnalyticsDatasetVersionRepository(BaseRepository):
+    def __init__(self):
+        super().__init__(model=AnalyticsDatasetVersion)
+
+    def get_draft_version(self, dataset_id):
+        return self.model.query.filter(
+            AnalyticsDatasetVersion.dataset_id == dataset_id,
+            AnalyticsDatasetVersion.status == AnalyticsDatasetVersion.STATUS_DRAFT,
+            AnalyticsDatasetVersion.is_current_draft == True,
+            AnalyticsDatasetVersion.deleted_at == None,
+        ).order_by(AnalyticsDatasetVersion.version_number.desc()).first()
+
+    def get_published_version(self, dataset_id):
+        return self.model.query.filter(
+            AnalyticsDatasetVersion.dataset_id == dataset_id,
+            AnalyticsDatasetVersion.status == AnalyticsDatasetVersion.STATUS_PUBLISHED,
+            AnalyticsDatasetVersion.is_current_published == True,
+            AnalyticsDatasetVersion.deleted_at == None,
+        ).order_by(AnalyticsDatasetVersion.version_number.desc()).first()
+
+    def get_next_version_number(self, dataset_id):
+        latest_version_number = self.model.query.filter(
+            AnalyticsDatasetVersion.dataset_id == dataset_id,
+            AnalyticsDatasetVersion.deleted_at == None,
+        ).with_entities(func.max(AnalyticsDatasetVersion.version_number)).scalar()
+        return (latest_version_number or 0) + 1
+
+    def list_versions(self, dataset_id):
+        return self.model.query.filter(
+            AnalyticsDatasetVersion.dataset_id == dataset_id,
+            AnalyticsDatasetVersion.deleted_at == None,
+        ).order_by(AnalyticsDatasetVersion.version_number.desc()).all()
+
+    def archive_published_others(self, dataset_id, except_version_id=None):
+        query = self.model.query.filter(
+            AnalyticsDatasetVersion.dataset_id == dataset_id,
+            AnalyticsDatasetVersion.is_current_published == True,
+            AnalyticsDatasetVersion.deleted_at == None,
+        )
+        if except_version_id is not None:
+            query = query.filter(AnalyticsDatasetVersion.id != except_version_id)
+
+        versions = query.all()
+        for version in versions:
+            version.is_current_published = False
+            version.is_current_draft = False
+            if version.status == AnalyticsDatasetVersion.STATUS_PUBLISHED:
+                version.status = AnalyticsDatasetVersion.STATUS_ARCHIVED
+        return versions
+
+
+class AnalyticsDatasetRunRepository(BaseRepository):
+    def __init__(self):
+        super().__init__(model=AnalyticsDatasetRun)
+
+    def list_by_dataset(self, dataset_id, limit=50):
+        return self.model.query.filter(
+            AnalyticsDatasetRun.dataset_id == dataset_id,
+            AnalyticsDatasetRun.deleted_at == None,
+        ).order_by(AnalyticsDatasetRun.created_at.desc()).limit(limit).all()
+
+    def list_by_dataset_version(self, dataset_version_id, limit=50):
+        return self.model.query.filter(
+            AnalyticsDatasetRun.dataset_version_id == dataset_version_id,
+            AnalyticsDatasetRun.deleted_at == None,
+        ).order_by(AnalyticsDatasetRun.created_at.desc()).limit(limit).all()
+
+    def get_latest_for_dataset_version(self, dataset_version_id):
+        return self.model.query.filter(
+            AnalyticsDatasetRun.dataset_version_id == dataset_version_id,
+            AnalyticsDatasetRun.deleted_at == None,
+        ).order_by(
+            AnalyticsDatasetRun.started_at.desc(),
+            AnalyticsDatasetRun.created_at.desc(),
+        ).first()
 
 
 class AnalyticsReportDefinitionRepository(BaseRepository):

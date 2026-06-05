@@ -10,6 +10,9 @@ def analytics_workspace():
         'analyticsReportsUrl': url_for('api_analytics_v1.list_report_definitions'),
         'analyticsIndicatorsUrl': url_for('api_analytics_v1.list_indicator_definitions'),
         'analyticsResultsUrl': url_for('api_analytics_v1.list_indicator_results'),
+        'analyticsDatasetsUrl': url_for('api_analytics_v1.list_dataset_definitions'),
+        'analyticsDatasetDetailUrlTemplate': '/api/v1/analytics/datasets/__DATASET_ID__',
+        'analyticsDatasetRunsUrlTemplate': '/api/v1/analytics/datasets/__DATASET_ID__/runs',
         'analyticsReportDetailUrlTemplate': '/api/v1/analytics/reports/__REPORT_ID__',
         'analyticsIndicatorDetailUrlTemplate': '/api/v1/analytics/indicators/__INDICATOR_ID__',
     }

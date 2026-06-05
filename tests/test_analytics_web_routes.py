@@ -17,6 +17,9 @@ def test_analytics_workspace_page_smoke_returns_ui_shell_and_assets():
     assert 'id="analyticsReportsGrid"' in html
     assert 'id="analyticsIndicatorsGrid"' in html
     assert 'id="analyticsResultsTable"' in html
+    assert 'id="analyticsDatasetRunsPanel"' in html
+    assert 'id="analyticsDatasetRunsList"' in html
+    assert 'id="analyticsDatasetDetailPanel"' in html
     assert 'id="analyticsReportDetailPanel"' in html
     assert 'id="analyticsIndicatorDetailPanel"' in html
     assert 'id="indicatorDetailTabDefinition"' in html
@@ -32,10 +35,14 @@ def test_analytics_workspace_page_smoke_returns_ui_shell_and_assets():
     assert 'id="indicatorDetailTabContentProgressHistory"' in html
     assert 'id="indicatorDetailTabContentResultHistory"' in html
     assert 'libs/gridjs/dist/gridjs.umd.js' in html
+    assert 'libs/apexcharts/dist/apexcharts.min.js' in html
     assert 'js/pages/analytics-workspace.js' in html
     assert 'analyticsReportsUrl' in html
     assert 'analyticsIndicatorsUrl' in html
     assert 'analyticsResultsUrl' in html
+    assert 'analyticsDatasetsUrl' in html
+    assert 'analyticsDatasetDetailUrlTemplate' in html
+    assert 'analyticsDatasetRunsUrlTemplate' in html
     assert 'analyticsReportDetailUrlTemplate' in html
     assert 'analyticsIndicatorDetailUrlTemplate' in html
 
@@ -50,10 +57,11 @@ def test_analytics_workspace_static_js_is_served():
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert 'window.analyticsWorkspaceConfig' in body
-    assert 'renderSummaryCards' in body
-    assert 'loadReports' in body
-    assert 'loadIndicators' in body
-    assert 'loadResults' in body
+    assert 'analyticsDatasetDetailUrlTemplate' in body
+    assert 'analyticsIndicatorDetailUrlTemplate' in body
+    assert 'Detail Dataset' in body
+    assert 'Pilih salah satu dataset untuk melihat contract dan preview hasil run.' in body
+    assert 'Gagal memuat dataset runs.' in body
 
 
 
@@ -65,11 +73,22 @@ def test_analytics_workspace_source_js_contains_expected_fetch_contract():
     assert 'analyticsReportsUrl' in content
     assert 'analyticsIndicatorsUrl' in content
     assert 'analyticsResultsUrl' in content
+    assert 'analyticsDatasetsUrl' in content
+    assert 'analyticsDatasetDetailUrlTemplate' in content
+    assert 'analyticsDatasetRunsUrlTemplate' in content
     assert 'analyticsReportDetailUrlTemplate' in content
     assert 'analyticsIndicatorDetailUrlTemplate' in content
     assert 'gridjs.Grid' in content
     assert 'fetchJson' in content
-    assert 'renderIndicatorTabNavigation' in content
+    assert 'renderDatasetRunsPanel' in content
+    assert 'renderDatasetDetail' in content
+    assert 'loadDatasetDetail' in content
+    assert 'loadDatasets' in content
+    assert 'renderDatasetSummaryCharts' in content
+    assert 'wireQuickFlowActions' in content
+    assert 'ApexCharts' in content
+    assert 'data-flow-report-id' in content
+    assert 'Sedang dibaca' in content
     assert 'renderIndicatorDefinitionTab' in content
     assert 'renderIndicatorFormulaTab' in content
     assert 'renderIndicatorTargetTab' in content
