@@ -1,5 +1,13 @@
 from flask import Blueprint, current_app, request
+from flasgger import swag_from
 
+from app.api.docs import (
+    build_spec,
+    envelope_schema,
+    path_parameter,
+    query_parameter,
+    standard_responses,
+)
 from app.core.extensions import db
 from app.core.utils import json_response
 from app.modules.data_registry.services import (
@@ -15,6 +23,126 @@ api_data_registry_bp = Blueprint(
     'api_data_registry_v1',
     __name__,
     url_prefix='/api/v1',
+)
+
+REGISTRY_VERSION_DETAIL_DOC = build_spec(
+    tag='Data Registry',
+    summary='Ambil detail version registry.',
+    description='Mengembalikan detail version registry beserta ringkasan import batch yang terkait.',
+    parameters=[path_parameter('version_id', description='ID version registry.', example=31)],
+    responses=standard_responses(envelope_schema({'type': 'object'} , message_example='Detail version registry berhasil diambil.'), 'Detail version registry berhasil diambil.'),
+)
+
+CREATE_IMPORT_BATCH_DOC = build_spec(
+    tag='Data Registry',
+    summary='Buat import batch registry.',
+    description='Membuat batch import baru dari payload mapping/rows hasil upload atau manual entry.',
+    parameters=[path_parameter('version_id', description='ID version registry.', example=31)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Import batch berhasil dibuat.'), 'Import batch berhasil dibuat.'),
+)
+
+IMPORT_BATCH_DETAIL_DOC = build_spec(
+    tag='Data Registry',
+    summary='Ambil detail import batch.',
+    description='Dipakai untuk menampilkan status batch, versi registry, dan metadata materialisasi.',
+    parameters=[path_parameter('batch_id', description='ID import batch.', example=101)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Detail import batch berhasil diambil.'), 'Detail import batch berhasil diambil.'),
+)
+
+VALIDATE_IMPORT_BATCH_DOC = build_spec(
+    tag='Data Registry',
+    summary='Validasi import batch.',
+    description='Menjalankan validasi schema, normalisasi, duplicate detection, dan merangkum hasil validasi batch.',
+    parameters=[path_parameter('batch_id', description='ID import batch yang divalidasi.', example=101)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Import batch berhasil divalidasi.'), 'Import batch berhasil divalidasi.'),
+)
+
+LIST_IMPORT_BATCH_ROWS_DOC = build_spec(
+    tag='Data Registry',
+    summary='Ambil daftar row pada import batch.',
+    description='Mengembalikan seluruh row import batch, opsional difilter dengan status row.',
+    parameters=[
+        path_parameter('batch_id', description='ID import batch.', example=101),
+        query_parameter('status', description='Filter status row, mis. valid/error/duplicate.', example='error'),
+    ],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Row import batch berhasil diambil.'), 'Row import batch berhasil diambil.'),
+)
+
+MATERIALIZE_IMPORT_BATCH_DOC = build_spec(
+    tag='Data Registry',
+    summary='Materialisasi import batch ke registry records.',
+    description='Menulis row valid dari import batch menjadi record registry final sesuai contract materialization yang aktif.',
+    parameters=[path_parameter('batch_id', description='ID import batch.', example=101)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Import batch berhasil dimaterialisasi.'), 'Import batch berhasil dimaterialisasi.'),
+)
+
+REGISTRY_OPTIONS_DOC = build_spec(
+    tag='Data Registry',
+    summary='Ambil option list registry resource.',
+    description='Umumnya dipakai Select2/cascade selector untuk dropdown registry seperti wilayah.',
+    parameters=[
+        path_parameter('registry_slug', value_type='string', description='Slug registry resource.', example='wilayah.administratif'),
+        query_parameter('version_number', value_type='integer', description='Versi registry yang ingin dipakai.', example=3),
+        query_parameter('admin_level', description='Filter level administrasi.', example='city_regency'),
+        query_parameter('parent_record_id', value_type='integer', description='Filter turunan berdasarkan parent ID.', example=1),
+        query_parameter('parent_code', description='Filter turunan berdasarkan kode parent.', example='32'),
+        query_parameter('q', description='Keyword pencarian label/kode.', example='Bandung'),
+        query_parameter('limit', value_type='integer', description='Batas jumlah item.', example=100, default=100),
+    ],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Option registry berhasil diambil.'), 'Option registry berhasil diambil.'),
+)
+
+REGISTRY_LOOKUP_DOC = build_spec(
+    tag='Data Registry',
+    summary='Lookup satu record registry.',
+    description='Mengambil 1 record registry berdasarkan record_key atau record_code.',
+    parameters=[
+        path_parameter('registry_slug', value_type='string', description='Slug registry resource.', example='wilayah.administratif'),
+        query_parameter('record_key', description='Kunci record lengkap.', example='city:3204'),
+        query_parameter('record_code', description='Kode record.', example='3204'),
+        query_parameter('version_number', value_type='integer', description='Versi registry.', example=3),
+    ],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Lookup registry berhasil diambil.'), 'Lookup registry berhasil diambil.'),
+)
+
+REGISTRY_CHILDREN_DOC = build_spec(
+    tag='Data Registry',
+    summary='Ambil child records dari satu parent registry.',
+    description='Dipakai untuk tree/cascade lookup seperti parent provinsi -> daftar kabupaten/kota.',
+    parameters=[
+        path_parameter('registry_slug', value_type='string', description='Slug registry resource.', example='wilayah.administratif'),
+        query_parameter('parent_record_id', value_type='integer', description='ID parent record.', example=1),
+        query_parameter('parent_code', description='Kode parent record.', example='32'),
+        query_parameter('admin_level', description='Filter level child.', example='city_regency'),
+        query_parameter('version_number', value_type='integer', description='Versi registry.', example=3),
+    ],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Children registry berhasil diambil.'), 'Children registry berhasil diambil.'),
+)
+
+REGISTRY_TREE_DOC = build_spec(
+    tag='Data Registry',
+    summary='Ambil pohon registry bertingkat.',
+    description='Mengembalikan node tree lengkap untuk kebutuhan browser hierarki wilayah/registry.',
+    parameters=[
+        path_parameter('registry_slug', value_type='string', description='Slug registry resource.', example='wilayah.administratif'),
+        query_parameter('root_level', description='Level root awal tree.', example='province'),
+        query_parameter('max_depth', value_type='integer', description='Kedalaman maksimum tree.', example=4, default=4),
+        query_parameter('version_number', value_type='integer', description='Versi registry.', example=3),
+    ],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Tree registry berhasil diambil.'), 'Tree registry berhasil diambil.'),
+)
+
+REGISTRY_FEATURE_COLLECTION_DOC = build_spec(
+    tag='Data Registry',
+    summary='Ambil GeoJSON feature collection registry.',
+    description='Menghasilkan GeoJSON FeatureCollection untuk kebutuhan peta/visualisasi geospasial.',
+    parameters=[
+        path_parameter('registry_slug', value_type='string', description='Slug registry resource.', example='wilayah.administratif'),
+        query_parameter('admin_level', description='Filter level administrasi.', example='province'),
+        query_parameter('parent_code', description='Filter parent code.', example='32'),
+        query_parameter('version_number', value_type='integer', description='Versi registry.', example=3),
+    ],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Feature collection registry berhasil diambil.'), 'Feature collection registry berhasil diambil.'),
 )
 
 
@@ -148,6 +276,7 @@ def serialize_import_row(row):
 
 
 @api_data_registry_bp.route('/data-registry-versions/<int:version_id>', methods=['GET'])
+@swag_from(REGISTRY_VERSION_DETAIL_DOC)
 def get_registry_version_detail(version_id):
     try:
         result = DataRegistryVersionService().get_version_detail(version_id)
@@ -171,6 +300,7 @@ def get_registry_version_detail(version_id):
 
 
 @api_data_registry_bp.route('/data-registry-versions/<int:version_id>/import-batches', methods=['POST'])
+@swag_from(CREATE_IMPORT_BATCH_DOC)
 def create_import_batch(version_id):
     try:
         payload = request.get_json(silent=True) or {}
@@ -195,6 +325,7 @@ def create_import_batch(version_id):
 
 
 @api_data_registry_bp.route('/data-registry-import-batches/<int:batch_id>', methods=['GET'])
+@swag_from(IMPORT_BATCH_DETAIL_DOC)
 def get_import_batch_detail(batch_id):
     try:
         result = DataRegistryImportBatchService().get_batch_detail(batch_id)
@@ -218,6 +349,7 @@ def get_import_batch_detail(batch_id):
 
 
 @api_data_registry_bp.route('/data-registry-import-batches/<int:batch_id>/validate', methods=['POST'])
+@swag_from(VALIDATE_IMPORT_BATCH_DOC)
 def validate_import_batch(batch_id):
     try:
         result = DataRegistryImportValidationService().validate_batch(batch_id, actor=None)
@@ -238,6 +370,7 @@ def validate_import_batch(batch_id):
 
 
 @api_data_registry_bp.route('/data-registry-import-batches/<int:batch_id>/rows', methods=['GET'])
+@swag_from(LIST_IMPORT_BATCH_ROWS_DOC)
 def list_import_batch_rows(batch_id):
     try:
         result = DataRegistryImportBatchService().list_batch_rows(
@@ -264,6 +397,7 @@ def list_import_batch_rows(batch_id):
 
 
 @api_data_registry_bp.route('/data-registry-import-batches/<int:batch_id>/materialize', methods=['POST'])
+@swag_from(MATERIALIZE_IMPORT_BATCH_DOC)
 def materialize_import_batch(batch_id):
     try:
         result = DataRegistryMaterializationService().materialize_import_batch(batch_id, actor=None)
@@ -289,6 +423,7 @@ def materialize_import_batch(batch_id):
 
 
 @api_data_registry_bp.route('/registry-resources/<string:registry_slug>/options', methods=['GET'])
+@swag_from(REGISTRY_OPTIONS_DOC)
 def get_registry_options(registry_slug):
     try:
         result = DataRegistryQueryService().get_option_list(
@@ -321,6 +456,7 @@ def get_registry_options(registry_slug):
 
 
 @api_data_registry_bp.route('/registry-resources/<string:registry_slug>/lookup', methods=['GET'])
+@swag_from(REGISTRY_LOOKUP_DOC)
 def get_registry_lookup(registry_slug):
     try:
         result = DataRegistryQueryService().get_lookup(
@@ -350,6 +486,7 @@ def get_registry_lookup(registry_slug):
 
 
 @api_data_registry_bp.route('/registry-resources/<string:registry_slug>/children', methods=['GET'])
+@swag_from(REGISTRY_CHILDREN_DOC)
 def get_registry_children(registry_slug):
     try:
         result = DataRegistryQueryService().get_children(
@@ -380,6 +517,7 @@ def get_registry_children(registry_slug):
 
 
 @api_data_registry_bp.route('/registry-resources/<string:registry_slug>/tree', methods=['GET'])
+@swag_from(REGISTRY_TREE_DOC)
 def get_registry_tree(registry_slug):
     try:
         result = DataRegistryQueryService().get_tree(
@@ -409,6 +547,7 @@ def get_registry_tree(registry_slug):
 
 
 @api_data_registry_bp.route('/registry-resources/<string:registry_slug>/feature-collection', methods=['GET'])
+@swag_from(REGISTRY_FEATURE_COLLECTION_DOC)
 def get_registry_feature_collection(registry_slug):
     try:
         feature_collection = DataRegistryQueryService().get_feature_collection(

@@ -1,57 +1,96 @@
-import os
+"""Middleware dan bootstrap logging aplikasi.
+
+Modul ini memusatkan hook Flask `before_request` dan setup logger agar perilaku
+lintas route tetap konsisten serta mudah diuji/didokumentasikan.
+"""
+
 import logging
+import os
 from logging.handlers import RotatingFileHandler
-from flask import request, current_app, jsonify
+
+from flask import current_app, request
 from flask_login import current_user
-from .utils import now_utc
+
 from .extensions import db
+from .utils import now_utc
+
 
 def setup_request(app):
-    # OPTIMASI: Hanya update last_login jika user login & bukan request file statis
+    """Daftarkan hook request global pada aplikasi Flask.
+
+    Hook yang dipasang saat ini mencakup:
+    - pembaruan `last_login` untuk user yang sedang terautentikasi,
+    - logging ringan untuk request API v1.
+
+    Args:
+        app (flask.Flask): Instance aplikasi yang akan dipasangi middleware.
+
+    Returns:
+        None
+
+    Example:
+        >>> app = Flask(__name__)
+        >>> setup_request(app)
+    """
+
     @app.before_request
     def handle_before_request():
+        """Perbarui jejak login user aktif sebelum request diproses.
+
+        Saat user sudah login, field `last_login` diset ke UTC sekarang sebagai
+        jejak aktivitas terakhir. Untuk versi saat ini, perubahan langsung di-
+        commit pada setiap request terautentikasi.
+        """
         if current_user.is_authenticated:
-            # Cek agar tidak commit di setiap hit (misal: update tiap 5 menit saja)
-            # Untuk kesederhanaan, kita update tapi pastikan ini bukan static file
             current_user.last_login = now_utc()
             db.session.commit()
 
     @app.before_request
     def handle_api_request():
-        # Logic khusus untuk jalur API
+        """Tulis log request masuk untuk endpoint API v1.
+
+        Log ini membantu observability dasar saat review bug atau audit trafik
+        endpoint internal.
+        """
         if request.path.startswith('/api/v1/'):
-            # Contoh: Cek custom header atau logging khusus
-            current_app.logger.info(f"API Request: {request.method} {request.path}")
+            current_app.logger.info("API Request: %s %s", request.method, request.path)
+
 
 def setup_logging(app):
-    # Logging Setup (Gunakan Path yang jelas)
+    """Siapkan file handler dan stream handler untuk logger aplikasi.
+
+    Logger ditulis ke dua tujuan sekaligus:
+    - `logs/app.log` untuk jejak persisten,
+    - stdout/stderr terminal untuk observasi saat development atau container log.
+
+    Args:
+        app (flask.Flask): Instance aplikasi Flask yang logger-nya akan
+            dikonfigurasi.
+
+    Returns:
+        None
+
+    Example:
+        >>> app = Flask(__name__)
+        >>> setup_logging(app)
+        >>> app.logger.level == logging.INFO
+        True
+    """
     if not os.path.exists('logs'):
         os.mkdir('logs')
 
-    # if not app.debug and not app.testing:
-        # letakkan kode di bawah disini agar hanya aktif di production (opsional)
-
-    # Buat formatter yang detail
     formatter = logging.Formatter(
         '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
     )
-    # # FORMATTER: %(pathname)s akan memberikan path lengkap.
-    # # Jika ingin lebih spesifik, gunakan format ini:
-    # formatter = logging.Formatter(
-    #     '%(asctime)s %(levelname)s: %(message)s [in %(module)s.py:%(lineno)d]'
-    # )
 
-    # 1. File Handler (Untuk menyimpan ke logs/app.log)
     file_handler = RotatingFileHandler('logs/app.log', maxBytes=10240, backupCount=10)
     file_handler.setFormatter(formatter)
     file_handler.setLevel(logging.INFO)
 
-    # 2. Stream Handler (Untuk mencetak ke terminal debug)
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
     stream_handler.setLevel(logging.INFO)
 
-    # Tambahkan keduanya ke app.logger
     app.logger.addHandler(file_handler)
     app.logger.addHandler(stream_handler)
     app.logger.setLevel(logging.INFO)

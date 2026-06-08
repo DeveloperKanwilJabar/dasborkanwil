@@ -1,3 +1,7 @@
+"""Service layer domain employee.
+
+Modul ini berisi operasi layanan pegawai yang dipakai aplikasi untuk membuat employee baru dan menghubungkannya dengan akun user."""
+
 import uuid
 from flask import current_app
 from app.core.extensions import db
@@ -7,8 +11,26 @@ from app.modules.employee.repositories import EmployeeRepository
 from .models import Employee
 
 class EmployeeService(BaseService):
+    """Service bisnis employee untuk penambahan pegawai dan linking user.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = EmployeeService()
+    """
+
     def __init__(self):
         # Inisialisasi repository utama via BaseService
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = EmployeeService()
+        """
+
         super().__init__(repository=EmployeeRepository())
 
     def link_user(self, employee, user):

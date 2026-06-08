@@ -1,11 +1,24 @@
+"""Application factory utama untuk Dasborkanwil.
+
+Modul ini menjadi titik masuk bootstrap aplikasi Flask: memuat konfigurasi,
+menautkan extension, mendaftarkan blueprint web/API, dan menyiapkan integrasi
+pendukung seperti login manager serta Swagger docs.
+"""
 
 from flask import Flask, render_template
 
 # Impor eksplisit (No Star Import!)
 from .core.extensions import (
-    db, migrate, bcrypt, login_manager,
-    csrf, mail, cors, jwt
-    )
+    bcrypt,
+    cors,
+    csrf,
+    db,
+    jwt,
+    login_manager,
+    mail,
+    migrate,
+    swagger,
+)
 from .core.utils import (
     json_response, now_utc,
     )
@@ -13,6 +26,24 @@ from .core.middleware import setup_request, setup_logging
 from .core.config import config_dict
 
 def create_app(config_mode='default'):
+    """Bangun dan konfigurasikan instance Flask aplikasi.
+
+    Function ini adalah entry point utama untuk app runtime, testing, dan CLI.
+    Ia memuat config object, menginisialisasi extension, mendaftarkan blueprint,
+    serta menautkan hook middleware dan login manager.
+
+    Args:
+        config_mode (str, optional): Key environment config pada `config_dict`.
+            Contoh: `development`, `testing`, atau `production`.
+
+    Returns:
+        flask.Flask: Instance aplikasi Flask yang siap dijalankan.
+
+    Example:
+        >>> app = create_app('testing')
+        >>> app.config['TESTING']
+        True
+    """
     app = Flask(
         __name__,
         static_url_path='/static',
@@ -31,6 +62,7 @@ def create_app(config_mode='default'):
     csrf.init_app(app)
     mail.init_app(app)
     jwt.init_app(app)
+    swagger.init_app(app)
     # Inisialisasi CORS jika ingin default (izinkan semua), cukup:
     # cors.init_app(app)
     # Saran spesifik (untuk keamanan):

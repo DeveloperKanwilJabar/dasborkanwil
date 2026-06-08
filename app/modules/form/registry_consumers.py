@@ -1,12 +1,60 @@
+"""Consumer preset registry untuk Form.io builder.
+
+Service ini menyediakan preset komponen builder yang bisa langsung dipakai UI
+agar pola select berantai dari data registry tidak perlu dirakit manual setiap
+kali membuat form baru.
+"""
+
+
 class FormRegistryConsumerService:
-    """Helper preset consumer registry untuk builder Form.io."""
+    """Penyedia preset komponen registry untuk form builder.
+
+    Saat ini fokus utamanya adalah preset cascading select wilayah administratif
+    yang mengonsumsi published registry resource dari backend.
+
+    Example:
+        >>> service = FormRegistryConsumerService()
+        >>> presets = service.list_builder_presets(base_url='https://example.com')
+        >>> presets[0]['key']
+        'wilayah_cascading_select'
+    """
 
     DEFAULT_WILAYAH_REGISTRY_SLUG = 'wilayah.administratif'
 
     def list_builder_presets(self, base_url=None):
+        """Daftar seluruh preset builder yang tersedia.
+
+        Args:
+            base_url (str | None, optional): Base URL backend untuk membangun
+                endpoint data source komponen.
+
+        Returns:
+            list[dict]: Daftar preset builder siap render di UI.
+
+        Example:
+            >>> service.list_builder_presets()[0]['label']
+            'Cascading Select Wilayah'
+        """
         return [self.get_builder_preset('wilayah_cascading_select', base_url=base_url)]
 
     def get_builder_preset(self, preset_key, base_url=None):
+        """Ambil definisi satu preset builder berdasarkan key.
+
+        Args:
+            preset_key (str): Key preset yang ingin diambil.
+            base_url (str | None, optional): Base URL backend untuk endpoint
+                options source.
+
+        Returns:
+            dict: Definisi preset builder Form.io.
+
+        Raises:
+            ValueError: Jika `preset_key` tidak dikenali.
+
+        Example:
+            >>> service.get_builder_preset('wilayah_cascading_select')['registry_slug']
+            'wilayah.administratif'
+        """
         if preset_key != 'wilayah_cascading_select':
             raise ValueError('Preset consumer registry tidak ditemukan.')
 

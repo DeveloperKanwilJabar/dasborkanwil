@@ -1,3 +1,7 @@
+"""Model ORM domain user.
+
+Modul ini mendefinisikan entity User yang dipakai untuk autentikasi, otorisasi, pengaturan actor, dan relasi ke employee."""
+
 import uuid
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -29,10 +33,43 @@ class User(db.Model, UserMixin):
     employee = relationship('Employee', back_populates='user', uselist=False, lazy='joined')  # Eager loading
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return "{}({}) ".format(self.username, self.id)
 
     def set_password(self, password):
+        """Meng-hash password plaintext sebelum disimpan ke database.
+
+        Args:
+            password (Any): Password plaintext untuk hashing atau verifikasi.
+
+        Returns:
+            None: Method memutakhirkan state object langsung di memori.
+
+        Example:
+            >>> obj.set_password(password=...)
+        """
+
         self.password = bcrypt.generate_password_hash(password).decode('utf-8')
 
     def check_password(self, password):
+        """Memverifikasi password plaintext terhadap hash yang tersimpan.
+
+        Args:
+            password (Any): Password plaintext untuk hashing atau verifikasi.
+
+        Returns:
+            bool: Hasil evaluasi atau status sukses operasi.
+
+        Example:
+            >>> obj.check_password(password=...)
+        """
+
         return bcrypt.check_password_hash(self.password, password)

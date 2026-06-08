@@ -1,3 +1,7 @@
+"""Model ORM domain submission.
+
+Modul ini mendefinisikan ReportingPeriod, Submission, dan SubmissionEvent untuk menyimpan jawaban form yang period-aware, lengkap dengan audit event lifecycle submission."""
+
 import uuid
 
 from sqlalchemy.dialects.postgresql import JSONB
@@ -66,6 +70,15 @@ class ReportingPeriod(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<ReportingPeriod {self.code} - {self.name}>"
 
 
@@ -160,6 +173,15 @@ class Submission(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<Submission {self.submission_number}>"
 
 
@@ -205,4 +227,13 @@ class SubmissionEvent(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<SubmissionEvent submission_id={self.submission_id} event_type={self.event_type}>"

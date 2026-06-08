@@ -1,3 +1,7 @@
+"""Service layer domain submission.
+
+Modul ini mengorkestrasi lifecycle submission form, mulai dari draft, submit final, validasi payload dasar, resolusi periode pelaporan, pencatatan event audit, hingga perhitungan freshness data berbasis submissions."""
+
 import uuid
 
 from app.core.access import build_actor_context, can_submit_form, derive_submission_policy_key, enrich_scope
@@ -16,6 +20,15 @@ from .repositories import (
 
 
 class SubmissionService(BaseService):
+    """Service utama untuk draft, submit final, dan audit event submission.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = SubmissionService()
+    """
+
     def __init__(
         self,
         submission_repository=None,
@@ -24,6 +37,22 @@ class SubmissionService(BaseService):
         version_repository=None,
         period_repository=None,
     ):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            submission_repository (Any): Parameter `submission_repository` untuk operasi init.
+            event_repository (Any): Parameter `event_repository` untuk operasi init.
+            form_repository (Any): Parameter `form_repository` untuk operasi init.
+            version_repository (Any): Parameter `version_repository` untuk operasi init.
+            period_repository (Any): Parameter `period_repository` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = SubmissionService()
+        """
+
         super().__init__(repository=submission_repository or SubmissionRepository())
         self.event_repository = event_repository or SubmissionEventRepository()
         self.form_repository = form_repository or FormRepository()
@@ -31,6 +60,21 @@ class SubmissionService(BaseService):
         self.period_repository = period_repository or ReportingPeriodRepository()
 
     def create_draft(self, form_id, payload, actor=None, context=None):
+        """Membuat submission draft tanpa status submit final.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+            payload (Any): Payload bisnis yang akan divalidasi atau dipersist.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            context (Any): Konteks tambahan runtime seperti source, scope, meta, atau subject.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.create_draft(form_id=..., payload=..., actor=...)
+        """
+
         form = self.form_repository.get_by_id(form_id)
         if not form:
             raise ValueError('Form tidak ditemukan.')
@@ -87,6 +131,23 @@ class SubmissionService(BaseService):
         reporting_year=None,
         reporting_period_id=None,
     ):
+        """Membuat submission final yang sudah tervalidasi dan tercatat event auditnya.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+            payload (Any): Payload bisnis yang akan divalidasi atau dipersist.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            context (Any): Konteks tambahan runtime seperti source, scope, meta, atau subject.
+            reporting_year (Any): Parameter `reporting_year` untuk operasi submit.
+            reporting_period_id (Any): Parameter `reporting_period_id` untuk operasi submit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service.submit(form_id=..., payload=..., actor=...)
+        """
+
         form = self.form_repository.get_by_id(form_id)
         if not form:
             raise ValueError('Form tidak ditemukan.')
@@ -160,6 +221,19 @@ class SubmissionService(BaseService):
             raise
 
     def validate_payload(self, payload, form_version):
+        """Memvalidasi payload submission dan mengembalikan snapshot hasil validasi.
+
+        Args:
+            payload (Any): Payload bisnis yang akan divalidasi atau dipersist.
+            form_version (Any): Entity version form yang menjadi acuan proses.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.validate_payload(payload=..., form_version=...)
+        """
+
         if payload is None:
             raise ValueError('Payload submission wajib diisi.')
         if not isinstance(payload, dict):
@@ -178,6 +252,21 @@ class SubmissionService(BaseService):
         reporting_period_id=None,
         context=None,
     ):
+        """Menentukan konteks reporting year dan reporting period yang dipakai submission.
+
+        Args:
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            reporting_year (Any): Parameter `reporting_year` untuk operasi resolve reporting period.
+            reporting_period_id (Any): Parameter `reporting_period_id` untuk operasi resolve reporting period.
+            context (Any): Konteks tambahan runtime seperti source, scope, meta, atau subject.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.resolve_reporting_period(actor=..., reporting_year=..., reporting_period_id=...)
+        """
+
         if reporting_period_id is not None:
             period = self.period_repository.get_by_id(reporting_period_id)
             if not period:
@@ -203,6 +292,21 @@ class SubmissionService(BaseService):
         }
 
     def add_event(self, submission, event_type, actor=None, context=None):
+        """Mencatat event audit submission seperti created, submitted, atau validation_failed.
+
+        Args:
+            submission (Any): Parameter `submission` untuk operasi add event.
+            event_type (Any): Parameter `event_type` untuk operasi add event.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            context (Any): Konteks tambahan runtime seperti source, scope, meta, atau subject.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.add_event(submission=..., event_type=..., actor=...)
+        """
+
         event = SubmissionEvent(
             uuid=str(uuid.uuid4()),
             submission_id=getattr(submission, 'id', None),
@@ -222,6 +326,21 @@ class SubmissionService(BaseService):
         reporting_period_id=None,
         statuses=None,
     ):
+        """Menghitung freshness data analytics berdasarkan submitted_at submission resmi.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+            reporting_year (Any): Parameter `reporting_year` untuk operasi get data freshness.
+            reporting_period_id (Any): Parameter `reporting_period_id` untuk operasi get data freshness.
+            statuses (Any): Daftar status submission yang ikut difilter.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_data_freshness(form_id=..., reporting_year=..., reporting_period_id=...)
+        """
+
         data_last_updated_at = self.repository.get_last_submitted_at(
             form_id=form_id,
             reporting_year=reporting_year,
@@ -238,6 +357,20 @@ class SubmissionService(BaseService):
         }
 
     def resolve_submission_scope(self, form=None, actor=None, context=None):
+        """Menentukan scope owner submission dari context, actor, atau konfigurasi form.
+
+        Args:
+            form (Any): Entity form yang sudah di-resolve sebelumnya.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            context (Any): Konteks tambahan runtime seperti source, scope, meta, atau subject.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.resolve_submission_scope(form=..., actor=..., context=...)
+        """
+
         context = context or {}
         explicit_scope = context.get('owner_scope') or context.get('scope')
         if isinstance(explicit_scope, dict):
@@ -259,6 +392,18 @@ class SubmissionService(BaseService):
         ) or {'type': 'global'}
 
     def resolve_submission_subject(self, context=None):
+        """Menyusun subject resource yang direferensikan submission dari context runtime.
+
+        Args:
+            context (Any): Konteks tambahan runtime seperti source, scope, meta, atau subject.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.resolve_submission_subject(context=...)
+        """
+
         context = context or {}
         subject = context.get('subject')
         if isinstance(subject, dict):
@@ -273,12 +418,50 @@ class SubmissionService(BaseService):
         }
 
     def _generate_submission_number(self, reporting_year):
+        """Helper internal untuk generate submission number.
+
+        Args:
+            reporting_year (Any): Parameter `reporting_year` untuk operasi generate submission number.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._generate_submission_number(reporting_year=...)
+        """
+
         return f"SUB-{reporting_year}-{uuid.uuid4().hex[:12].upper()}"
 
     def _get_actor_active_year(self, actor):
+        """Helper internal untuk get actor active year.
+
+        Args:
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._get_actor_active_year(actor=...)
+        """
+
         return build_actor_context(actor).get('active_year')
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
+        """Helper internal untuk apply actor audit.
+
+        Args:
+            obj (Any): Parameter `obj` untuk operasi apply actor audit.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            action (Any): Parameter `action` untuk operasi apply actor audit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
+        """
+
         if not actor:
             return obj
 

@@ -1,3 +1,7 @@
+"""Service layer domain form.
+
+Modul ini menampung orkestrasi business rule untuk registri form dan versioning schema Form.io, termasuk pembuatan form, draft version, publish, archive, serta snapshot scope/access policy yang dibutuhkan domain enterprise."""
+
 import uuid
 
 from app.core.access import can_archive_form, can_create_form, can_publish_form, can_update_form
@@ -10,11 +14,46 @@ from .repositories import FormRepository, FormVersionRepository
 
 
 class FormService(BaseService):
+    """Service orkestrasi identitas dan lifecycle form utama.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = FormService()
+    """
+
     def __init__(self, form_repository=None, version_service=None):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            form_repository (Any): Parameter `form_repository` untuk operasi init.
+            version_service (Any): Parameter `version_service` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = FormService()
+        """
+
         super().__init__(repository=form_repository or FormRepository())
         self.version_service = version_service or FormVersionService()
 
     def create_form(self, data, actor=None):
+        """Membuat form baru beserta draft version awal bila schema awal ikut dikirim.
+
+        Args:
+            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.create_form(data=..., actor=...)
+        """
+
         if not can_create_form(actor):
             raise PermissionError('Actor tidak memiliki izin membuat form.')
 
@@ -96,6 +135,20 @@ class FormService(BaseService):
             raise
 
     def update_form_identity(self, form_id, data, actor=None):
+        """Memperbarui identitas dan metadata utama sebuah form.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.update_form_identity(form_id=..., data=..., actor=...)
+        """
+
         form = self.repository.get_by_id(form_id)
         if not form:
             raise ValueError('Form tidak ditemukan.')
@@ -135,6 +188,19 @@ class FormService(BaseService):
         return self.repository.save(form)
 
     def archive_form(self, form_id, actor=None):
+        """Mengarsipkan form agar tidak lagi aktif dipakai operasional.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.archive_form(form_id=..., actor=...)
+        """
+
         form = self.repository.get_by_id(form_id)
         if not form:
             raise ValueError('Form tidak ditemukan.')
@@ -145,9 +211,35 @@ class FormService(BaseService):
         return self.repository.save(form)
 
     def get_form_detail(self, form_id):
+        """Mengambil detail form berdasarkan primary key internal.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_form_detail(form_id=...)
+        """
+
         return self.repository.get_by_id(form_id)
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
+        """Helper internal untuk apply actor audit.
+
+        Args:
+            obj (Any): Parameter `obj` untuk operasi apply actor audit.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            action (Any): Parameter `action` untuk operasi apply actor audit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
+        """
+
         if not actor:
             return obj
 
@@ -162,6 +254,21 @@ class FormService(BaseService):
         return obj
 
     def _resolve_scope_value(self, data, prefix, field, default=None):
+        """Helper internal untuk resolve scope value.
+
+        Args:
+            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
+            prefix (Any): Parameter `prefix` untuk operasi resolve scope value.
+            field (Any): Parameter `field` untuk operasi resolve scope value.
+            default (Any): Parameter `default` untuk operasi resolve scope value.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._resolve_scope_value(data=..., prefix=..., field=...)
+        """
+
         nested_scope = data.get(prefix)
         if isinstance(nested_scope, dict) and field in nested_scope:
             return nested_scope.get(field)
@@ -174,7 +281,29 @@ class FormService(BaseService):
 
 
 class FormVersionService(BaseService):
+    """Service versioning schema form beserta publish/archive draft.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = FormVersionService()
+    """
+
     def __init__(self, version_repository=None, form_repository=None):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            version_repository (Any): Parameter `version_repository` untuk operasi init.
+            form_repository (Any): Parameter `form_repository` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = FormVersionService()
+        """
+
         super().__init__(repository=version_repository or FormVersionRepository())
         self.form_repository = form_repository or FormRepository()
 
@@ -187,6 +316,23 @@ class FormVersionService(BaseService):
         validation_rules=None,
         submission_contract=None,
     ):
+        """Membuat draft version baru atau me-refresh draft aktif dengan schema terbaru.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+            schema (Any): Schema JSON/Form.io yang dipakai untuk validasi atau versioning.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            source_version_id (Any): Parameter `source_version_id` untuk operasi create draft version.
+            validation_rules (Any): Parameter `validation_rules` untuk operasi create draft version.
+            submission_contract (Any): Parameter `submission_contract` untuk operasi create draft version.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.create_draft_version(form_id=..., schema=..., actor=...)
+        """
+
         form = self.form_repository.get_by_id(form_id)
         if not form:
             raise ValueError('Form tidak ditemukan.')
@@ -246,6 +392,21 @@ class FormVersionService(BaseService):
         return self.repository.save(version)
 
     def update_draft_schema(self, version_id, schema, validation_rules=None, actor=None):
+        """Memperbarui schema draft version tanpa membuat row version utama baru.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            schema (Any): Schema JSON/Form.io yang dipakai untuk validasi atau versioning.
+            validation_rules (Any): Parameter `validation_rules` untuk operasi update draft schema.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.update_draft_schema(version_id=..., schema=..., validation_rules=...)
+        """
+
         version = self.repository.get_by_id(version_id)
         if not version:
             raise ValueError('Form version tidak ditemukan.')
@@ -264,6 +425,19 @@ class FormVersionService(BaseService):
         return self.repository.save(version)
 
     def publish_version(self, version_id, actor=None):
+        """Mempublish draft version dan menonaktifkan published version lain dalam form yang sama.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.publish_version(version_id=..., actor=...)
+        """
+
         version = self.repository.get_by_id(version_id)
         if not version:
             raise ValueError('Form version tidak ditemukan.')
@@ -292,6 +466,19 @@ class FormVersionService(BaseService):
         return saved_version
 
     def archive_version(self, version_id, actor=None):
+        """Mengarsipkan version form tertentu.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.archive_version(version_id=..., actor=...)
+        """
+
         version = self.repository.get_by_id(version_id)
         if not version:
             raise ValueError('Form version tidak ditemukan.')
@@ -301,12 +488,48 @@ class FormVersionService(BaseService):
         return self.repository.save(version)
 
     def get_published_version(self, form_id):
+        """Mengambil version published untuk form tertentu.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_published_version(form_id=...)
+        """
+
         return self.repository.get_published_version(form_id)
 
     def get_draft_version(self, form_id):
+        """Mengambil draft version aktif untuk form tertentu.
+
+        Args:
+            form_id (Any): Primary key internal form target.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_draft_version(form_id=...)
+        """
+
         return self.repository.get_draft_version(form_id)
 
     def _validate_schema(self, schema):
+        """Helper internal untuk validate schema.
+
+        Args:
+            schema (Any): Schema JSON/Form.io yang dipakai untuk validasi atau versioning.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._validate_schema(schema=...)
+        """
+
         if not isinstance(schema, dict):
             raise ValueError('Schema form wajib berupa object/dict.')
         if 'components' not in schema:
@@ -314,6 +537,18 @@ class FormVersionService(BaseService):
         return True
 
     def _build_scope_snapshot(self, form):
+        """Helper internal untuk build scope snapshot.
+
+        Args:
+            form (Any): Entity form yang sudah di-resolve sebelumnya.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_scope_snapshot(form=...)
+        """
+
         if not form:
             return None
 
@@ -333,6 +568,18 @@ class FormVersionService(BaseService):
         }
 
     def _build_access_policy_snapshot(self, form):
+        """Helper internal untuk build access policy snapshot.
+
+        Args:
+            form (Any): Entity form yang sudah di-resolve sebelumnya.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_access_policy_snapshot(form=...)
+        """
+
         if not form:
             return None
 
@@ -341,6 +588,20 @@ class FormVersionService(BaseService):
         }
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
+        """Helper internal untuk apply actor audit.
+
+        Args:
+            obj (Any): Parameter `obj` untuk operasi apply actor audit.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            action (Any): Parameter `action` untuk operasi apply actor audit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
+        """
+
         if not actor:
             return obj
 

@@ -1,3 +1,7 @@
+"""Model ORM pipeline impor form.
+
+Modul ini menyimpan batch impor submission berbasis workbook Excel dan row staging yang diproses sebelum menjadi submission final."""
+
 import uuid
 
 from sqlalchemy.dialects.postgresql import JSONB
@@ -75,6 +79,15 @@ class ImportBatch(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<ImportBatch {self.uuid} status={self.status}>"
 
 
@@ -126,4 +139,13 @@ class ImportBatchRow(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<ImportBatchRow batch_id={self.import_batch_id} row={self.row_number} status={self.status}>"

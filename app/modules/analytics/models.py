@@ -1,3 +1,7 @@
+"""Model ORM domain analytics.
+
+Modul ini mendefinisikan dataset, version, run, report, indikator, result, dan progress entry yang menjadi fondasi engine analytics/reporting aplikasi."""
+
 import uuid
 
 from sqlalchemy import ForeignKeyConstraint, text
@@ -91,6 +95,15 @@ class AnalyticsDataset(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<AnalyticsDataset {self.dataset_key}>"
 
 
@@ -192,6 +205,15 @@ class AnalyticsDatasetVersion(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<AnalyticsDatasetVersion dataset_id={self.dataset_id} version={self.version_number}>"
 
 
@@ -297,6 +319,15 @@ class AnalyticsDatasetRun(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<AnalyticsDatasetRun {self.run_key}>"
 
 

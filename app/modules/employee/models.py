@@ -1,3 +1,7 @@
+"""Model ORM domain employee.
+
+Modul ini mendefinisikan entity employee/pegawai yang menjadi master identitas SDM dan dapat di-link ke akun user aplikasi."""
+
 import uuid
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -25,4 +29,13 @@ class Employee(db.Model):
     user = relationship('User', back_populates='employee', lazy='joined')  # Eager loading
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<Employee {self.nip} - {self.name}>"

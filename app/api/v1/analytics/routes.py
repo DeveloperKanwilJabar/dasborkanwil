@@ -1,6 +1,14 @@
 from flask import Blueprint, current_app, request
+from flasgger import swag_from
 from flask_login import current_user
 
+from app.api.docs import (
+    build_spec,
+    envelope_schema,
+    path_parameter,
+    query_parameter,
+    standard_responses,
+)
 from app.core.extensions import db
 from app.core.utils import json_response
 from app.modules.analytics.services import (
@@ -16,6 +24,147 @@ api_analytics_bp = Blueprint(
     'api_analytics_v1',
     __name__,
     url_prefix='/api/v1/analytics',
+)
+
+LIST_DATASETS_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil daftar analytics dataset workspace.',
+    description='Mengembalikan daftar dataset beserta draft/published version dan latest run untuk workspace analytics.',
+    parameters=[],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Daftar analytics dataset berhasil diambil.'), 'Daftar analytics dataset berhasil diambil.'),
+)
+GET_DATASET_WORKSPACE_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil detail satu dataset workspace.',
+    description='Dipakai untuk memuat detail dataset, daftar version, dan daftar run terbaru.',
+    parameters=[path_parameter('dataset_id', description='ID dataset analytics.', example=77)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Detail analytics dataset berhasil diambil.'), 'Detail analytics dataset berhasil diambil.'),
+)
+LIST_DATASET_RUNS_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil daftar run untuk satu dataset.',
+    description='Mengembalikan history run dataset berdasarkan dataset_id.',
+    parameters=[path_parameter('dataset_id', description='ID dataset analytics.', example=77)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Daftar analytics dataset run berhasil diambil.'), 'Daftar analytics dataset run berhasil diambil.'),
+)
+GET_DATASET_RUN_DETAIL_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil detail satu dataset run.',
+    description='Menampilkan status run, freshness, preview result, dan error metadata bila ada.',
+    parameters=[path_parameter('run_id', description='ID run dataset.', example=900)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Detail analytics dataset run berhasil diambil.'), 'Detail analytics dataset run berhasil diambil.'),
+)
+CREATE_DATASET_RUN_DOC = build_spec(
+    tag='Analytics',
+    summary='Mulai dataset run baru.',
+    description='Menjalankan query/transform dataset pada version tertentu dengan filter request opsional.',
+    parameters=[path_parameter('dataset_id', description='ID dataset analytics.', example=77), path_parameter('dataset_version_id', description='ID dataset version yang akan dijalankan.', example=78)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics dataset run berhasil dimulai.'), 'Analytics dataset run berhasil dimulai.', success_status=201),
+)
+LIST_REPORTS_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil daftar analytics report.',
+    description='Mengembalikan daftar report definition untuk workspace analytics.',
+    parameters=[],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Daftar analytics report berhasil diambil.'), 'Daftar analytics report berhasil diambil.'),
+)
+GET_REPORT_WORKSPACE_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil detail satu report workspace.',
+    description='Memuat report definition, version, dan mapping indikator yang terpasang.',
+    parameters=[path_parameter('report_definition_id', description='ID report definition.', example=21)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Detail analytics report berhasil diambil.'), 'Detail analytics report berhasil diambil.'),
+)
+LIST_INDICATORS_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil daftar analytics indicator.',
+    description='Mengembalikan daftar indikator dan snapshot workspace-nya.',
+    parameters=[],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Daftar analytics indicator berhasil diambil.'), 'Daftar analytics indicator berhasil diambil.'),
+)
+GET_INDICATOR_WORKSPACE_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil detail satu indicator workspace.',
+    description='Memuat definition, version, result history, dan progress entries indikator.',
+    parameters=[path_parameter('indicator_definition_id', description='ID indicator definition.', example=41)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Detail analytics indicator berhasil diambil.'), 'Detail analytics indicator berhasil diambil.'),
+)
+LIST_INDICATOR_RESULTS_DOC = build_spec(
+    tag='Analytics',
+    summary='Ambil daftar indicator result.',
+    description='Mendukung filter indicator_version_id, reporting_year, reporting_period_id, dan limit.',
+    parameters=[query_parameter('indicator_version_id', value_type='integer', description='Filter version indikator.', example=51), query_parameter('reporting_year', value_type='integer', description='Filter tahun.', example=2026), query_parameter('reporting_period_id', value_type='integer', description='Filter period.', example=3), query_parameter('limit', value_type='integer', description='Batas hasil.', example=50, default=50)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Daftar analytics indicator result berhasil diambil.'), 'Daftar analytics indicator result berhasil diambil.'),
+)
+CREATE_REPORT_DOC = build_spec(
+    tag='Analytics',
+    summary='Buat report definition baru.',
+    description='Membuat definisi report analytics baru sebelum memiliki version draft/published.',
+    parameters=[],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics report berhasil dibuat.'), 'Analytics report berhasil dibuat.', success_status=201),
+)
+CREATE_REPORT_VERSION_DOC = build_spec(
+    tag='Analytics',
+    summary='Buat report version baru.',
+    description='Membuat draft version untuk report definition tertentu.',
+    parameters=[path_parameter('report_definition_id', description='ID report definition.', example=21)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics report version berhasil dibuat.'), 'Analytics report version berhasil dibuat.', success_status=201),
+)
+PUBLISH_REPORT_VERSION_DOC = build_spec(
+    tag='Analytics',
+    summary='Publish report version.',
+    description='Mempublish satu report version agar menjadi referensi aktif workspace report.',
+    parameters=[path_parameter('version_id', description='ID report version.', example=31)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics report version berhasil dipublish.'), 'Analytics report version berhasil dipublish.'),
+)
+CREATE_INDICATOR_DOC = build_spec(
+    tag='Analytics',
+    summary='Buat indicator definition baru.',
+    description='Membuat definisi indikator analytics baru.',
+    parameters=[],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics indicator berhasil dibuat.'), 'Analytics indicator berhasil dibuat.', success_status=201),
+)
+CREATE_INDICATOR_VERSION_DOC = build_spec(
+    tag='Analytics',
+    summary='Buat indicator version baru.',
+    description='Membuat draft version untuk indikator, termasuk formula/target/dataset contract.',
+    parameters=[path_parameter('indicator_definition_id', description='ID indicator definition.', example=41)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics indicator version berhasil dibuat.'), 'Analytics indicator version berhasil dibuat.', success_status=201),
+)
+PUBLISH_INDICATOR_VERSION_DOC = build_spec(
+    tag='Analytics',
+    summary='Publish indicator version.',
+    description='Mempublish satu indicator version menjadi versi aktif.',
+    parameters=[path_parameter('version_id', description='ID indicator version.', example=51)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics indicator version berhasil dipublish.'), 'Analytics indicator version berhasil dipublish.'),
+)
+ATTACH_INDICATOR_TO_REPORT_DOC = build_spec(
+    tag='Analytics',
+    summary='Pasang indicator ke report version.',
+    description='Membuat mapping indikator ke suatu report version beserta urutan/label tampilannya.',
+    parameters=[path_parameter('report_version_id', description='ID report version.', example=31)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Indicator berhasil di-attach ke report version.'), 'Indicator berhasil di-attach ke report version.', success_status=201),
+)
+RECORD_INDICATOR_RESULT_DOC = build_spec(
+    tag='Analytics',
+    summary='Simpan indicator result.',
+    description='Merekam hasil ukur indikator untuk periode/tahun tertentu.',
+    parameters=[],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics indicator result berhasil disimpan.'), 'Analytics indicator result berhasil disimpan.', success_status=201),
+)
+RECORD_PROGRESS_ENTRY_DOC = build_spec(
+    tag='Analytics',
+    summary='Simpan indicator progress entry.',
+    description='Merekam progres kualitatif/operasional indikator pada periode tertentu.',
+    parameters=[],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics indicator progress entry berhasil disimpan.'), 'Analytics indicator progress entry berhasil disimpan.', success_status=201),
+)
+SYNC_RESULT_FROM_PROGRESS_DOC = build_spec(
+    tag='Analytics',
+    summary='Sinkronkan result dari progress entry.',
+    description='Menghitung atau menyalin result indikator berdasarkan progress entry tertentu.',
+    parameters=[path_parameter('progress_entry_id', description='ID progress entry.', example=81)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics indicator result berhasil disinkronkan dari progress.'), 'Analytics indicator result berhasil disinkronkan dari progress.'),
 )
 
 
@@ -375,6 +524,7 @@ def serialize_indicator_workspace_item(item):
 
 
 @api_analytics_bp.route('/datasets', methods=['GET'])
+@swag_from(LIST_DATASETS_DOC)
 def list_dataset_definitions():
     try:
         datasets = AnalyticsQueryService().list_datasets()
@@ -391,6 +541,7 @@ def list_dataset_definitions():
 
 
 @api_analytics_bp.route('/datasets/<int:dataset_id>', methods=['GET'])
+@swag_from(GET_DATASET_WORKSPACE_DOC)
 def get_dataset_workspace(dataset_id):
     try:
         workspace = AnalyticsQueryService().get_dataset_workspace(dataset_id)
@@ -413,6 +564,7 @@ def get_dataset_workspace(dataset_id):
 
 
 @api_analytics_bp.route('/datasets/<int:dataset_id>/runs', methods=['GET'])
+@swag_from(LIST_DATASET_RUNS_DOC)
 def list_dataset_runs(dataset_id):
     try:
         runs = AnalyticsQueryService().list_dataset_runs(dataset_id)
@@ -429,6 +581,7 @@ def list_dataset_runs(dataset_id):
 
 
 @api_analytics_bp.route('/runs/<int:run_id>', methods=['GET'])
+@swag_from(GET_DATASET_RUN_DETAIL_DOC)
 def get_dataset_run_detail(run_id):
     try:
         run = AnalyticsQueryService().get_dataset_run_detail(run_id)
@@ -445,6 +598,7 @@ def get_dataset_run_detail(run_id):
 
 
 @api_analytics_bp.route('/datasets/<int:dataset_id>/versions/<int:dataset_version_id>/runs', methods=['POST'])
+@swag_from(CREATE_DATASET_RUN_DOC)
 def create_dataset_run(dataset_id, dataset_version_id):
     data = request.get_json(silent=True) or {}
     try:
@@ -472,6 +626,7 @@ def create_dataset_run(dataset_id, dataset_version_id):
 
 
 @api_analytics_bp.route('/reports', methods=['GET'])
+@swag_from(LIST_REPORTS_DOC)
 def list_report_definitions():
     try:
         reports = AnalyticsQueryService().list_reports()
@@ -488,6 +643,7 @@ def list_report_definitions():
 
 
 @api_analytics_bp.route('/reports/<int:report_definition_id>', methods=['GET'])
+@swag_from(GET_REPORT_WORKSPACE_DOC)
 def get_report_workspace(report_definition_id):
     try:
         workspace = AnalyticsQueryService().get_report_workspace(report_definition_id)
@@ -517,6 +673,7 @@ def get_report_workspace(report_definition_id):
 
 
 @api_analytics_bp.route('/indicators', methods=['GET'])
+@swag_from(LIST_INDICATORS_DOC)
 def list_indicator_definitions():
     try:
         indicators = AnalyticsQueryService().list_indicators()
@@ -533,6 +690,7 @@ def list_indicator_definitions():
 
 
 @api_analytics_bp.route('/indicators/<int:indicator_definition_id>', methods=['GET'])
+@swag_from(GET_INDICATOR_WORKSPACE_DOC)
 def get_indicator_workspace(indicator_definition_id):
     try:
         workspace = AnalyticsQueryService().get_indicator_workspace(indicator_definition_id)
@@ -556,6 +714,7 @@ def get_indicator_workspace(indicator_definition_id):
 
 
 @api_analytics_bp.route('/indicator-results', methods=['GET'])
+@swag_from(LIST_INDICATOR_RESULTS_DOC)
 def list_indicator_results():
     try:
         indicator_version_id = parse_int_query_arg('indicator_version_id')
@@ -581,6 +740,7 @@ def list_indicator_results():
 
 
 @api_analytics_bp.route('/reports', methods=['POST'])
+@swag_from(CREATE_REPORT_DOC)
 def create_report_definition():
     data = request.get_json(silent=True) or {}
     try:
@@ -598,6 +758,7 @@ def create_report_definition():
 
 
 @api_analytics_bp.route('/reports/<int:report_definition_id>/versions', methods=['POST'])
+@swag_from(CREATE_REPORT_VERSION_DOC)
 def create_report_version(report_definition_id):
     data = request.get_json(silent=True) or {}
     try:
@@ -619,6 +780,7 @@ def create_report_version(report_definition_id):
 
 
 @api_analytics_bp.route('/report-versions/<int:version_id>/publish', methods=['POST'])
+@swag_from(PUBLISH_REPORT_VERSION_DOC)
 def publish_report_version(version_id):
     request.get_json(silent=True) or {}
     try:
@@ -636,6 +798,7 @@ def publish_report_version(version_id):
 
 
 @api_analytics_bp.route('/indicators', methods=['POST'])
+@swag_from(CREATE_INDICATOR_DOC)
 def create_indicator_definition():
     data = request.get_json(silent=True) or {}
     try:
@@ -653,6 +816,7 @@ def create_indicator_definition():
 
 
 @api_analytics_bp.route('/indicators/<int:indicator_definition_id>/versions', methods=['POST'])
+@swag_from(CREATE_INDICATOR_VERSION_DOC)
 def create_indicator_version(indicator_definition_id):
     data = request.get_json(silent=True) or {}
     try:
@@ -674,6 +838,7 @@ def create_indicator_version(indicator_definition_id):
 
 
 @api_analytics_bp.route('/indicator-versions/<int:version_id>/publish', methods=['POST'])
+@swag_from(PUBLISH_INDICATOR_VERSION_DOC)
 def publish_indicator_version(version_id):
     request.get_json(silent=True) or {}
     try:
@@ -691,6 +856,7 @@ def publish_indicator_version(version_id):
 
 
 @api_analytics_bp.route('/report-versions/<int:report_version_id>/indicators', methods=['POST'])
+@swag_from(ATTACH_INDICATOR_TO_REPORT_DOC)
 def attach_indicator_to_report_version(report_version_id):
     data = request.get_json(silent=True) or {}
     try:
@@ -713,6 +879,7 @@ def attach_indicator_to_report_version(report_version_id):
 
 
 @api_analytics_bp.route('/indicator-results', methods=['POST'])
+@swag_from(RECORD_INDICATOR_RESULT_DOC)
 def record_indicator_result():
     data = request.get_json(silent=True) or {}
     try:
@@ -730,6 +897,7 @@ def record_indicator_result():
 
 
 @api_analytics_bp.route('/indicator-progress-entries', methods=['POST'])
+@swag_from(RECORD_PROGRESS_ENTRY_DOC)
 def record_progress_entry():
     data = request.get_json(silent=True) or {}
     try:
@@ -747,6 +915,7 @@ def record_progress_entry():
 
 
 @api_analytics_bp.route('/indicator-progress-entries/<int:progress_entry_id>/sync-result', methods=['POST'])
+@swag_from(SYNC_RESULT_FROM_PROGRESS_DOC)
 def sync_result_from_progress(progress_entry_id):
     request.get_json(silent=True) or {}
     try:

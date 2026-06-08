@@ -1,6 +1,22 @@
+"""Endpoint API v1 untuk Submission.
+
+Modul ini menjelaskan alur submit form dan pembacaan freshness data. Dokumen
+Swagger difokuskan agar reviewer memahami payload, konteks scope, serta bentuk
+respons yang dipakai dashboard dan integrasi eksternal.
+"""
+
 from flask import Blueprint, current_app, request
 from flask_login import current_user
+from flasgger import swag_from
 
+from app.api.docs import (
+    body_parameter,
+    build_spec,
+    envelope_schema,
+    path_parameter,
+    query_parameter,
+    standard_responses,
+)
 from app.core.extensions import db
 from app.core.utils import json_response
 from app.modules.submission.services import SubmissionService
@@ -12,8 +28,124 @@ api_submission_bp = Blueprint(
     url_prefix='/api/v1',
 )
 
+SUBMISSION_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'id': {'type': 'integer', 'example': 101},
+        'uuid': {'type': 'string', 'example': 'subm-uuid'},
+        'submission_number': {'type': 'string', 'example': 'SUB-2026-0001'},
+        'form_id': {'type': 'integer', 'example': 1},
+        'form_version_id': {'type': 'integer', 'example': 11},
+        'reporting_year': {'type': 'integer', 'example': 2026},
+        'reporting_period_id': {'type': 'integer', 'nullable': True, 'example': 7},
+        'status': {'type': 'string', 'example': 'submitted'},
+        'submitted_at': {'type': 'string', 'format': 'date-time', 'nullable': True},
+        'payload': {'type': 'object', 'example': {'nama': 'Budi', 'nilai': 95}},
+        'meta': {'type': 'object', 'nullable': True, 'example': {'source': 'web'}},
+        'validation_snapshot': {'type': 'object', 'nullable': True, 'example': {'is_valid': True}},
+        'submitted_by': {'type': 'integer', 'nullable': True},
+        'submitted_by_uuid': {'type': 'string', 'nullable': True},
+        'owner_scope_type': {'type': 'string', 'nullable': True, 'example': 'kanwil'},
+        'owner_scope_code': {'type': 'string', 'nullable': True, 'example': 'KANWIL-JABAR'},
+        'subject_type': {'type': 'string', 'nullable': True, 'example': 'satker'},
+        'subject_ref_id': {'type': 'integer', 'nullable': True, 'example': 8},
+        'subject_ref_uuid': {'type': 'string', 'nullable': True},
+        'subject_ref_code': {'type': 'string', 'nullable': True},
+        'subject_ref_name': {'type': 'string', 'nullable': True},
+        'access_policy_key': {'type': 'string', 'nullable': True, 'example': 'submission.default'},
+        'source_type': {'type': 'string', 'nullable': True, 'example': 'web'},
+        'source_ref': {'type': 'string', 'nullable': True},
+        'created_at': {'type': 'string', 'format': 'date-time', 'nullable': True},
+        'updated_at': {'type': 'string', 'format': 'date-time', 'nullable': True},
+    },
+}
+
+SUBMIT_FORM_DOC = build_spec(
+    tag='Submissions',
+    summary='Kirim submission ke published form version.',
+    description=(
+        'Endpoint utama untuk menyimpan jawaban form. '
+        'Input: `form_id` pada path, `payload` object, serta optional konteks '
+        '`owner_scope`, `subject`, `reporting_year`, dan `reporting_period_id`. '
+        'Output: object `submission` dan `submission_number`.\n\n'
+        'Contoh penggunaan: POST /api/v1/forms/1/submissions dari preview form atau import pipeline.'
+    ),
+    parameters=[
+        path_parameter('form_id', description='ID form yang published version-nya akan menerima submission.', example=1),
+        body_parameter(
+            'body',
+            {
+                'type': 'object',
+                'required': ['payload'],
+                'properties': {
+                    'payload': {'type': 'object', 'example': {'nama': 'Budi', 'nilai': 95}},
+                    'meta': {'type': 'object', 'example': {'source': 'web', 'channel': 'preview'}},
+                    'source_type': {'type': 'string', 'example': 'web'},
+                    'source_ref': {'type': 'string', 'example': 'preview-form-1'},
+                    'owner_scope': {
+                        'type': 'object',
+                        'example': {'type': 'kanwil', 'code': 'KANWIL-JABAR', 'name': 'Kanwil Jawa Barat'},
+                    },
+                    'subject': {
+                        'type': 'object',
+                        'example': {'type': 'satker', 'ref_id': 8, 'ref_code': 'SATKER-001', 'ref_name': 'Satker Bandung'},
+                    },
+                    'reporting_year': {'type': 'integer', 'example': 2026},
+                    'reporting_period_id': {'type': 'integer', 'example': 7},
+                },
+            },
+            description='Payload jawaban form dan konteks submission yang akan diaudit di backend.',
+        ),
+    ],
+    responses=standard_responses(
+        envelope_schema(
+            {
+                'type': 'object',
+                'properties': {
+                    'submission': SUBMISSION_SCHEMA,
+                    'submission_number': {'type': 'string', 'example': 'SUB-2026-0001'},
+                },
+            },
+            message_example='Submission berhasil dikirim.',
+        ),
+        'Submission berhasil dikirim.',
+        success_status=201,
+    ),
+)
+
+FRESHNESS_DOC = build_spec(
+    tag='Submissions',
+    summary='Ambil freshness sumber data dari submissions.submitted_at.',
+    description=(
+        'Dipakai dashboard analytics untuk mengetahui kapan terakhir data bisnis resmi masuk. '\
+        'Output utama adalah `data_last_updated_at` dan metadata filter yang dipakai.'
+    ),
+    parameters=[
+        query_parameter('form_id', value_type='integer', description='Filter ID form.', example=1),
+        query_parameter('reporting_year', value_type='integer', description='Filter tahun laporan.', example=2026),
+        query_parameter('reporting_period_id', value_type='integer', description='Filter reporting period.', example=7),
+    ],
+    responses=standard_responses(
+        envelope_schema(
+            {
+                'type': 'object',
+                'properties': {
+                    'data_last_updated_at': {'type': 'string', 'format': 'date-time', 'nullable': True},
+                    'source': {'type': 'string', 'example': 'submissions.submitted_at'},
+                    'form_id': {'type': 'integer', 'nullable': True},
+                    'reporting_year': {'type': 'integer', 'nullable': True},
+                    'reporting_period_id': {'type': 'integer', 'nullable': True},
+                },
+            },
+            message_example='Freshness berhasil diambil.',
+        ),
+        'Freshness berhasil diambil.',
+    ),
+)
+
 
 def validation_error_response(error):
+    """Bangun response 400 standar untuk validasi submission."""
     return json_response(
         False,
         str(error),
@@ -22,7 +154,9 @@ def validation_error_response(error):
     )
 
 
+
 def authorization_error_response(error):
+    """Bangun response 403 standar untuk kegagalan otorisasi submission."""
     return json_response(
         False,
         str(error),
@@ -31,19 +165,32 @@ def authorization_error_response(error):
     )
 
 
+
 def current_actor():
+    """Ambil actor login aktif dari Flask-Login, bila ada."""
     if current_user and not getattr(current_user, 'is_anonymous', True):
         return current_user
     return None
 
 
+
 def parse_optional_int(value):
+    """Konversi nilai query/body opsional menjadi integer.
+
+    Args:
+        value (str | int | None): Nilai mentah dari request.
+
+    Returns:
+        int | None: Integer hasil parsing, atau None bila input kosong.
+    """
     if value in (None, ''):
         return None
     return int(value)
 
 
+
 def serialize_submission(submission):
+    """Serialisasi model Submission ke dict JSON-friendly."""
     if not submission:
         return None
     return {
@@ -79,8 +226,16 @@ def serialize_submission(submission):
 
 
 @api_submission_bp.route('/forms/<int:form_id>/submissions', methods=['POST'])
+@swag_from(SUBMIT_FORM_DOC)
 def submit_form(form_id):
-    """Submit payload to a published form version."""
+    """Submit payload to a published form version.
+
+    Args:
+        form_id (int): ID form yang menerima submission.
+
+    Returns:
+        Response: JSON envelope dengan object `submission` dan nomor submission.
+    """
     data = request.get_json(silent=True) or {}
 
     try:
@@ -128,8 +283,13 @@ def submit_form(form_id):
 
 
 @api_submission_bp.route('/submissions/freshness', methods=['GET'])
+@swag_from(FRESHNESS_DOC)
 def get_submission_freshness():
-    """Get source data freshness from submissions.submitted_at."""
+    """Get source data freshness from submissions.submitted_at.
+
+    Returns:
+        Response: JSON envelope berisi timestamp freshness dan filter yang dipakai.
+    """
     try:
         freshness = SubmissionService().get_data_freshness(
             form_id=parse_optional_int(request.args.get('form_id')),

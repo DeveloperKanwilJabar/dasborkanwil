@@ -1,3 +1,7 @@
+"""Service layer domain user.
+
+Modul ini menjadi pintu utama untuk validasi, registrasi, autentikasi, dan pembaruan profil user aplikasi, termasuk sinkronisasi awal dengan master employee."""
+
 import re
 import uuid
 
@@ -14,7 +18,25 @@ from .models import User
 
 
 class UserService(BaseService):
+    """Service bisnis user untuk registrasi, autentikasi, dan pembaruan user.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = UserService()
+    """
+
     def __init__(self):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = UserService()
+        """
+
         super().__init__(repository=UserRepository())
         self.emp_repo = EmployeeRepository()
 
@@ -38,6 +60,18 @@ class UserService(BaseService):
         return True
 
     def _normalize_json_list(self, value):
+        """Helper internal untuk normalize json list.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi normalize json list.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_json_list(value=...)
+        """
+
         if value is None:
             return []
 
@@ -132,6 +166,24 @@ class UserService(BaseService):
             raise ValueError(str(e))
 
     def update_user(self, user_id, email, active, roles=None, permissions=None, password=None, settings=None):
+        """Memperbarui email, status aktif, roles, permissions, password, dan settings user.
+
+        Args:
+            user_id (Any): Primary key internal user target.
+            email (Any): Parameter `email` untuk operasi update user.
+            active (Any): Parameter `active` untuk operasi update user.
+            roles (Any): Parameter `roles` untuk operasi update user.
+            permissions (Any): Parameter `permissions` untuk operasi update user.
+            password (Any): Parameter `password` untuk operasi update user.
+            settings (Any): Parameter `settings` untuk operasi update user.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.update_user(user_id=..., email=..., active=...)
+        """
+
         user = self.repository.get_by_id(user_id)
         if not user:
             raise ValueError('User tidak ditemukan.')

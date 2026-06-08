@@ -1,3 +1,7 @@
+"""Model ORM domain form.
+
+Modul ini mendefinisikan entity inti Form dan FormVersion sebagai fondasi registri form dinamis, versioning schema, serta relasinya ke submission dan import batch."""
+
 import uuid
 
 from sqlalchemy.dialects.postgresql import JSONB
@@ -75,6 +79,15 @@ class Form(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<Form {self.code} - {self.name}>"
 
 
@@ -142,4 +155,13 @@ class FormVersion(db.Model):
     )
 
     def __repr__(self):
+        """Menghasilkan representasi string singkat agar object lebih mudah dibaca saat debugging.
+
+        Returns:
+            str: Representasi string singkat untuk debugging/logging.
+
+        Example:
+            >>> repr(obj)
+        """
+
         return f"<FormVersion form_id={self.form_id} version={self.version_number}>"

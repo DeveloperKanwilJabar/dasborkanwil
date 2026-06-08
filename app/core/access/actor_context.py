@@ -1,3 +1,10 @@
+"""Builder konteks actor untuk kebutuhan RBAC/ABAC ringan.
+
+Modul ini mengubah data user mentah menjadi struktur actor-context yang lebih
+stabil dipakai service, evaluator policy, dan route API. Fokusnya adalah
+normalisasi role, permission, active year, dan scope organisasi.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Iterable
@@ -6,6 +13,11 @@ from .policy_catalog import BOOTSTRAP_SCOPE_REGISTRY
 
 
 def _normalize_list(value: Any) -> list[str]:
+    """Normalisasi scalar/iterable menjadi list string unik.
+
+    Nilai kosong dibuang, kapitalisasi tidak dipakai untuk deduplikasi, dan
+    urutan kemunculan pertama tetap dipertahankan.
+    """
     if value is None:
         return []
     if isinstance(value, str):
@@ -30,6 +42,23 @@ def _normalize_list(value: Any) -> list[str]:
 
 
 def enrich_scope(scope: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Lengkapi scope mentah dengan metadata dari bootstrap registry.
+
+    Jika `code` scope dikenal oleh `BOOTSTRAP_SCOPE_REGISTRY`, metadata seperti
+    `type`, `name`, `path`, atau `parent_code` akan ikut diinjeksikan tanpa
+    menimpa nilai eksplisit yang sudah dikirim caller.
+
+    Args:
+        scope (dict[str, Any] | None): Scope mentah, misalnya `{'code': 'ki'}`.
+
+    Returns:
+        dict[str, Any] | None: Scope yang sudah diperkaya, atau `None` bila
+        input bukan dictionary valid.
+
+    Example:
+        >>> enrich_scope({'code': 'ki'})['type']
+        'unit'
+    """
     if not isinstance(scope, dict):
         return None
 
@@ -46,6 +75,21 @@ def enrich_scope(scope: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def normalize_actor_settings(settings: Any) -> dict[str, Any]:
+    """Normalisasi `settings` actor agar konsisten dipakai lintas service.
+
+    Fungsi ini menjaga agar field penting seperti `active_year`, `scope`,
+    `roles`, dan `permissions` punya bentuk yang lebih terprediksi.
+
+    Args:
+        settings (Any): Nilai mentah dari `user.settings` atau sumber serupa.
+
+    Returns:
+        dict[str, Any]: Dictionary settings yang telah dibersihkan.
+
+    Example:
+        >>> normalize_actor_settings({'active_year': '2026'})['active_year']
+        2026
+    """
     if not isinstance(settings, dict):
         settings = {}
 
@@ -70,6 +114,21 @@ def normalize_actor_settings(settings: Any) -> dict[str, Any]:
 
 
 def build_scope_settings(scope_type: str | None = None, scope_code: str | None = None) -> dict[str, Any] | None:
+    """Bangun payload settings scope dari pasangan type dan code.
+
+    Args:
+        scope_type (str | None, optional): Jenis scope, misalnya `unit` atau
+            `division`.
+        scope_code (str | None, optional): Kode scope organisasi.
+
+    Returns:
+        dict[str, Any] | None: Scope hasil normalisasi, atau `None` jika input
+        kosong/tidak valid.
+
+    Example:
+        >>> build_scope_settings(scope_code='ki')['code']
+        'ki'
+    """
     code = str(scope_code or '').strip() or None
     scope_type = str(scope_type or '').strip() or None
     if not code and not scope_type:
@@ -82,6 +141,25 @@ def build_scope_settings(scope_type: str | None = None, scope_code: str | None =
 
 
 def build_actor_context(actor: Any) -> dict[str, Any]:
+    """Bangun actor context standar dari object user/domain actor.
+
+    Context ini dipakai evaluator policy agar service tidak perlu tahu detail
+    struktur model user. Jika `settings.scope` belum ada, fungsi ini mencoba
+    fallback ke `actor.employee.details.scope`.
+
+    Args:
+        actor (Any): Object actor, biasanya instance `User` atau object serupa.
+
+    Returns:
+        dict[str, Any]: Struktur actor context dengan key `user_id`,
+        `user_uuid`, `roles`, `permissions`, `active_year`, `scope`, dan
+        `settings`.
+
+    Example:
+        >>> context = build_actor_context(actor)
+        >>> 'roles' in context and 'scope' in context
+        True
+    """
     if actor is None:
         return {
             'user_id': None,
@@ -104,7 +182,12 @@ def build_actor_context(actor: Any) -> dict[str, Any]:
             if employee_settings.get('scope'):
                 settings['scope'] = employee_settings['scope']
 
-    roles = _normalize_list(getattr(actor, 'roles', None) or settings.get('roles') or settings.get('access_roles') or settings.get('access_role'))
+    roles = _normalize_list(
+        getattr(actor, 'roles', None)
+        or settings.get('roles')
+        or settings.get('access_roles')
+        or settings.get('access_role')
+    )
     permissions = _normalize_list(getattr(actor, 'permissions', None) or settings.get('permissions'))
 
     return {
@@ -118,7 +201,31 @@ def build_actor_context(actor: Any) -> dict[str, Any]:
     }
 
 
-def merge_actor_settings(existing_settings: Any = None, active_year: Any = None, scope_type: str | None = None, scope_code: str | None = None) -> dict[str, Any]:
+def merge_actor_settings(
+    existing_settings: Any = None,
+    active_year: Any = None,
+    scope_type: str | None = None,
+    scope_code: str | None = None,
+) -> dict[str, Any]:
+    """Gabungkan patch settings actor ke payload settings yang sudah ada.
+
+    Helper ini berguna untuk form/profile update agar perubahan tahun aktif dan
+    scope actor bisa dilakukan tanpa menulis ulang semua field settings lain.
+
+    Args:
+        existing_settings (Any, optional): Settings lama actor.
+        active_year (Any, optional): Tahun aktif baru. String numerik akan
+            dicoba di-cast ke integer.
+        scope_type (str | None, optional): Type scope baru.
+        scope_code (str | None, optional): Code scope baru.
+
+    Returns:
+        dict[str, Any]: Settings actor hasil merge.
+
+    Example:
+        >>> merge_actor_settings({'active_year': 2025}, active_year='2026')['active_year']
+        2026
+    """
     settings = normalize_actor_settings(existing_settings)
 
     if active_year not in (None, ''):

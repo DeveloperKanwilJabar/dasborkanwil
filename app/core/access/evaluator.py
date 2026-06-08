@@ -1,3 +1,10 @@
+"""Evaluator akses RBAC/ABAC ringan untuk domain form dan submission.
+
+Modul ini belum menjadi policy engine penuh, tetapi sudah menyediakan helper
+praktis untuk memutuskan apakah actor boleh membuat, melihat, mempublikasikan,
+atau membaca submission berdasarkan role, action matrix, dan scope resource.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -30,6 +37,18 @@ FORM_TO_SUBMISSION_POLICY_MAP = {
 
 
 def normalize_role_name(role: Any) -> str:
+    """Normalisasi alias role menjadi nama role kanonis.
+
+    Args:
+        role (Any): Nilai role mentah dari user/settings.
+
+    Returns:
+        str: Nama role yang telah dinormalisasi ke kamus `ROLE_ALIASES`.
+
+    Example:
+        >>> normalize_role_name('admin')
+        'admin_lintas_bagian'
+    """
     role_name = str(role or '').strip().lower()
     if not role_name:
         return ''
@@ -37,6 +56,18 @@ def normalize_role_name(role: Any) -> str:
 
 
 def get_actor_roles(actor: Any) -> list[str]:
+    """Ambil daftar role actor dalam bentuk kanonis dan unik.
+
+    Args:
+        actor (Any): Object actor aplikasi.
+
+    Returns:
+        list[str]: Daftar role actor tanpa duplikasi.
+
+    Example:
+        >>> get_actor_roles(actor)
+        ['pegawai_unit']
+    """
     context = build_actor_context(actor)
     normalized = []
     for role in context.get('roles', []):
@@ -47,6 +78,20 @@ def get_actor_roles(actor: Any) -> list[str]:
 
 
 def get_actor_scope(actor: Any) -> dict[str, Any] | None:
+    """Ambil scope actor yang sudah diperkaya metadata registry.
+
+    Args:
+        actor (Any): Object actor aplikasi.
+
+    Returns:
+        dict[str, Any] | None: Scope actor hasil enrich, atau `None` jika tidak
+        tersedia.
+
+    Example:
+        >>> scope = get_actor_scope(actor)
+        >>> scope['code'] if scope else None
+        'ki'
+    """
     explicit_scope = getattr(actor, 'scope', None) if actor else None
     if isinstance(explicit_scope, dict):
         return enrich_scope(explicit_scope)
@@ -54,6 +99,24 @@ def get_actor_scope(actor: Any) -> dict[str, Any] | None:
 
 
 def build_scope_from_resource(resource: Any, prefix: str) -> dict[str, Any] | None:
+    """Bangun dictionary scope dari field resource berpola prefix.
+
+    Contoh prefix yang lazim adalah `owner_scope` atau `target_scope`, sehingga
+    fungsi ini akan membaca field seperti `owner_scope_type`, `owner_scope_code`,
+    dan seterusnya.
+
+    Args:
+        resource (Any): Resource domain seperti `Form` atau `Submission`.
+        prefix (str): Prefix nama field scope pada resource.
+
+    Returns:
+        dict[str, Any] | None: Scope hasil ekstraksi dan enrich, atau `None` bila
+        resource tidak mengandung data scope.
+
+    Example:
+        >>> build_scope_from_resource(form, 'target_scope')['type']
+        'division'
+    """
     if not resource:
         return None
 
@@ -69,11 +132,38 @@ def build_scope_from_resource(resource: Any, prefix: str) -> dict[str, Any] | No
 
 
 def actor_has_role(actor: Any, *expected_roles: str) -> bool:
+    """Periksa apakah actor memiliki salah satu role yang diharapkan.
+
+    Args:
+        actor (Any): Object actor aplikasi.
+        *expected_roles (str): Satu atau lebih nama role kanonis.
+
+    Returns:
+        bool: `True` jika actor memiliki minimal satu role yang cocok.
+
+    Example:
+        >>> actor_has_role(actor, 'superadmin', 'admin_lintas_bagian')
+        False
+    """
     roles = set(get_actor_roles(actor))
     return any(role in roles for role in expected_roles)
 
 
 def actor_allows_action(actor: Any, action: str) -> bool:
+    """Periksa apakah matrix policy role actor mengizinkan suatu action.
+
+    Args:
+        actor (Any): Object actor aplikasi.
+        action (str): Action domain seperti `form:view` atau
+            `submission:export`.
+
+    Returns:
+        bool: `True` jika ada role actor yang mengizinkan action tersebut.
+
+    Example:
+        >>> actor_allows_action(actor, 'submission:view')
+        True
+    """
     if not actor:
         return False
 
@@ -89,6 +179,15 @@ def actor_allows_action(actor: Any, action: str) -> bool:
 
 
 def is_exact_scope_match(actor_scope: dict[str, Any] | None, resource_scope: dict[str, Any] | None) -> bool:
+    """Periksa apakah actor dan resource berada tepat pada scope yang sama.
+
+    Returns:
+        bool: `True` bila `type` dan `code` kedua scope identik.
+
+    Example:
+        >>> is_exact_scope_match({'type': 'unit', 'code': 'ki'}, {'type': 'unit', 'code': 'ki'})
+        True
+    """
     if not actor_scope or not resource_scope:
         return False
     return (
@@ -98,6 +197,21 @@ def is_exact_scope_match(actor_scope: dict[str, Any] | None, resource_scope: dic
 
 
 def is_actor_within_resource_scope(actor_scope: dict[str, Any] | None, resource_scope: dict[str, Any] | None) -> bool:
+    """Periksa apakah actor berada di dalam jangkauan scope resource.
+
+    Umumnya dipakai untuk menentukan apakah user boleh melihat/mengisi form
+    yang menargetkan division, kanwil, atau unit tertentu.
+
+    Returns:
+        bool: `True` jika actor berada dalam cakupan resource.
+
+    Example:
+        >>> is_actor_within_resource_scope(
+        ...     {'code': 'ki', 'path': ['kanwil-jabar', 'divisi-pelayanan-hukum', 'ki']},
+        ...     {'code': 'divisi-pelayanan-hukum', 'type': 'division'},
+        ... )
+        True
+    """
     if not resource_scope:
         return True
     if resource_scope.get('type') == 'global':
@@ -113,6 +227,20 @@ def is_actor_within_resource_scope(actor_scope: dict[str, Any] | None, resource_
 
 
 def is_resource_within_actor_scope(actor_scope: dict[str, Any] | None, resource_scope: dict[str, Any] | None) -> bool:
+    """Periksa apakah resource berada dalam jangkauan scope actor.
+
+    Ini berguna untuk membaca submission milik unit di bawah divisi/kanwil actor.
+
+    Returns:
+        bool: `True` jika resource masih berada di area tanggung jawab actor.
+
+    Example:
+        >>> is_resource_within_actor_scope(
+        ...     {'code': 'divisi-p3h', 'path': ['kanwil-jabar', 'divisi-p3h']},
+        ...     {'code': 'jdih', 'path': ['kanwil-jabar', 'divisi-p3h', 'jdih']},
+        ... )
+        True
+    """
     if not actor_scope or not resource_scope:
         return False
     if actor_scope.get('type') == 'global':
@@ -126,6 +254,18 @@ def is_resource_within_actor_scope(actor_scope: dict[str, Any] | None, resource_
 
 
 def shares_same_kanwil(actor_scope: dict[str, Any] | None, resource_scope: dict[str, Any] | None) -> bool:
+    """Periksa apakah actor dan resource masih berada pada kanwil yang sama.
+
+    Returns:
+        bool: `True` jika elemen pertama path scope sama.
+
+    Example:
+        >>> shares_same_kanwil(
+        ...     {'path': ['kanwil-jabar', 'divisi-p3h']},
+        ...     {'path': ['kanwil-jabar', 'bagian-umum-tata-usaha', 'keuangan']},
+        ... )
+        True
+    """
     if not actor_scope or not resource_scope:
         return False
     actor_path = actor_scope.get('path') or []
@@ -136,6 +276,23 @@ def shares_same_kanwil(actor_scope: dict[str, Any] | None, resource_scope: dict[
 
 
 def derive_submission_policy_key(form: Any = None, context: dict[str, Any] | None = None) -> str:
+    """Turunkan policy key submission dari form atau context eksplisit.
+
+    Aturan ini menjaga agar submission mewarisi pola akses yang masuk akal dari
+    form sumbernya bila caller belum memberikan policy sendiri.
+
+    Args:
+        form (Any, optional): Instance form sumber submission.
+        context (dict[str, Any] | None, optional): Context override yang boleh
+            membawa `access_policy_key` eksplisit.
+
+    Returns:
+        str: Policy key submission yang akan dipakai resource baru.
+
+    Example:
+        >>> derive_submission_policy_key(context={'access_policy_key': 'submission.kanwil_audit'})
+        'submission.kanwil_audit'
+    """
     context = context or {}
     explicit_policy = context.get('access_policy_key')
     if explicit_policy:
@@ -149,12 +306,27 @@ def derive_submission_policy_key(form: Any = None, context: dict[str, Any] | Non
 
 
 def can_create_form(actor: Any) -> bool:
+    """Periksa apakah actor boleh membuat form baru.
+
+    Returns:
+        bool: `True` untuk actor anonim pada mode test atau actor yang punya
+        action `form:create`.
+    """
     if actor is None:
         return True
     return actor_allows_action(actor, 'form:create')
 
 
 def can_update_form(actor: Any, form: Any) -> bool:
+    """Periksa apakah actor boleh mengubah metadata/schema form.
+
+    Args:
+        actor (Any): Actor yang melakukan aksi.
+        form (Any): Resource form target.
+
+    Returns:
+        bool: `True` jika matrix policy actor mengizinkan `form:update`.
+    """
     if actor is None:
         return True
     if not actor_allows_action(actor, 'form:update'):
@@ -163,6 +335,11 @@ def can_update_form(actor: Any, form: Any) -> bool:
 
 
 def can_archive_form(actor: Any, form: Any) -> bool:
+    """Periksa apakah actor boleh mengarsipkan form.
+
+    Returns:
+        bool: `True` jika matrix policy actor mengizinkan `form:archive`.
+    """
     if actor is None:
         return True
     if not actor_allows_action(actor, 'form:archive'):
@@ -171,6 +348,11 @@ def can_archive_form(actor: Any, form: Any) -> bool:
 
 
 def can_publish_form(actor: Any, form: Any) -> bool:
+    """Periksa apakah actor boleh mempublikasikan form.
+
+    Returns:
+        bool: `True` jika matrix policy actor mengizinkan `form:publish`.
+    """
     if actor is None:
         return True
     if not actor_allows_action(actor, 'form:publish'):
@@ -179,6 +361,12 @@ def can_publish_form(actor: Any, form: Any) -> bool:
 
 
 def can_view_form(actor: Any, form: Any) -> bool:
+    """Periksa apakah actor boleh melihat form berdasarkan action dan scope.
+
+    Returns:
+        bool: `True` jika action `form:view` diizinkan dan actor masih berada
+        dalam `target_scope` form.
+    """
     if actor is None:
         return True
     if not actor_allows_action(actor, 'form:view'):
@@ -190,6 +378,12 @@ def can_view_form(actor: Any, form: Any) -> bool:
 
 
 def can_submit_form(actor: Any, form: Any) -> bool:
+    """Periksa apakah actor boleh mengirim submission untuk suatu form.
+
+    Returns:
+        bool: `True` jika action `submission:create` diizinkan dan actor berada
+        dalam jangkauan `target_scope` form.
+    """
     if actor is None:
         return True
     if not actor_allows_action(actor, 'submission:create'):
@@ -201,6 +395,22 @@ def can_submit_form(actor: Any, form: Any) -> bool:
 
 
 def can_view_submission(actor: Any, submission: Any) -> bool:
+    """Periksa apakah actor boleh membaca detail submission tertentu.
+
+    Evaluasi dilakukan berdasarkan action matrix, owner scope submission, dan
+    `access_policy_key` yang menempel pada submission.
+
+    Args:
+        actor (Any): Actor yang melakukan akses.
+        submission (Any): Resource submission target.
+
+    Returns:
+        bool: `True` jika policy access submission mengizinkan actor tersebut.
+
+    Example:
+        >>> can_view_submission(actor, submission)
+        True
+    """
     if actor is None:
         return False
     if not actor_allows_action(actor, 'submission:view') and not actor_allows_action(actor, 'submission:detail'):
@@ -235,6 +445,18 @@ def can_view_submission(actor: Any, submission: Any) -> bool:
 
 
 def ensure_known_policy(policy_key: str | None) -> bool:
+    """Periksa apakah policy key terdaftar dalam katalog policy bootstrap.
+
+    Args:
+        policy_key (str | None): Policy key yang ingin divalidasi.
+
+    Returns:
+        bool: `True` jika policy dikenal oleh `ACCESS_POLICY_CATALOG`.
+
+    Example:
+        >>> ensure_known_policy('submission.unit_owned')
+        True
+    """
     if not policy_key:
         return False
     return policy_key in ACCESS_POLICY_CATALOG

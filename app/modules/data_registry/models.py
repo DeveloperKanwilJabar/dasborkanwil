@@ -1,3 +1,7 @@
+"""Model ORM domain data registry.
+
+Modul ini memuat struktur registry master data, version schema registry, row record final, batch staging impor, dan row staging validasi/materialisasi."""
+
 import uuid
 
 from sqlalchemy.dialects.postgresql import JSONB
@@ -8,6 +12,15 @@ from app.core.extensions import db
 
 
 class DataRegistry(db.Model):
+    """Entity registry master data sebagai identitas bisnis lintas versi schema.
+
+    Class ini merepresentasikan struktur persistence utama pada database
+    beserta relasi antar entitas domain yang dipakai service dan repository.
+
+    Example:
+        >>> obj = DataRegistry()
+    """
+
     __tablename__ = 'data_registries'
 
     id = db.Column('id', db.Integer(), primary_key=True)
@@ -47,6 +60,15 @@ class DataRegistry(db.Model):
 
 
 class DataRegistryVersion(db.Model):
+    """Entity versi schema registry dan kontrak impor/materialisasi.
+
+    Class ini merepresentasikan struktur persistence utama pada database
+    beserta relasi antar entitas domain yang dipakai service dan repository.
+
+    Example:
+        >>> obj = DataRegistryVersion()
+    """
+
     __tablename__ = 'data_registry_versions'
 
     id = db.Column('id', db.Integer(), primary_key=True)
@@ -90,6 +112,15 @@ class DataRegistryVersion(db.Model):
 
 
 class DataRegistryRecord(db.Model):
+    """Entity record final yang telah dimaterialisasi ke registry tertentu.
+
+    Class ini merepresentasikan struktur persistence utama pada database
+    beserta relasi antar entitas domain yang dipakai service dan repository.
+
+    Example:
+        >>> obj = DataRegistryRecord()
+    """
+
     __tablename__ = 'data_registry_records'
 
     id = db.Column('id', db.Integer(), primary_key=True)
@@ -157,6 +188,15 @@ class DataRegistryRecord(db.Model):
 
 
 class DataRegistryImportBatch(db.Model):
+    """Entity batch staging impor registry.
+
+    Class ini merepresentasikan struktur persistence utama pada database
+    beserta relasi antar entitas domain yang dipakai service dan repository.
+
+    Example:
+        >>> obj = DataRegistryImportBatch()
+    """
+
     __tablename__ = 'data_registry_import_batches'
 
     STATUS_UPLOADED = 'uploaded'
@@ -215,6 +255,15 @@ class DataRegistryImportBatch(db.Model):
 
 
 class DataRegistryImportRow(db.Model):
+    """Entity row staging individu pada batch impor registry.
+
+    Class ini merepresentasikan struktur persistence utama pada database
+    beserta relasi antar entitas domain yang dipakai service dan repository.
+
+    Example:
+        >>> obj = DataRegistryImportRow()
+    """
+
     __tablename__ = 'data_registry_import_rows'
 
     STATUS_PENDING = 'pending'

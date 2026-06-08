@@ -1,3 +1,7 @@
+"""Service layer domain data registry.
+
+Modul ini menangani registri master data, versioning schema registry, import batch Excel, validasi batch, query resource publik, dan materialisasi row staging ke record registry final."""
+
 import hashlib
 import json
 import re
@@ -30,7 +34,32 @@ from .repositories import (
 
 
 class DataRegistryService(BaseService):
+    """Service utama untuk registry, workspace, dan operasi record manual.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = DataRegistryService()
+    """
+
     def __init__(self, registry_repository=None, version_service=None, record_repository=None, batch_repository=None, import_batch_service=None):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            registry_repository (Any): Parameter `registry_repository` untuk operasi init.
+            version_service (Any): Parameter `version_service` untuk operasi init.
+            record_repository (Any): Parameter `record_repository` untuk operasi init.
+            batch_repository (Any): Parameter `batch_repository` untuk operasi init.
+            import_batch_service (Any): Parameter `import_batch_service` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = DataRegistryService()
+        """
+
         super().__init__(repository=registry_repository or DataRegistryRepository())
         self.version_service = version_service or DataRegistryVersionService()
         self.record_repository = record_repository or DataRegistryRecordRepository()
@@ -38,6 +67,19 @@ class DataRegistryService(BaseService):
         self.import_batch_service = import_batch_service or DataRegistryImportBatchService()
 
     def create_registry(self, data, actor=None):
+        """Membuat registry master data baru beserta draft version awal opsional.
+
+        Args:
+            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.create_registry(data=..., actor=...)
+        """
+
         registry_slug = data.get('registry_slug')
         name = data.get('name')
 
@@ -89,6 +131,20 @@ class DataRegistryService(BaseService):
             raise
 
     def publish_registry(self, registry_id, version_id=None, actor=None):
+        """Mempublish registry melalui version target atau draft aktif terbaru.
+
+        Args:
+            registry_id (Any): Primary key internal registry target.
+            version_id (Any): Primary key internal version target.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.publish_registry(registry_id=..., version_id=..., actor=...)
+        """
+
         registry = self.repository.get_by_id(registry_id)
         if not registry:
             raise ValueError('Registry tidak ditemukan.')
@@ -107,9 +163,34 @@ class DataRegistryService(BaseService):
         }
 
     def get_registry_detail(self, registry_id):
+        """Mengambil detail registry berdasarkan id.
+
+        Args:
+            registry_id (Any): Primary key internal registry target.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_registry_detail(registry_id=...)
+        """
+
         return self.repository.get_by_id(registry_id)
 
     def get_registry_workspace(self, registry_id, record_limit=20):
+        """Mengambil workspace registry untuk builder, preview records, dan batch terbaru.
+
+        Args:
+            registry_id (Any): Primary key internal registry target.
+            record_limit (Any): Batas jumlah record yang diambil untuk preview workspace.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_registry_workspace(registry_id=..., record_limit=...)
+        """
+
         registry = self.repository.get_by_id(registry_id)
         if not registry:
             raise ValueError('Registry tidak ditemukan.')
@@ -148,6 +229,19 @@ class DataRegistryService(BaseService):
         }
 
     def get_registry_record_list(self, registry_id, record_limit=100):
+        """Menyusun daftar record registry dalam format siap dipakai UI.
+
+        Args:
+            registry_id (Any): Primary key internal registry target.
+            record_limit (Any): Batas jumlah record yang diambil untuk preview workspace.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_registry_record_list(registry_id=..., record_limit=...)
+        """
+
         workspace = self.get_registry_workspace(registry_id, record_limit=record_limit)
         record_list_version = workspace.get('record_preview_version')
         schema_fields = self.import_batch_service.extract_importable_fields(record_list_version) if record_list_version else []
@@ -166,6 +260,20 @@ class DataRegistryService(BaseService):
         }
 
     def update_registry_record(self, record_id, data, actor=None):
+        """Memperbarui payload dan identitas record registry secara manual.
+
+        Args:
+            record_id (Any): Primary key internal record target.
+            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.update_registry_record(record_id=..., data=..., actor=...)
+        """
+
         record = self.record_repository.get_by_id(record_id)
         if not record:
             raise ValueError('Record registry tidak ditemukan.')
@@ -235,6 +343,21 @@ class DataRegistryService(BaseService):
         }
 
     def set_registry_record_active(self, record_id, is_active, registry_id=None, actor=None):
+        """Mengaktifkan atau menonaktifkan record registry tertentu.
+
+        Args:
+            record_id (Any): Primary key internal record target.
+            is_active (Any): Parameter `is_active` untuk operasi set registry record active.
+            registry_id (Any): Primary key internal registry target.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.set_registry_record_active(record_id=..., is_active=..., registry_id=...)
+        """
+
         record = self.record_repository.get_by_id(record_id)
         if not record:
             raise ValueError('Record registry tidak ditemukan.')
@@ -256,6 +379,18 @@ class DataRegistryService(BaseService):
         }
 
     def _build_record_columns(self, schema_fields):
+        """Helper internal untuk build record columns.
+
+        Args:
+            schema_fields (Any): Parameter `schema_fields` untuk operasi build record columns.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_record_columns(schema_fields=...)
+        """
+
         field_map = {
             (field.get('key') or '').strip(): field
             for field in (schema_fields or [])
@@ -289,6 +424,18 @@ class DataRegistryService(BaseService):
         return columns
 
     def _build_record_edit_fields(self, schema_fields):
+        """Helper internal untuk build record edit fields.
+
+        Args:
+            schema_fields (Any): Parameter `schema_fields` untuk operasi build record edit fields.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_record_edit_fields(schema_fields=...)
+        """
+
         field_map = {
             (field.get('key') or '').strip(): field
             for field in (schema_fields or [])
@@ -326,6 +473,19 @@ class DataRegistryService(BaseService):
         return result
 
     def _serialize_record_row(self, record, record_columns):
+        """Helper internal untuk serialize record row.
+
+        Args:
+            record (Any): Parameter `record` untuk operasi serialize record row.
+            record_columns (Any): Parameter `record_columns` untuk operasi serialize record row.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._serialize_record_row(record=..., record_columns=...)
+        """
+
         payload = dict(record.payload or {})
         column_values = {}
         for column in record_columns:
@@ -353,6 +513,18 @@ class DataRegistryService(BaseService):
         }
 
     def _normalize_record_form_data(self, data):
+        """Helper internal untuk normalize record form data.
+
+        Args:
+            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_record_form_data(data=...)
+        """
+
         normalized = {}
         for key, value in (data or {}).items():
             if key in {'csrf_token'}:
@@ -361,6 +533,18 @@ class DataRegistryService(BaseService):
         return normalized
 
     def _normalize_form_value(self, value):
+        """Helper internal untuk normalize form value.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi normalize form value.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_form_value(value=...)
+        """
+
         if value is None:
             return None
         if isinstance(value, str):
@@ -369,15 +553,48 @@ class DataRegistryService(BaseService):
         return value
 
     def _normalize_text(self, value):
+        """Helper internal untuk normalize text.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi normalize text.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_text(value=...)
+        """
+
         if value is None:
             return ''
         return re.sub(r'\s+', ' ', str(value).strip().lower())
 
     def _humanize_key(self, key):
+        """Helper internal untuk humanize key.
+
+        Args:
+            key (Any): Parameter `key` untuk operasi humanize key.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._humanize_key(key=...)
+        """
+
         text = str(key or '').replace('_', ' ').replace('-', ' ').strip()
         return text.title() if text else 'Field'
 
     def _first_non_empty(self, *values):
+        """Helper internal untuk first non empty.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._first_non_empty()
+        """
+
         for value in values:
             normalized = self._normalize_form_value(value)
             if normalized not in (None, ''):
@@ -385,6 +602,18 @@ class DataRegistryService(BaseService):
         return None
 
     def _stringify_record_value(self, value):
+        """Helper internal untuk stringify record value.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi stringify record value.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._stringify_record_value(value=...)
+        """
+
         if value is None:
             return ''
         if isinstance(value, (dict, list)):
@@ -392,10 +621,36 @@ class DataRegistryService(BaseService):
         return str(value)
 
     def _registry_code_exists(self, registry_code):
+        """Helper internal untuk registry code exists.
+
+        Args:
+            registry_code (Any): Parameter `registry_code` untuk operasi registry code exists.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._registry_code_exists(registry_code=...)
+        """
+
         matches = self.repository.find_by(registry_code=registry_code)
         return bool(matches)
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
+        """Helper internal untuk apply actor audit.
+
+        Args:
+            obj (Any): Parameter `obj` untuk operasi apply actor audit.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            action (Any): Parameter `action` untuk operasi apply actor audit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
+        """
+
         if not actor:
             return obj
 
@@ -411,7 +666,30 @@ class DataRegistryService(BaseService):
 
 
 class DataRegistryVersionService(BaseService):
+    """Service versioning schema registry dan publish version.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = DataRegistryVersionService()
+    """
+
     def __init__(self, version_repository=None, registry_repository=None, batch_repository=None):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            version_repository (Any): Parameter `version_repository` untuk operasi init.
+            registry_repository (Any): Parameter `registry_repository` untuk operasi init.
+            batch_repository (Any): Parameter `batch_repository` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = DataRegistryVersionService()
+        """
+
         super().__init__(repository=version_repository or DataRegistryVersionRepository())
         self.registry_repository = registry_repository or DataRegistryRepository()
         self.batch_repository = batch_repository or DataRegistryImportBatchRepository()
@@ -425,6 +703,23 @@ class DataRegistryVersionService(BaseService):
         actor=None,
         source_version_id=None,
     ):
+        """Membuat draft version baru atau me-refresh draft aktif dengan schema terbaru.
+
+        Args:
+            registry_id (Any): Primary key internal registry target.
+            schema_json (Any): Schema JSON registry yang akan disimpan pada version.
+            mapping_spec (Any): Parameter `mapping_spec` untuk operasi create draft version.
+            source_snapshot (Any): Parameter `source_snapshot` untuk operasi create draft version.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            source_version_id (Any): Parameter `source_version_id` untuk operasi create draft version.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.create_draft_version(registry_id=..., schema_json=..., mapping_spec=...)
+        """
+
         registry = self.registry_repository.get_by_id(registry_id)
         if not registry:
             raise ValueError('Registry tidak ditemukan.')
@@ -463,6 +758,19 @@ class DataRegistryVersionService(BaseService):
         return self.repository.save(draft_version)
 
     def publish_version(self, version_id, actor=None):
+        """Mempublish draft version dan menonaktifkan published version lain dalam form yang sama.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.publish_version(version_id=..., actor=...)
+        """
+
         version = self.repository.get_by_id(version_id)
         if not version:
             raise ValueError('Registry version tidak ditemukan.')
@@ -486,9 +794,33 @@ class DataRegistryVersionService(BaseService):
         return saved_version
 
     def get_published_version(self, registry_id):
+        """Mengambil version published untuk form tertentu.
+
+        Args:
+            registry_id (Any): Primary key internal registry target.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_published_version(registry_id=...)
+        """
+
         return self.repository.get_published_version(registry_id)
 
     def get_version_detail(self, version_id):
+        """Menangani proses service untuk get version detail.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_version_detail(version_id=...)
+        """
+
         version = self.repository.get_by_id(version_id)
         if not version:
             raise ValueError('Registry version tidak ditemukan.')
@@ -500,6 +832,20 @@ class DataRegistryVersionService(BaseService):
         }
 
     def update_draft_schema_fields(self, version_id, fields, actor=None):
+        """Menangani proses service untuk update draft schema fields.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            fields (Any): Daftar field schema yang sudah dinormalisasi.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.update_draft_schema_fields(version_id=..., fields=..., actor=...)
+        """
+
         version = self.repository.get_by_id(version_id)
         if not version:
             raise ValueError('Registry version tidak ditemukan.')
@@ -514,6 +860,18 @@ class DataRegistryVersionService(BaseService):
         return self.repository.save(version)
 
     def _validate_schema(self, schema_json):
+        """Helper internal untuk validate schema.
+
+        Args:
+            schema_json (Any): Schema JSON registry yang akan disimpan pada version.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._validate_schema(schema_json=...)
+        """
+
         if not isinstance(schema_json, dict):
             raise ValueError('Schema registry wajib berupa object/dict.')
         if 'fields' not in schema_json:
@@ -521,6 +879,18 @@ class DataRegistryVersionService(BaseService):
         return True
 
     def _normalize_schema_fields(self, fields):
+        """Helper internal untuk normalize schema fields.
+
+        Args:
+            fields (Any): Daftar field schema yang sudah dinormalisasi.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_schema_fields(fields=...)
+        """
+
         if not isinstance(fields, list):
             raise ValueError('Field schema registry wajib berupa list.')
 
@@ -556,6 +926,18 @@ class DataRegistryVersionService(BaseService):
         return normalized_fields
 
     def _normalize_field_options(self, raw_options):
+        """Helper internal untuk normalize field options.
+
+        Args:
+            raw_options (Any): Parameter `raw_options` untuk operasi normalize field options.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_field_options(raw_options=...)
+        """
+
         if raw_options in (None, ''):
             return []
         if isinstance(raw_options, str):
@@ -576,6 +958,20 @@ class DataRegistryVersionService(BaseService):
         return normalized
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
+        """Helper internal untuk apply actor audit.
+
+        Args:
+            obj (Any): Parameter `obj` untuk operasi apply actor audit.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            action (Any): Parameter `action` untuk operasi apply actor audit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
+        """
+
         if not actor:
             return obj
 
@@ -591,12 +987,49 @@ class DataRegistryVersionService(BaseService):
 
 
 class DataRegistryImportBatchService:
+    """Service staging impor registry dari workbook atau input manual.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = DataRegistryImportBatchService()
+    """
+
     def __init__(self, batch_repository=None, row_repository=None, version_repository=None):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            batch_repository (Any): Parameter `batch_repository` untuk operasi init.
+            row_repository (Any): Parameter `row_repository` untuk operasi init.
+            version_repository (Any): Parameter `version_repository` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = DataRegistryImportBatchService()
+        """
+
         self.batch_repository = batch_repository or DataRegistryImportBatchRepository()
         self.row_repository = row_repository or DataRegistryImportRowRepository()
         self.version_repository = version_repository or DataRegistryVersionRepository()
 
     def create_batch(self, version_id, payload, actor=None):
+        """Membuat batch impor registry dari payload row mentah.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            payload (Any): Payload bisnis yang akan divalidasi atau dipersist.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.create_batch(version_id=..., payload=..., actor=...)
+        """
+
         version = self.version_repository.get_by_id(version_id)
         if not version:
             raise ValueError('Target version registry tidak ditemukan.')
@@ -652,6 +1085,18 @@ class DataRegistryImportBatchService:
         return {'batch': batch, 'rows': rows}
 
     def extract_importable_fields(self, version_or_schema):
+        """Mengekstrak field schema yang boleh diimpor dari registry version atau schema JSON.
+
+        Args:
+            version_or_schema (Any): Parameter `version_or_schema` untuk operasi extract importable fields.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.extract_importable_fields(version_or_schema=...)
+        """
+
         schema_json = getattr(version_or_schema, 'schema_json', version_or_schema) or {}
         fields = (schema_json.get('fields') or []) if isinstance(schema_json, dict) else []
         normalized_fields = []
@@ -675,6 +1120,19 @@ class DataRegistryImportBatchService:
         return normalized_fields
 
     def build_template_workbook(self, version, registry=None):
+        """Membangun workbook template Excel dari published schema form.
+
+        Args:
+            version (Any): Parameter `version` untuk operasi build template workbook.
+            registry (Any): Parameter `registry` untuk operasi build template workbook.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.build_template_workbook(version=..., registry=...)
+        """
+
         if not version:
             raise ValueError('Registry version tidak ditemukan.')
 
@@ -727,12 +1185,39 @@ class DataRegistryImportBatchService:
         return self._create_xlsx(sheets)
 
     def build_template_filename(self, version, registry=None):
+        """Membentuk nama file template workbook registry yang stabil.
+
+        Args:
+            version (Any): Parameter `version` untuk operasi build template filename.
+            registry (Any): Parameter `registry` untuk operasi build template filename.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.build_template_filename(version=..., registry=...)
+        """
+
         registry_ref = getattr(registry, 'registry_code', None) or getattr(registry, 'registry_slug', None) or f'registry-{getattr(version, "registry_id", "unknown")}'
         safe_ref = re.sub(r'[^A-Za-z0-9._-]+', '-', str(registry_ref)).strip('-') or 'registry'
         version_number = getattr(version, 'version_number', None) or 'draft'
         return f'{safe_ref}-v{version_number}-template.xlsx'
 
     def parse_mapping_workbook(self, version_id, file_storage, sample_limit=5):
+        """Membaca workbook upload form untuk kebutuhan mapping kolom impor.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            file_storage (Any): Objek file upload Flask/Werkzeug yang berisi workbook impor.
+            sample_limit (Any): Batas jumlah sample row yang dibaca untuk preview mapping.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.parse_mapping_workbook(version_id=..., file_storage=..., sample_limit=...)
+        """
+
         version = self.version_repository.get_by_id(version_id)
         if not version:
             raise ValueError('Target version registry tidak ditemukan.')
@@ -755,6 +1240,21 @@ class DataRegistryImportBatchService:
         }
 
     def create_batch_from_workbook(self, version_id, file_storage, mapping_config, actor=None):
+        """Membuat import batch registry dari workbook yang sudah dipetakan.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            file_storage (Any): Objek file upload Flask/Werkzeug yang berisi workbook impor.
+            mapping_config (Any): Konfigurasi pemetaan header workbook ke key field schema.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.create_batch_from_workbook(version_id=..., file_storage=..., mapping_config=...)
+        """
+
         version = self.version_repository.get_by_id(version_id)
         if not version:
             raise ValueError('Target version registry tidak ditemukan.')
@@ -786,6 +1286,20 @@ class DataRegistryImportBatchService:
         )
 
     def create_manual_entry_batch(self, version_id, row_payload, actor=None):
+        """Membuat import batch registry dari input manual satu atau beberapa row.
+
+        Args:
+            version_id (Any): Primary key internal version target.
+            row_payload (Any): Parameter `row_payload` untuk operasi create manual entry batch.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.create_manual_entry_batch(version_id=..., row_payload=..., actor=...)
+        """
+
         version = self.version_repository.get_by_id(version_id)
         if not version:
             raise ValueError('Target version registry tidak ditemukan.')
@@ -823,6 +1337,18 @@ class DataRegistryImportBatchService:
         )
 
     def get_batch_detail(self, batch_id):
+        """Mengambil detail import batch registry.
+
+        Args:
+            batch_id (Any): Primary key internal batch impor target.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_batch_detail(batch_id=...)
+        """
+
         batch = self.batch_repository.get_by_id(batch_id)
         if not batch:
             raise ValueError('Import batch tidak ditemukan.')
@@ -837,6 +1363,19 @@ class DataRegistryImportBatchService:
         }
 
     def list_batch_rows(self, batch_id, status=None):
+        """Mengambil daftar row dalam sebuah batch impor registry.
+
+        Args:
+            batch_id (Any): Primary key internal batch impor target.
+            status (Any): Parameter `status` untuk operasi list batch rows.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.list_batch_rows(batch_id=..., status=...)
+        """
+
         batch = self.batch_repository.get_by_id(batch_id)
         if not batch:
             raise ValueError('Import batch tidak ditemukan.')
@@ -844,6 +1383,18 @@ class DataRegistryImportBatchService:
         return {'batch': batch, 'rows': rows}
 
     def export_import_batch_errors(self, batch_id):
+        """Mengekspor workbook error untuk batch impor form.
+
+        Args:
+            batch_id (Any): Primary key internal batch impor target.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service.export_import_batch_errors(batch_id=...)
+        """
+
         batch = self.batch_repository.get_by_id(batch_id)
         if not batch:
             raise ValueError('Import batch tidak ditemukan.')
@@ -870,11 +1421,38 @@ class DataRegistryImportBatchService:
         }
 
     def build_error_workbook_filename(self, batch, version=None):
+        """Membentuk nama file workbook error untuk batch impor form.
+
+        Args:
+            batch (Any): Parameter `batch` untuk operasi build error workbook filename.
+            version (Any): Parameter `version` untuk operasi build error workbook filename.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.build_error_workbook_filename(batch=..., version=...)
+        """
+
         registry_ref = getattr(batch, 'registry_id', 'unknown')
         version_number = getattr(version, 'version_number', None) or getattr(batch, 'registry_version_id', 'unknown')
         return f'data-registry-{registry_ref}-v{version_number}-errors.xlsx'
 
     def build_error_workbook(self, batch, version, error_rows):
+        """Membangun workbook error impor form dengan row yang gagal validasi.
+
+        Args:
+            batch (Any): Parameter `batch` untuk operasi build error workbook.
+            version (Any): Parameter `version` untuk operasi build error workbook.
+            error_rows (Any): Parameter `error_rows` untuk operasi build error workbook.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.build_error_workbook(batch=..., version=..., error_rows=...)
+        """
+
         generated_at = now_utc().to_iso8601_string()
         headers = list(getattr(batch, 'source_headers', None) or [])
         if not headers:
@@ -929,6 +1507,20 @@ class DataRegistryImportBatchService:
         ])
 
     def _build_error_data_row(self, headers, row, issues):
+        """Helper internal untuk build error data row.
+
+        Args:
+            headers (Any): Parameter `headers` untuk operasi build error data row.
+            row (Any): Parameter `row` untuk operasi build error data row.
+            issues (Any): Parameter `issues` untuk operasi build error data row.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_error_data_row(headers=..., row=..., issues=...)
+        """
+
         raw_payload = getattr(row, 'raw_payload', None) or {}
         issues_by_header = defaultdict(list)
         for issue in issues:
@@ -941,6 +1533,19 @@ class DataRegistryImportBatchService:
         return rendered
 
     def _collect_row_issues(self, row, mapping_fields):
+        """Helper internal untuk collect row issues.
+
+        Args:
+            row (Any): Parameter `row` untuk operasi collect row issues.
+            mapping_fields (Any): Parameter `mapping_fields` untuk operasi collect row issues.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._collect_row_issues(row=..., mapping_fields=...)
+        """
+
         mapped_payload = getattr(row, 'mapped_payload', None) or {}
         validation_errors = getattr(row, 'validation_errors', None) or {}
         issues = []
@@ -971,6 +1576,19 @@ class DataRegistryImportBatchService:
         return issues
 
     def _render_error_cell_value(self, value, issues):
+        """Helper internal untuk render error cell value.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi render error cell value.
+            issues (Any): Parameter `issues` untuk operasi render error cell value.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._render_error_cell_value(value=..., issues=...)
+        """
+
         base_text = '' if value is None else str(value)
         if not issues:
             return base_text
@@ -980,6 +1598,18 @@ class DataRegistryImportBatchService:
         return f'[ERROR: {error_text}]'
 
     def _create_xlsx(self, sheets):
+        """Helper internal untuk create xlsx.
+
+        Args:
+            sheets (Any): Parameter `sheets` untuk operasi create xlsx.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._create_xlsx(sheets=...)
+        """
+
         workbook = Workbook()
         default_sheet = workbook.active
         if default_sheet is not None:
@@ -995,6 +1625,19 @@ class DataRegistryImportBatchService:
         return buffer.getvalue()
 
     def _map_row_payload(self, raw_payload, mapping_snapshot):
+        """Helper internal untuk map row payload.
+
+        Args:
+            raw_payload (Any): Parameter `raw_payload` untuk operasi map row payload.
+            mapping_snapshot (Any): Parameter `mapping_snapshot` untuk operasi map row payload.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._map_row_payload(raw_payload=..., mapping_snapshot=...)
+        """
+
         raw_payload = raw_payload or {}
         mapping_fields = (mapping_snapshot or {}).get('fields') or {}
         mapped_payload = {}
@@ -1006,10 +1649,34 @@ class DataRegistryImportBatchService:
         return mapped_payload
 
     def _build_row_hash(self, raw_payload):
+        """Helper internal untuk build row hash.
+
+        Args:
+            raw_payload (Any): Parameter `raw_payload` untuk operasi build row hash.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_row_hash(raw_payload=...)
+        """
+
         encoded = json.dumps(raw_payload or {}, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
 
     def _read_upload_content(self, file_storage):
+        """Helper internal untuk read upload content.
+
+        Args:
+            file_storage (Any): Objek file upload Flask/Werkzeug yang berisi workbook impor.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._read_upload_content(file_storage=...)
+        """
+
         if not file_storage:
             raise ValueError('File Excel wajib dipilih.')
         filename = (getattr(file_storage, 'filename', None) or '').strip()
@@ -1021,6 +1688,19 @@ class DataRegistryImportBatchService:
         return filename, content
 
     def _read_first_sheet_rows(self, content, max_rows=None):
+        """Helper internal untuk read first sheet rows.
+
+        Args:
+            content (Any): Parameter `content` untuk operasi read first sheet rows.
+            max_rows (Any): Parameter `max_rows` untuk operasi read first sheet rows.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._read_first_sheet_rows(content=..., max_rows=...)
+        """
+
         workbook = load_workbook(filename=BytesIO(content), read_only=True, data_only=True)
         worksheet = workbook[workbook.sheetnames[0]]
         rows = []
@@ -1035,6 +1715,18 @@ class DataRegistryImportBatchService:
         return rows
 
     def _split_headers_and_rows(self, rows):
+        """Helper internal untuk split headers and rows.
+
+        Args:
+            rows (Any): Parameter `rows` untuk operasi split headers and rows.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._split_headers_and_rows(rows=...)
+        """
+
         rows = rows or []
         if not rows:
             raise ValueError('File Excel belum memiliki header.')
@@ -1044,12 +1736,39 @@ class DataRegistryImportBatchService:
         return headers, rows[1:]
 
     def _row_to_payload(self, row, headers):
+        """Helper internal untuk row to payload.
+
+        Args:
+            row (Any): Parameter `row` untuk operasi row to payload.
+            headers (Any): Parameter `headers` untuk operasi row to payload.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._row_to_payload(row=..., headers=...)
+        """
+
         payload = {}
         for index, header in enumerate(headers):
             payload[header] = row[index] if index < len(row) else ''
         return payload
 
     def _normalize_mapping_config(self, mapping_config, fields, headers):
+        """Helper internal untuk normalize mapping config.
+
+        Args:
+            mapping_config (Any): Konfigurasi pemetaan header workbook ke key field schema.
+            fields (Any): Daftar field schema yang sudah dinormalisasi.
+            headers (Any): Parameter `headers` untuk operasi normalize mapping config.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_mapping_config(mapping_config=..., fields=..., headers=...)
+        """
+
         mapping_config = mapping_config or {}
         header_set = set(headers or [])
         normalized = {}
@@ -1060,6 +1779,20 @@ class DataRegistryImportBatchService:
         return normalized
 
     def _build_mapping_snapshot(self, version, fields, normalized_mapping):
+        """Helper internal untuk build mapping snapshot.
+
+        Args:
+            version (Any): Parameter `version` untuk operasi build mapping snapshot.
+            fields (Any): Daftar field schema yang sudah dinormalisasi.
+            normalized_mapping (Any): Parameter `normalized_mapping` untuk operasi build mapping snapshot.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_mapping_snapshot(version=..., fields=..., normalized_mapping=...)
+        """
+
         version_mapping_spec = getattr(version, 'mapping_spec', None) or {}
         snapshot_fields = {}
         for field in fields:
@@ -1076,6 +1809,19 @@ class DataRegistryImportBatchService:
         }
 
     def _build_auto_mapping(self, fields, headers):
+        """Helper internal untuk build auto mapping.
+
+        Args:
+            fields (Any): Daftar field schema yang sudah dinormalisasi.
+            headers (Any): Parameter `headers` untuk operasi build auto mapping.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_auto_mapping(fields=..., headers=...)
+        """
+
         headers = headers or []
         normalized_headers = {self._normalize_mapping_token(header): header for header in headers}
         mapping = {}
@@ -1098,9 +1844,35 @@ class DataRegistryImportBatchService:
         return mapping
 
     def _normalize_mapping_token(self, value):
+        """Helper internal untuk normalize mapping token.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi normalize mapping token.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_mapping_token(value=...)
+        """
+
         return re.sub(r'[^a-z0-9]+', '', (value or '').strip().lower())
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
+        """Helper internal untuk apply actor audit.
+
+        Args:
+            obj (Any): Parameter `obj` untuk operasi apply actor audit.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            action (Any): Parameter `action` untuk operasi apply actor audit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
+        """
+
         if not actor:
             return obj
 
@@ -1115,12 +1887,48 @@ class DataRegistryImportBatchService:
 
 
 class DataRegistryImportValidationService:
+    """Service validasi batch impor registry sebelum materialisasi.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = DataRegistryImportValidationService()
+    """
+
     def __init__(self, batch_repository=None, row_repository=None, version_repository=None):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            batch_repository (Any): Parameter `batch_repository` untuk operasi init.
+            row_repository (Any): Parameter `row_repository` untuk operasi init.
+            version_repository (Any): Parameter `version_repository` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = DataRegistryImportValidationService()
+        """
+
         self.batch_repository = batch_repository or DataRegistryImportBatchRepository()
         self.row_repository = row_repository or DataRegistryImportRowRepository()
         self.version_repository = version_repository or DataRegistryVersionRepository()
 
     def validate_batch(self, batch_id, actor=None):
+        """Menjalankan validasi bisnis untuk seluruh row dalam import batch registry.
+
+        Args:
+            batch_id (Any): Primary key internal batch impor target.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.validate_batch(batch_id=..., actor=...)
+        """
+
         batch = self.batch_repository.get_by_id(batch_id)
         if not batch:
             raise ValueError('Import batch tidak ditemukan.')
@@ -1177,6 +1985,20 @@ class DataRegistryImportValidationService:
         return {'batch': batch}
 
     def _validate_row(self, row, schema_fields, mapping_fields):
+        """Helper internal untuk validate row.
+
+        Args:
+            row (Any): Parameter `row` untuk operasi validate row.
+            schema_fields (Any): Parameter `schema_fields` untuk operasi validate row.
+            mapping_fields (Any): Parameter `mapping_fields` untuk operasi validate row.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._validate_row(row=..., schema_fields=..., mapping_fields=...)
+        """
+
         for field in schema_fields:
             field_key = field.get('key')
             field_type = field.get('type')
@@ -1221,6 +2043,19 @@ class DataRegistryImportValidationService:
         )
 
     def _resolve_identity_candidate(self, payload, candidate_keys):
+        """Helper internal untuk resolve identity candidate.
+
+        Args:
+            payload (Any): Payload bisnis yang akan divalidasi atau dipersist.
+            candidate_keys (Any): Parameter `candidate_keys` untuk operasi resolve identity candidate.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._resolve_identity_candidate(payload=..., candidate_keys=...)
+        """
+
         payload = payload or {}
         for key in candidate_keys:
             value = payload.get(key)
@@ -1230,6 +2065,19 @@ class DataRegistryImportValidationService:
         return None
 
     def _normalize_date(self, value, field_mapping):
+        """Helper internal untuk normalize date.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi normalize date.
+            field_mapping (Any): Parameter `field_mapping` untuk operasi normalize date.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_date(value=..., field_mapping=...)
+        """
+
         accepted_formats = field_mapping.get('accepted_input_formats') or ['%Y-%m-%d']
         target_format = field_mapping.get('target_format') or '%Y-%m-%d'
         value_text = str(value).strip()
@@ -1243,9 +2091,35 @@ class DataRegistryImportValidationService:
         return None
 
     def _is_blank(self, value):
+        """Helper internal untuk is blank.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi is blank.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._is_blank(value=...)
+        """
+
         return value is None or (isinstance(value, str) and value.strip() == '')
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
+        """Helper internal untuk apply actor audit.
+
+        Args:
+            obj (Any): Parameter `obj` untuk operasi apply actor audit.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            action (Any): Parameter `action` untuk operasi apply actor audit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
+        """
+
         if not actor:
             return obj
 
@@ -1260,7 +2134,30 @@ class DataRegistryImportValidationService:
 
 
 class DataRegistryQueryService:
+    """Service query resource registry untuk option list, lookup, tree, dan geo feature collection.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = DataRegistryQueryService()
+    """
+
     def __init__(self, registry_repository=None, version_repository=None, record_repository=None):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            registry_repository (Any): Parameter `registry_repository` untuk operasi init.
+            version_repository (Any): Parameter `version_repository` untuk operasi init.
+            record_repository (Any): Parameter `record_repository` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = DataRegistryQueryService()
+        """
+
         self.registry_repository = registry_repository or DataRegistryRepository()
         self.version_repository = version_repository or DataRegistryVersionRepository()
         self.record_repository = record_repository or DataRegistryRecordRepository()
@@ -1275,6 +2172,24 @@ class DataRegistryQueryService:
         q=None,
         limit=100,
     ):
+        """Menyediakan daftar option registry untuk komponen select/autocomplete.
+
+        Args:
+            registry_slug (Any): Parameter `registry_slug` untuk operasi get option list.
+            version_number (Any): Parameter `version_number` untuk operasi get option list.
+            admin_level (Any): Parameter `admin_level` untuk operasi get option list.
+            parent_record_id (Any): Parameter `parent_record_id` untuk operasi get option list.
+            parent_code (Any): Parameter `parent_code` untuk operasi get option list.
+            q (Any): Parameter `q` untuk operasi get option list.
+            limit (Any): Parameter `limit` untuk operasi get option list.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_option_list(registry_slug=..., version_number=..., admin_level=...)
+        """
+
         registry, version = self._resolve_registry_and_version(registry_slug, version_number=version_number)
         resolved_parent_id = self._resolve_parent_record_id(version.id, parent_record_id, parent_code)
         records = self.record_repository.list_options(
@@ -1291,6 +2206,21 @@ class DataRegistryQueryService:
         }
 
     def get_lookup(self, registry_slug, record_key=None, record_code=None, version_number=None):
+        """Mencari satu record registry berdasarkan id logis atau code.
+
+        Args:
+            registry_slug (Any): Parameter `registry_slug` untuk operasi get lookup.
+            record_key (Any): Parameter `record_key` untuk operasi get lookup.
+            record_code (Any): Parameter `record_code` untuk operasi get lookup.
+            version_number (Any): Parameter `version_number` untuk operasi get lookup.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_lookup(registry_slug=..., record_key=..., record_code=...)
+        """
+
         if not record_key and not record_code:
             raise ValueError('record_key atau record_code wajib diisi.')
 
@@ -1311,6 +2241,22 @@ class DataRegistryQueryService:
         }
 
     def get_children(self, registry_slug, parent_record_id=None, parent_code=None, admin_level=None, version_number=None):
+        """Mengambil anak record dari parent tertentu di registry hierarkis.
+
+        Args:
+            registry_slug (Any): Parameter `registry_slug` untuk operasi get children.
+            parent_record_id (Any): Parameter `parent_record_id` untuk operasi get children.
+            parent_code (Any): Parameter `parent_code` untuk operasi get children.
+            admin_level (Any): Parameter `admin_level` untuk operasi get children.
+            version_number (Any): Parameter `version_number` untuk operasi get children.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_children(registry_slug=..., parent_record_id=..., parent_code=...)
+        """
+
         if parent_record_id is None and not parent_code:
             raise ValueError('parent_record_id atau parent_code wajib diisi.')
 
@@ -1327,6 +2273,21 @@ class DataRegistryQueryService:
         }
 
     def get_tree(self, registry_slug, root_level='province', max_depth=4, version_number=None):
+        """Membangun tree registry bertingkat hingga kedalaman tertentu.
+
+        Args:
+            registry_slug (Any): Parameter `registry_slug` untuk operasi get tree.
+            root_level (Any): Parameter `root_level` untuk operasi get tree.
+            max_depth (Any): Parameter `max_depth` untuk operasi get tree.
+            version_number (Any): Parameter `version_number` untuk operasi get tree.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_tree(registry_slug=..., root_level=..., max_depth=...)
+        """
+
         if max_depth < 1:
             raise ValueError('max_depth minimal 1.')
 
@@ -1339,6 +2300,21 @@ class DataRegistryQueryService:
         }
 
     def get_feature_collection(self, registry_slug, admin_level=None, parent_code=None, version_number=None):
+        """Menyusun GeoJSON feature collection dari record registry geospasial.
+
+        Args:
+            registry_slug (Any): Parameter `registry_slug` untuk operasi get feature collection.
+            admin_level (Any): Parameter `admin_level` untuk operasi get feature collection.
+            parent_code (Any): Parameter `parent_code` untuk operasi get feature collection.
+            version_number (Any): Parameter `version_number` untuk operasi get feature collection.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service.get_feature_collection(registry_slug=..., admin_level=..., parent_code=...)
+        """
+
         registry, version = self._resolve_registry_and_version(registry_slug, version_number=version_number)
         records = self._active_records(
             self.record_repository.list_feature_collection_records(version.id, admin_level=admin_level)
@@ -1369,6 +2345,19 @@ class DataRegistryQueryService:
         }
 
     def _resolve_registry_and_version(self, registry_slug, version_number=None):
+        """Helper internal untuk resolve registry and version.
+
+        Args:
+            registry_slug (Any): Parameter `registry_slug` untuk operasi resolve registry and version.
+            version_number (Any): Parameter `version_number` untuk operasi resolve registry and version.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._resolve_registry_and_version(registry_slug=..., version_number=...)
+        """
+
         registry = self.registry_repository.get_active_by_slug(registry_slug)
         if not registry:
             raise ValueError('Registry tidak ditemukan.')
@@ -1388,6 +2377,20 @@ class DataRegistryQueryService:
         return registry, version
 
     def _resolve_parent_record_id(self, registry_version_id, parent_record_id=None, parent_code=None):
+        """Helper internal untuk resolve parent record id.
+
+        Args:
+            registry_version_id (Any): Parameter `registry_version_id` untuk operasi resolve parent record id.
+            parent_record_id (Any): Parameter `parent_record_id` untuk operasi resolve parent record id.
+            parent_code (Any): Parameter `parent_code` untuk operasi resolve parent record id.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._resolve_parent_record_id(registry_version_id=..., parent_record_id=..., parent_code=...)
+        """
+
         if parent_record_id is not None:
             return parent_record_id
         if not parent_code:
@@ -1399,9 +2402,33 @@ class DataRegistryQueryService:
         return parent_record.id
 
     def _active_records(self, records):
+        """Helper internal untuk active records.
+
+        Args:
+            records (Any): Parameter `records` untuk operasi active records.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._active_records(records=...)
+        """
+
         return [record for record in records if getattr(record, 'is_active', True)]
 
     def _serialize_option_item(self, record):
+        """Helper internal untuk serialize option item.
+
+        Args:
+            record (Any): Parameter `record` untuk operasi serialize option item.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._serialize_option_item(record=...)
+        """
+
         return {
             'label': getattr(record, 'display_label', None) or record.label,
             'value': record.record_code,
@@ -1414,6 +2441,18 @@ class DataRegistryQueryService:
         }
 
     def _serialize_record(self, record):
+        """Helper internal untuk serialize record.
+
+        Args:
+            record (Any): Parameter `record` untuk operasi serialize record.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._serialize_record(record=...)
+        """
+
         return {
             'id': record.id,
             'record_key': record.record_key,
@@ -1427,11 +2466,39 @@ class DataRegistryQueryService:
         }
 
     def _serialize_tree_node(self, record, children=None):
+        """Helper internal untuk serialize tree node.
+
+        Args:
+            record (Any): Parameter `record` untuk operasi serialize tree node.
+            children (Any): Parameter `children` untuk operasi serialize tree node.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._serialize_tree_node(record=..., children=...)
+        """
+
         node = self._serialize_record(record)
         node['children'] = children or []
         return node
 
     def _build_tree_node(self, registry_version_id, record, current_depth, max_depth):
+        """Helper internal untuk build tree node.
+
+        Args:
+            registry_version_id (Any): Parameter `registry_version_id` untuk operasi build tree node.
+            record (Any): Parameter `record` untuk operasi build tree node.
+            current_depth (Any): Parameter `current_depth` untuk operasi build tree node.
+            max_depth (Any): Parameter `max_depth` untuk operasi build tree node.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_tree_node(registry_version_id=..., record=..., current_depth=...)
+        """
+
         if current_depth >= max_depth:
             return self._serialize_tree_node(record, children=[])
 
@@ -1445,6 +2512,18 @@ class DataRegistryQueryService:
         )
 
     def _serialize_feature_properties(self, record):
+        """Helper internal untuk serialize feature properties.
+
+        Args:
+            record (Any): Parameter `record` untuk operasi serialize feature properties.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._serialize_feature_properties(record=...)
+        """
+
         return {
             'id': record.id,
             'record_key': record.record_key,
@@ -1456,6 +2535,18 @@ class DataRegistryQueryService:
         }
 
     def _build_feature_geometry(self, record):
+        """Helper internal untuk build feature geometry.
+
+        Args:
+            record (Any): Parameter `record` untuk operasi build feature geometry.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_feature_geometry(record=...)
+        """
+
         geometry_json = getattr(record, 'geometry_json', None)
         if geometry_json:
             return geometry_json
@@ -1469,6 +2560,18 @@ class DataRegistryQueryService:
         return None
 
     def _serialize_centroid(self, record):
+        """Helper internal untuk serialize centroid.
+
+        Args:
+            record (Any): Parameter `record` untuk operasi serialize centroid.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._serialize_centroid(record=...)
+        """
+
         lat = self._to_float(getattr(record, 'centroid_lat', None))
         lng = self._to_float(getattr(record, 'centroid_lng', None))
         if lat is None or lng is None:
@@ -1479,6 +2582,18 @@ class DataRegistryQueryService:
         }
 
     def _to_float(self, value):
+        """Helper internal untuk to float.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi to float.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._to_float(value=...)
+        """
+
         if value is None:
             return None
         if isinstance(value, Decimal):
@@ -1487,6 +2602,15 @@ class DataRegistryQueryService:
 
 
 class DataRegistryMaterializationService:
+    """Service materialisasi batch tervalidasi menjadi record registry final.
+
+    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
+    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+
+    Example:
+        >>> service = DataRegistryMaterializationService()
+    """
+
     LEVEL_META = {
         'province': {
             'admin_level_code': 'PROV',
@@ -1514,6 +2638,22 @@ class DataRegistryMaterializationService:
         batch_repository=None,
         row_repository=None,
     ):
+        """Inisialisasi class beserta dependency yang diperlukan.
+
+        Args:
+            registry_repository (Any): Parameter `registry_repository` untuk operasi init.
+            version_repository (Any): Parameter `version_repository` untuk operasi init.
+            record_repository (Any): Parameter `record_repository` untuk operasi init.
+            batch_repository (Any): Parameter `batch_repository` untuk operasi init.
+            row_repository (Any): Parameter `row_repository` untuk operasi init.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service = DataRegistryMaterializationService()
+        """
+
         self.registry_repository = registry_repository or DataRegistryRepository()
         self.version_repository = version_repository or DataRegistryVersionRepository()
         self.record_repository = record_repository or DataRegistryRecordRepository()
@@ -1521,6 +2661,19 @@ class DataRegistryMaterializationService:
         self.row_repository = row_repository or DataRegistryImportRowRepository()
 
     def materialize_import_batch(self, batch_id, actor=None):
+        """Mematerialisasi row batch tervalidasi menjadi record registry permanen.
+
+        Args:
+            batch_id (Any): Primary key internal batch impor target.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.materialize_import_batch(batch_id=..., actor=...)
+        """
+
         batch = self.batch_repository.get_by_id(batch_id)
         if not batch:
             raise ValueError('Import batch tidak ditemukan.')
@@ -1583,6 +2736,19 @@ class DataRegistryMaterializationService:
         }
 
     def _resolve_materialization_contract(self, batch, version):
+        """Helper internal untuk resolve materialization contract.
+
+        Args:
+            batch (Any): Parameter `batch` untuk operasi resolve materialization contract.
+            version (Any): Parameter `version` untuk operasi resolve materialization contract.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._resolve_materialization_contract(batch=..., version=...)
+        """
+
         mapping_snapshot = getattr(batch, 'mapping_snapshot', None) or {}
         if mapping_snapshot.get('materialization_contract'):
             return mapping_snapshot['materialization_contract']
@@ -1592,6 +2758,18 @@ class DataRegistryMaterializationService:
         return 'generic_v1'
 
     def _build_source_rows_for_materialization(self, rows, *, batch, version, materialization_contract):
+        """Helper internal untuk build source rows for materialization.
+
+        Args:
+            rows (Any): Parameter `rows` untuk operasi build source rows for materialization.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_source_rows_for_materialization(rows=...)
+        """
+
         if materialization_contract == 'wilayah_v1':
             return self._build_wilayah_source_rows(rows, batch=batch)
 
@@ -1606,6 +2784,18 @@ class DataRegistryMaterializationService:
         ]
 
     def _build_wilayah_source_rows(self, rows, *, batch):
+        """Helper internal untuk build wilayah source rows.
+
+        Args:
+            rows (Any): Parameter `rows` untuk operasi build wilayah source rows.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_wilayah_source_rows(rows=...)
+        """
+
         mapping_fields = ((getattr(batch, 'mapping_snapshot', None) or {}).get('fields')) or {}
         canonical_fields = [
             'import_row_id',
@@ -1672,6 +2862,18 @@ class DataRegistryMaterializationService:
         return source_rows
 
     def _coalesce_blank(self, value):
+        """Helper internal untuk coalesce blank.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi coalesce blank.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._coalesce_blank(value=...)
+        """
+
         if value is None:
             return None
         if isinstance(value, str):
@@ -1680,6 +2882,20 @@ class DataRegistryMaterializationService:
         return value
 
     def materialize_generic_rows(self, registry_version_id, source_rows, actor=None):
+        """Mematerialisasi row generic registry ke record final.
+
+        Args:
+            registry_version_id (Any): Parameter `registry_version_id` untuk operasi materialize generic rows.
+            source_rows (Any): Parameter `source_rows` untuk operasi materialize generic rows.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.materialize_generic_rows(registry_version_id=..., source_rows=..., actor=...)
+        """
+
         version = self.version_repository.get_by_id(registry_version_id)
         if not version:
             raise ValueError('Registry version tidak ditemukan.')
@@ -1769,6 +2985,18 @@ class DataRegistryMaterializationService:
         }
 
     def _resolve_generic_record_identity(self, payload):
+        """Helper internal untuk resolve generic record identity.
+
+        Args:
+            payload (Any): Payload bisnis yang akan divalidasi atau dipersist.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._resolve_generic_record_identity(payload=...)
+        """
+
         payload = payload or {}
         record_code = self._first_non_blank(payload, ['record_code', 'kode', 'code', 'value'])
         if not record_code:
@@ -1783,6 +3011,18 @@ class DataRegistryMaterializationService:
         }
 
     def _resolve_generic_is_active(self, payload):
+        """Helper internal untuk resolve generic is active.
+
+        Args:
+            payload (Any): Payload bisnis yang akan divalidasi atau dipersist.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._resolve_generic_is_active(payload=...)
+        """
+
         payload = payload or {}
         raw_status = self._first_non_blank(payload, ['is_active', 'active', 'status_aktif', 'aktif', 'status'])
         if raw_status is None:
@@ -1793,6 +3033,19 @@ class DataRegistryMaterializationService:
         return True
 
     def _first_non_blank(self, payload, keys):
+        """Helper internal untuk first non blank.
+
+        Args:
+            payload (Any): Payload bisnis yang akan divalidasi atau dipersist.
+            keys (Any): Parameter `keys` untuk operasi first non blank.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._first_non_blank(payload=..., keys=...)
+        """
+
         for key in keys:
             value = payload.get(key)
             normalized = self._normalize_text(value)
@@ -1801,6 +3054,20 @@ class DataRegistryMaterializationService:
         return None
 
     def materialize_wilayah_rows(self, registry_version_id, source_rows, actor=None):
+        """Mematerialisasi row registry wilayah hierarkis ke record final.
+
+        Args:
+            registry_version_id (Any): Parameter `registry_version_id` untuk operasi materialize wilayah rows.
+            source_rows (Any): Parameter `source_rows` untuk operasi materialize wilayah rows.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
+
+        Example:
+            >>> service.materialize_wilayah_rows(registry_version_id=..., source_rows=..., actor=...)
+        """
+
         version = self.version_repository.get_by_id(registry_version_id)
         if not version:
             raise ValueError('Registry version tidak ditemukan.')
@@ -1908,6 +3175,15 @@ class DataRegistryMaterializationService:
         duplicate_external_codes,
         actor,
     ):
+        """Helper internal untuk get or create record.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._get_or_create_record()
+        """
+
         record_code = row['codes']['kemendagri'][level]
         cache_key = (level, record_code)
         if cache_key in records_by_key:
@@ -1959,6 +3235,18 @@ class DataRegistryMaterializationService:
         return saved_record
 
     def _collect_duplicate_external_codes(self, source_rows):
+        """Helper internal untuk collect duplicate external codes.
+
+        Args:
+            source_rows (Any): Parameter `source_rows` untuk operasi collect duplicate external codes.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._collect_duplicate_external_codes(source_rows=...)
+        """
+
         mappings = {}
         for raw_row in source_rows:
             normalized = self._normalize_source_row(raw_row)
@@ -1970,6 +3258,20 @@ class DataRegistryMaterializationService:
         return {key for key, record_codes in mappings.items() if len(record_codes) > 1}
 
     def _resolve_external_code(self, level, row, duplicate_external_codes):
+        """Helper internal untuk resolve external code.
+
+        Args:
+            level (Any): Parameter `level` untuk operasi resolve external code.
+            row (Any): Parameter `row` untuk operasi resolve external code.
+            duplicate_external_codes (Any): Parameter `duplicate_external_codes` untuk operasi resolve external code.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._resolve_external_code(level=..., row=..., duplicate_external_codes=...)
+        """
+
         external_code = row['codes']['bps'][level]
         if not external_code:
             return None
@@ -1978,6 +3280,18 @@ class DataRegistryMaterializationService:
         return external_code
 
     def _normalize_source_row(self, row):
+        """Helper internal untuk normalize source row.
+
+        Args:
+            row (Any): Parameter `row` untuk operasi normalize source row.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_source_row(row=...)
+        """
+
         raw = dict(row or {})
         codes = {
             'kemendagri': {
@@ -2019,6 +3333,18 @@ class DataRegistryMaterializationService:
         }
 
     def _normalize_code(self, value):
+        """Helper internal untuk normalize code.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi normalize code.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_code(value=...)
+        """
+
         text = self._normalize_text(value)
         if text is None:
             return None
@@ -2027,6 +3353,18 @@ class DataRegistryMaterializationService:
         return text
 
     def _normalize_text(self, value):
+        """Helper internal untuk normalize text.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi normalize text.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_text(value=...)
+        """
+
         if value is None:
             return None
         text = str(value).strip()
@@ -2035,18 +3373,54 @@ class DataRegistryMaterializationService:
         return re.sub(r'\s+', ' ', text)
 
     def _normalize_label(self, value):
+        """Helper internal untuk normalize label.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi normalize label.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._normalize_label(value=...)
+        """
+
         text = self._normalize_text(value)
         if text is None:
             return None
         return self._humanize_label(text).lower()
 
     def _humanize_label(self, value):
+        """Helper internal untuk humanize label.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi humanize label.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._humanize_label(value=...)
+        """
+
         text = self._normalize_text(value)
         if text is None:
             return None
         return ' '.join(part.capitalize() for part in text.lower().split(' '))
 
     def _infer_city_regency_kind(self, row):
+        """Helper internal untuk infer city regency kind.
+
+        Args:
+            row (Any): Parameter `row` untuk operasi infer city regency kind.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._infer_city_regency_kind(row=...)
+        """
+
         label = row['labels']['kemendagri']['city_regency']
         normalized = (label or '').lower()
         if normalized.startswith('kota'):
@@ -2054,6 +3428,18 @@ class DataRegistryMaterializationService:
         return 'kabupaten'
 
     def _infer_village_adm_status(self, village_code):
+        """Helper internal untuk infer village adm status.
+
+        Args:
+            village_code (Any): Parameter `village_code` untuk operasi infer village adm status.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._infer_village_adm_status(village_code=...)
+        """
+
         if not village_code:
             return None
         tail = village_code.split('.')[-1]
@@ -2064,6 +3450,18 @@ class DataRegistryMaterializationService:
         return None
 
     def _build_row_hash(self, row):
+        """Helper internal untuk build row hash.
+
+        Args:
+            row (Any): Parameter `row` untuk operasi build row hash.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_row_hash(row=...)
+        """
+
         payload = {
             'codes': row['codes'],
             'labels': row['labels'],
@@ -2077,16 +3475,54 @@ class DataRegistryMaterializationService:
         return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
 
     def _build_freshness_signature(self, row_hashes):
+        """Helper internal untuk build freshness signature.
+
+        Args:
+            row_hashes (Any): Parameter `row_hashes` untuk operasi build freshness signature.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._build_freshness_signature(row_hashes=...)
+        """
+
         encoded = json.dumps(sorted(row_hashes), ensure_ascii=False)
         return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
 
     def _to_decimal(self, value):
+        """Helper internal untuk to decimal.
+
+        Args:
+            value (Any): Parameter `value` untuk operasi to decimal.
+
+        Returns:
+            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
+
+        Example:
+            >>> service._to_decimal(value=...)
+        """
+
         text = self._normalize_text(value)
         if text is None:
             return None
         return Decimal(text)
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
+        """Helper internal untuk apply actor audit.
+
+        Args:
+            obj (Any): Parameter `obj` untuk operasi apply actor audit.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+            action (Any): Parameter `action` untuk operasi apply actor audit.
+
+        Returns:
+            Any: Nilai hasil eksekusi fungsi service.
+
+        Example:
+            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
+        """
+
         if not actor:
             return obj
 

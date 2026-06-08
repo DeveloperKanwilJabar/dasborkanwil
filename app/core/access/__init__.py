@@ -1,3 +1,9 @@
+"""Facade helper akses dan konteks actor.
+
+Modul ini mengekspor fungsi-fungsi yang paling sering dipakai service/domain
+agar caller tidak perlu mengingat path file access yang lebih detail.
+"""
+
 from .actor_context import (
     build_actor_context,
     build_scope_settings,
