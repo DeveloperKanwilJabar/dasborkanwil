@@ -44,8 +44,9 @@
     .analytics-chart-box {
         min-height: 260px;
     }
-    .analytics-chart-box .apexcharts-canvas {
-        margin: 0 auto;
+    .analytics-chart-box .js-plotly-plot,
+    .analytics-chart-box .plot-container {
+        width: 100%;
     }
 </style>
 {% endblock extra_css %}
@@ -207,10 +208,69 @@
                     <div class="card analytics-detail-panel h-100" id="analyticsDatasetDetailCard">
                         <div class="card-header">
                             <h5 class="card-title mb-1">Detail Dataset</h5>
-                            <p class="text-muted mb-0">Ringkasan contract, preview hasil run, dan histori singkat dataset demo yang sedang dipilih.</p>
+                            <p class="text-muted mb-0">Ringkasan contract, preview hasil run, histori singkat, filter chart, dan insight dataset demo yang sedang dipilih.</p>
                         </div>
-                        <div class="card-body" id="analyticsDatasetDetailPanel">
-                            <div class="text-muted">Pilih salah satu dataset untuk melihat contract dan preview hasil run.</div>
+                        <div class="card-body">
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-2">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterReportingYear">Reporting Year</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetFilterReportingYear">
+                                        <option value="">Semua Tahun</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterStatus">Status/Hasil</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetFilterStatus">
+                                        <option value="">Semua Status</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterJenis">Jenis</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetFilterJenis">
+                                        <option value="">Semua Jenis</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterDateStart">Tanggal Mulai</label>
+                                    <input class="form-control form-control-sm" id="analyticsDatasetFilterDateStart" type="date" />
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterDateEnd">Tanggal Selesai</label>
+                                    <input class="form-control form-control-sm" id="analyticsDatasetFilterDateEnd" type="date" />
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small text-muted" for="analyticsDatasetMetricPeriodMode">Metric Periode</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetMetricPeriodMode">
+                                        <option value="daily">Harian</option>
+                                        <option value="weekly">Mingguan</option>
+                                        <option value="monthly">Bulanan</option>
+                                        <option value="quarterly">Triwulan</option>
+                                        <option value="four_monthly">Caturwulan</option>
+                                        <option value="semesterly">Semester</option>
+                                        <option value="yearly">Tahunan</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-9 d-flex align-items-end">
+                                    <div class="d-flex flex-wrap gap-2" id="analyticsDatasetQuickRanges">
+                                        <span class="text-muted small align-self-center">Quick range</span>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="last_7_days">7 Hari Terakhir</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_week">Minggu Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="last_30_days">30 Hari Terakhir</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="last_90_days">90 Hari Terakhir</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_month">Bulan Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_quarter">Triwulan Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_semester">Semester Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_year">Tahun Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="full_range">Semua Range</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="analyticsDatasetInsightPanel" class="analytics-quick-flow-card mb-3">
+                                <div class="text-muted">Insight dataset akan muncul setelah detail dataset dimuat.</div>
+                            </div>
+                            <div id="analyticsDatasetDetailPanel">
+                                <div class="text-muted">Pilih salah satu dataset untuk melihat contract dan preview hasil run.</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -224,6 +284,23 @@
                             <p class="text-muted mb-0">Gambaran awal tabel hasil indikator untuk mempermudah desain UI berikutnya.</p>
                         </div>
                         <div class="card-body">
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-4">
+                                    <label class="form-label small text-muted" for="analyticsResultsFilterReportingYear">Reporting Year</label>
+                                    <select class="form-select form-select-sm" id="analyticsResultsFilterReportingYear">
+                                        <option value="">Semua Tahun</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small text-muted" for="analyticsResultsFilterStatus">Status Result</label>
+                                    <select class="form-select form-select-sm" id="analyticsResultsFilterStatus">
+                                        <option value="">Semua Status</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4 d-flex align-items-end">
+                                    <div class="text-muted small">Klik baris result untuk sinkron ke report, indikator, dan dataset terkait.</div>
+                                </div>
+                            </div>
                             <div class="table-responsive">
                                 <table class="table table-sm align-middle mb-0" id="analyticsResultsTable">
                                     <thead>
@@ -235,11 +312,12 @@
                                             <th>Target</th>
                                             <th>Achievement</th>
                                             <th>Summary</th>
+                                            <th>Aksi</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <tr>
-                                            <td colspan="7" class="text-muted">Memuat data...</td>
+                                            <td colspan="8" class="text-muted">Memuat data...</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -264,7 +342,7 @@ window.analyticsWorkspaceConfig = {{ workspace_config | tojson }};
 {% endblock extra_content %}
 
 {% block extra_js %}
-<script src="{{ url_for('static', filename='libs/apexcharts/dist/apexcharts.min.js') }}"></script>
+<script src="{{ url_for('static', filename='libs/plotly.js-dist-min/plotly.min.js') }}"></script>
 <script src="{{ url_for('static', filename='libs/gridjs/dist/gridjs.umd.js') }}"></script>
-<script src="{{ url_for('static', filename='js/pages/analytics-workspace.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/analytics-workspace.js', v='20260608-calendar-presets-v2') }}"></script>
 {% endblock extra_js %}

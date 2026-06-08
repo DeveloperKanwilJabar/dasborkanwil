@@ -1,13 +1,23 @@
 (function () {
     const config = window.analyticsWorkspaceConfig || {};
     const Grid = window.gridjs && window.gridjs.Grid;
-    const ApexCharts = window.ApexCharts;
+    const Plotly = window.Plotly;
 
     const reportGridContainer = document.getElementById('analyticsReportsGrid');
     const indicatorGridContainer = document.getElementById('analyticsIndicatorsGrid');
     const resultsTableBody = document.querySelector('#analyticsResultsTable tbody');
+    const resultsFilterReportingYear = document.getElementById('analyticsResultsFilterReportingYear');
+    const resultsFilterStatus = document.getElementById('analyticsResultsFilterStatus');
     const datasetRunsList = document.getElementById('analyticsDatasetRunsList');
     const datasetDetailPanel = document.getElementById('analyticsDatasetDetailPanel');
+    const datasetFilterReportingYear = document.getElementById('analyticsDatasetFilterReportingYear');
+    const datasetFilterStatus = document.getElementById('analyticsDatasetFilterStatus');
+    const datasetFilterJenis = document.getElementById('analyticsDatasetFilterJenis');
+    const datasetFilterDateStart = document.getElementById('analyticsDatasetFilterDateStart');
+    const datasetFilterDateEnd = document.getElementById('analyticsDatasetFilterDateEnd');
+    const datasetMetricPeriodMode = document.getElementById('analyticsDatasetMetricPeriodMode');
+    const datasetQuickRanges = document.getElementById('analyticsDatasetQuickRanges');
+    const datasetInsightPanel = document.getElementById('analyticsDatasetInsightPanel');
     const reportDetailPanel = document.getElementById('analyticsReportDetailPanel');
     const indicatorDetailPanel = document.getElementById('analyticsIndicatorDetailPanel');
     const indicatorTabNavigation = document.getElementById('indicatorDetailTabNavigation');
@@ -22,8 +32,22 @@
         activeIndicatorTab: 'definition',
         selectedReportId: null,
         selectedIndicatorId: null,
+        selectedIndicatorVersionId: null,
         selectedDatasetId: null,
+        currentDatasetDetail: null,
         charts: {},
+        resultFilters: {
+            reportingYear: '',
+            status: '',
+        },
+        datasetFilters: {
+            reportingYear: '',
+            status: '',
+            jenis: '',
+            dateStart: '',
+            dateEnd: '',
+            metricPeriodMode: 'quarterly',
+        },
     };
 
     function escapeHtml(value) {
@@ -109,10 +133,14 @@
     }
 
     function destroyChart(key) {
-        if (state.charts[key]) {
-            state.charts[key].destroy();
-            delete state.charts[key];
+        const chartState = state.charts[key];
+        if (!chartState) {
+            return;
         }
+        if (chartState.library === 'plotly' && Plotly && chartState.element) {
+            Plotly.purge(chartState.element);
+        }
+        delete state.charts[key];
     }
 
     function toChartSeriesMap(value) {
@@ -122,24 +150,593 @@
         return Object.entries(value).map(([label, count]) => ({ label, count: Number(count || 0) }));
     }
 
-    function renderApexChart(key, selector, options) {
+    function mapMetricPeriodModeLabel(mode) {
+        const labels = {
+            daily: 'Harian',
+            weekly: 'Mingguan',
+            monthly: 'Bulanan',
+            quarterly: 'Triwulan',
+            four_monthly: 'Caturwulan',
+            semesterly: 'Semester',
+            yearly: 'Tahunan',
+            fiscal_year: 'Tahun Anggaran',
+        };
+        return labels[mode] || mode || 'Triwulan';
+    }
+
+    function toRomanNumeral(value) {
+        const numerals = {
+            1: 'I',
+            2: 'II',
+            3: 'III',
+            4: 'IV',
+            5: 'V',
+            6: 'VI',
+            7: 'VII',
+            8: 'VIII',
+            9: 'IX',
+            10: 'X',
+            11: 'XI',
+            12: 'XII',
+        };
+        return numerals[value] || String(value || '-');
+    }
+
+    function getIndonesianMonthName(monthNumber) {
+        const monthNames = [
+            'Januari',
+            'Februari',
+            'Maret',
+            'April',
+            'Mei',
+            'Juni',
+            'Juli',
+            'Agustus',
+            'September',
+            'Oktober',
+            'November',
+            'Desember',
+        ];
+        return monthNames[Math.max(0, Number(monthNumber || 1) - 1)] || '-';
+    }
+
+    function padNumber(value) {
+        return String(value).padStart(2, '0');
+    }
+
+    function formatDateInputValue(date) {
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+            return '';
+        }
+        return `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}`;
+    }
+
+    function resolveRowDate(row) {
+        const rawValue = row && row.tanggal ? String(row.tanggal) : '';
+        if (!rawValue) {
+            return null;
+        }
+        const parsed = new Date(`${rawValue}T00:00:00`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    function resolveDateRange(summaryJson) {
+        const rowSnapshots = Array.isArray(summaryJson && summaryJson.row_snapshots) ? summaryJson.row_snapshots : [];
+        const dates = rowSnapshots
+            .map((row) => resolveRowDate(row))
+            .filter(Boolean)
+            .sort((left, right) => left.getTime() - right.getTime());
+        return {
+            min: dates[0] || null,
+            max: dates[dates.length - 1] || null,
+        };
+    }
+
+    function clampDateToRange(date, range, side = 'both') {
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+            return null;
+        }
+        let nextDate = new Date(date);
+        if ((side === 'both' || side === 'min') && range && range.min && nextDate.getTime() < range.min.getTime()) {
+            nextDate = new Date(range.min);
+        }
+        if ((side === 'both' || side === 'max') && range && range.max && nextDate.getTime() > range.max.getTime()) {
+            nextDate = new Date(range.max);
+        }
+        return nextDate;
+    }
+
+    function resolvePresetAnchorDate(summaryJson, presetKey) {
+        const range = resolveDateRange(summaryJson);
+        if (presetKey === 'full_range') {
+            return range.max ? new Date(range.max) : null;
+        }
+        const calendarPresets = new Set([
+            'last_7_days',
+            'last_30_days',
+            'last_90_days',
+            'current_week',
+            'current_month',
+            'current_quarter',
+            'current_semester',
+            'current_year',
+        ]);
+        if (calendarPresets.has(presetKey)) {
+            return new Date();
+        }
+        return range.max ? new Date(range.max) : null;
+    }
+
+    function getIsoWeekInfo(date) {
+        const workingDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+        workingDate.setUTCDate(workingDate.getUTCDate() + 4 - (workingDate.getUTCDay() || 7));
+        const yearStart = new Date(Date.UTC(workingDate.getUTCFullYear(), 0, 1));
+        const week = Math.ceil((((workingDate - yearStart) / 86400000) + 1) / 7);
+        return {
+            year: workingDate.getUTCFullYear(),
+            week,
+        };
+    }
+
+    function resolvePresetDateRange(summaryJson, presetKey) {
+        const range = resolveDateRange(summaryJson);
+        const anchorDate = resolvePresetAnchorDate(summaryJson, presetKey);
+        if (!anchorDate) {
+            return { start: '', end: '' };
+        }
+        if (presetKey === 'full_range') {
+            return {
+                start: formatDateInputValue(range.min),
+                end: formatDateInputValue(range.max),
+            };
+        }
+        const end = new Date(anchorDate);
+        const start = new Date(anchorDate);
+        if (presetKey === 'last_7_days') {
+            start.setDate(start.getDate() - 6);
+        } else if (presetKey === 'last_30_days') {
+            start.setDate(start.getDate() - 29);
+        } else if (presetKey === 'last_90_days') {
+            start.setDate(start.getDate() - 89);
+        } else if (presetKey === 'current_week') {
+            const dayOfWeek = start.getDay();
+            const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+            start.setDate(start.getDate() + diffToMonday);
+        } else if (presetKey === 'current_month') {
+            start.setDate(1);
+        } else if (presetKey === 'current_quarter') {
+            const quarterStartMonth = Math.floor(end.getMonth() / 3) * 3;
+            start.setMonth(quarterStartMonth, 1);
+        } else if (presetKey === 'current_semester') {
+            const semesterStartMonth = end.getMonth() < 6 ? 0 : 6;
+            start.setMonth(semesterStartMonth, 1);
+        } else if (presetKey === 'current_year') {
+            start.setMonth(0, 1);
+        } else {
+            return { start: '', end: '' };
+        }
+        const normalizedStart = clampDateToRange(start, range, 'none') || start;
+        const normalizedEnd = clampDateToRange(end, range, 'none') || end;
+        return {
+            start: formatDateInputValue(normalizedStart),
+            end: formatDateInputValue(normalizedEnd),
+        };
+    }
+
+    function applyQuickDatePreset(summaryJson, presetKey) {
+        const range = resolvePresetDateRange(summaryJson, presetKey);
+        state.datasetFilters = {
+            ...state.datasetFilters,
+            dateStart: range.start,
+            dateEnd: range.end,
+        };
+        if (datasetFilterDateStart) {
+            datasetFilterDateStart.value = range.start;
+        }
+        if (datasetFilterDateEnd) {
+            datasetFilterDateEnd.value = range.end;
+        }
+    }
+
+    function resolvePeriodLabel(row, metricPeriodMode) {
+        const rowDate = resolveRowDate(row);
+        if (rowDate) {
+            const year = rowDate.getFullYear();
+            const month = rowDate.getMonth() + 1;
+            const day = rowDate.getDate();
+            if (metricPeriodMode === 'daily') {
+                return `${day} ${getIndonesianMonthName(month)} ${year}`;
+            }
+            if (metricPeriodMode === 'weekly') {
+                const weekInfo = getIsoWeekInfo(rowDate);
+                return `Minggu ${weekInfo.week} ${weekInfo.year}`;
+            }
+            if (metricPeriodMode === 'monthly') {
+                return `${getIndonesianMonthName(month)} ${year}`;
+            }
+            if (metricPeriodMode === 'quarterly') {
+                return `Triwulan ${toRomanNumeral(Math.ceil(month / 3))} ${year}`;
+            }
+            if (metricPeriodMode === 'four_monthly') {
+                return `Caturwulan ${toRomanNumeral(Math.ceil(month / 4))} ${year}`;
+            }
+            if (metricPeriodMode === 'semesterly') {
+                return `Semester ${toRomanNumeral(Math.ceil(month / 6))} ${year}`;
+            }
+            if (metricPeriodMode === 'yearly' || metricPeriodMode === 'fiscal_year') {
+                return metricPeriodMode === 'fiscal_year' ? `Tahun Anggaran ${year}` : `Tahun ${year}`;
+            }
+        }
+
+        if (metricPeriodMode === 'weekly' && row.week_number != null) {
+            return `Minggu ${row.week_number} ${row.reporting_year || ''}`.trim();
+        }
+        if (metricPeriodMode === 'monthly' && row.month_number != null) {
+            return `${getIndonesianMonthName(row.month_number)} ${row.reporting_year || ''}`.trim();
+        }
+        if (metricPeriodMode === 'quarterly' && row.quarter_number != null) {
+            return `Triwulan ${toRomanNumeral(row.quarter_number)} ${row.reporting_year || ''}`.trim();
+        }
+        if (metricPeriodMode === 'four_monthly' && row.four_month_number != null) {
+            return `Caturwulan ${toRomanNumeral(row.four_month_number)} ${row.reporting_year || ''}`.trim();
+        }
+        if (metricPeriodMode === 'semesterly' && row.semester_number != null) {
+            return `Semester ${toRomanNumeral(row.semester_number)} ${row.reporting_year || ''}`.trim();
+        }
+        if ((metricPeriodMode === 'yearly' || metricPeriodMode === 'fiscal_year') && row.reporting_year != null) {
+            return metricPeriodMode === 'fiscal_year' ? `Tahun Anggaran ${row.reporting_year}` : `Tahun ${row.reporting_year}`;
+        }
+
+        const fallbackKeys = ['quarter_label', 'semester_label', 'month_label', 'week_label', 'day_label', 'year_label'];
+        for (const key of fallbackKeys) {
+            if (row[key]) {
+                return row[key];
+            }
+        }
+        return '-';
+    }
+
+    function resolvePeriodNumber(row, metricPeriodMode) {
+        const numericKeyMap = {
+            daily: 'day_number',
+            weekly: 'week_number',
+            monthly: 'month_number',
+            quarterly: 'quarter_number',
+            four_monthly: 'four_month_number',
+            semesterly: 'semester_number',
+            yearly: 'year_number',
+            fiscal_year: 'fiscal_year_number',
+        };
+        if (metricPeriodMode === 'yearly' || metricPeriodMode === 'fiscal_year') {
+            return Number(row.reporting_year || row.year_number || 1);
+        }
+        const primaryKey = numericKeyMap[metricPeriodMode];
+        const fallbackKeys = ['quarter_number', 'semester_number', 'month_number', 'week_number', 'day_number'];
+        if (primaryKey && row[primaryKey] != null) {
+            return Number(row[primaryKey] || 0);
+        }
+        const rowDate = resolveRowDate(row);
+        if (rowDate) {
+            const month = rowDate.getMonth() + 1;
+            if (metricPeriodMode === 'daily') {
+                return Number(formatDateInputValue(rowDate).replaceAll('-', ''));
+            }
+            if (metricPeriodMode === 'weekly') {
+                const weekInfo = getIsoWeekInfo(rowDate);
+                return Number(`${weekInfo.year}${padNumber(weekInfo.week)}`);
+            }
+            if (metricPeriodMode === 'monthly') {
+                return Number(`${rowDate.getFullYear()}${padNumber(month)}`);
+            }
+            if (metricPeriodMode === 'four_monthly') {
+                return Number(`${rowDate.getFullYear()}${Math.ceil(month / 4)}`);
+            }
+        }
+        for (const key of fallbackKeys) {
+            if (row[key] != null) {
+                return Number(row[key] || 0);
+            }
+        }
+        return 0;
+    }
+
+    function renderPlotlyChart(key, selector, data, layout, configOverrides = {}) {
         destroyChart(key);
         const el = document.querySelector(selector);
         if (!el) {
             return;
         }
-        if (!ApexCharts) {
-            el.innerHTML = '<div class="text-muted">Library chart belum tersedia.</div>';
+        if (!Plotly) {
+            el.innerHTML = '<div class="text-muted">Library Plotly belum tersedia.</div>';
             return;
         }
-        const chart = new ApexCharts(el, options);
-        chart.render();
-        state.charts[key] = chart;
+        const hasData = Array.isArray(data) && data.some((trace) => Array.isArray(trace.x) ? trace.x.length : Array.isArray(trace.labels) ? trace.labels.length : Array.isArray(trace.values) ? trace.values.length : Array.isArray(trace.r) ? trace.r.length : false);
+        const emptyMessage = layout && layout.emptyMessage ? layout.emptyMessage : 'Belum ada data chart.';
+        if (!hasData) {
+            el.innerHTML = `<div class="text-muted">${escapeHtml(emptyMessage)}</div>`;
+            return;
+        }
+        el.innerHTML = '';
+        const chartConfig = {
+            displayModeBar: false,
+            responsive: true,
+            ...configOverrides,
+        };
+        const { emptyMessage: _unusedEmptyMessage, ...plotLayout } = layout || {};
+        Plotly.newPlot(el, data, {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            margin: { t: 56, r: 24, b: 56, l: 56 },
+            font: { family: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', size: 12 },
+            legend: { orientation: 'h', y: -0.2 },
+            hoverlabel: { namelength: -1 },
+            ...plotLayout,
+        }, chartConfig);
+        state.charts[key] = { library: 'plotly', element: el };
     }
 
     function buildQuickFlowButton(label, attrs) {
         const htmlAttrs = Object.entries(attrs || {}).map(([key, value]) => `${key}="${escapeHtml(value)}"`).join(' ');
         return `<button type="button" class="btn btn-sm btn-soft-primary" ${htmlAttrs}>${escapeHtml(label)}</button>`;
+    }
+
+    function buildSelectOptions(selectElement, values, selectedValue, defaultLabel) {
+        if (!selectElement) {
+            return;
+        }
+        const normalizedSelected = selectedValue == null ? '' : String(selectedValue);
+        const options = [`<option value="">${escapeHtml(defaultLabel || 'Semua')}</option>`].concat((values || []).map((value) => {
+            const normalizedValue = value == null ? '' : String(value);
+            const isSelected = normalizedSelected && normalizedSelected === normalizedValue;
+            return `<option value="${escapeHtml(normalizedValue)}"${isSelected ? ' selected' : ''}>${escapeHtml(normalizedValue)}</option>`;
+        }));
+        selectElement.innerHTML = options.join('');
+        selectElement.value = normalizedSelected;
+    }
+
+    function renderDatasetInsights(filteredDataset) {
+        if (!datasetInsightPanel) {
+            return;
+        }
+        if (!filteredDataset || !filteredDataset.filteredRows.length) {
+            datasetInsightPanel.innerHTML = '<div class="text-muted">Belum ada insight karena filter saat ini tidak menghasilkan data.</div>';
+            return;
+        }
+        const { completion, filteredRows, topDaerah, topJenis, topTimKerja, selectedPeriodMetric, filters } = filteredDataset;
+        const filterBadges = [
+            filters.reportingYear ? `Tahun ${filters.reportingYear}` : 'Semua Tahun',
+            filters.status ? `Status ${filters.status}` : 'Semua Status',
+            filters.jenis ? `Jenis ${filters.jenis}` : 'Semua Jenis',
+            filters.dateStart || filters.dateEnd ? `Tanggal ${filters.dateStart || '...'} s.d. ${filters.dateEnd || '...'}` : 'Semua Tanggal',
+            `Mode ${mapMetricPeriodModeLabel(filters.metricPeriodMode)}`,
+        ];
+        const strongestPeriod = selectedPeriodMetric[0];
+        datasetInsightPanel.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                    <div class="fw-semibold mb-2">Insight Otomatis Filter Saat Ini</div>
+                    <div class="text-muted small mb-2">${filterBadges.map((item) => `<span class="badge bg-secondary-subtle text-secondary me-1 mb-1">${escapeHtml(item)}</span>`).join('')}</div>
+                    <div class="small">${escapeHtml(`Tersaring ${filteredRows.length} baris dengan ${completion.selesai} selesai dan ${completion.dikembalikan} dikembalikan (${completion.achievementPercentage}% selesai).`)}</div>
+                </div>
+                <div class="text-muted small">Insight ini dibangkitkan otomatis dari row_snapshots summary_json demo.</div>
+            </div>
+            <div class="row g-3 mt-1">
+                <div class="col-md-4"><div class="border rounded p-3 bg-white h-100"><div class="text-muted small">Dominasi Daerah</div><div class="fw-semibold">${escapeHtml(topDaerah && topDaerah.length ? `${topDaerah[0].label} (${topDaerah[0].count})` : '-')}</div></div></div>
+                <div class="col-md-4"><div class="border rounded p-3 bg-white h-100"><div class="text-muted small">Jenis Terbanyak</div><div class="fw-semibold">${escapeHtml(topJenis ? `${topJenis.label} (${topJenis.count})` : '-')}</div></div></div>
+                <div class="col-md-4"><div class="border rounded p-3 bg-white h-100"><div class="text-muted small">Tim Kerja Dominan</div><div class="fw-semibold">${escapeHtml(topTimKerja ? `${topTimKerja.label} (${topTimKerja.count})` : '-')}</div></div></div>
+                <div class="col-12"><div class="border rounded p-3 bg-white"><div class="text-muted small">Puncak Periode</div><div class="fw-semibold">${escapeHtml(strongestPeriod ? `${strongestPeriod.label} (${strongestPeriod.total} dokumen, ${strongestPeriod.achievement_percentage}% selesai)` : 'Belum ada data periode.')}</div></div></div>
+            </div>
+        `;
+    }
+
+    function normalizeCounterMap(rows, key, fallbackLabel) {
+        return rows.reduce((acc, row) => {
+            const label = row[key] || fallbackLabel;
+            acc[label] = (acc[label] || 0) + 1;
+            return acc;
+        }, {});
+    }
+
+    function buildTopItems(counterMap, limit = 10) {
+        return Object.entries(counterMap || {})
+            .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+            .slice(0, limit)
+            .map(([label, count]) => ({ label, count }));
+    }
+
+    function applyDatasetFilters(summaryJson) {
+        const rowSnapshots = Array.isArray(summaryJson && summaryJson.row_snapshots) ? summaryJson.row_snapshots : [];
+        const filters = {
+            reportingYear: datasetFilterReportingYear ? datasetFilterReportingYear.value : state.datasetFilters.reportingYear,
+            status: datasetFilterStatus ? datasetFilterStatus.value : state.datasetFilters.status,
+            jenis: datasetFilterJenis ? datasetFilterJenis.value : state.datasetFilters.jenis,
+            dateStart: datasetFilterDateStart ? datasetFilterDateStart.value : state.datasetFilters.dateStart,
+            dateEnd: datasetFilterDateEnd ? datasetFilterDateEnd.value : state.datasetFilters.dateEnd,
+            metricPeriodMode: datasetMetricPeriodMode ? datasetMetricPeriodMode.value : state.datasetFilters.metricPeriodMode,
+        };
+        state.datasetFilters = { ...state.datasetFilters, ...filters };
+        const filteredRows = rowSnapshots.filter((row) => {
+            if (filters.reportingYear && String(row.reporting_year) !== String(filters.reportingYear)) {
+                return false;
+            }
+            if (filters.status && String(row.hasil) !== String(filters.status)) {
+                return false;
+            }
+            if (filters.jenis && String(row.jenis) !== String(filters.jenis)) {
+                return false;
+            }
+            const rowDate = resolveRowDate(row);
+            if (filters.dateStart && rowDate && formatDateInputValue(rowDate) < filters.dateStart) {
+                return false;
+            }
+            if (filters.dateEnd && rowDate && formatDateInputValue(rowDate) > filters.dateEnd) {
+                return false;
+            }
+            return true;
+        });
+
+        const hasilCounts = normalizeCounterMap(filteredRows, 'hasil', 'Tanpa Hasil');
+        const jenisCounts = normalizeCounterMap(filteredRows, 'jenis', 'Tanpa Jenis');
+        const timKerjaCounts = normalizeCounterMap(filteredRows, 'tim_kerja', 'Tanpa Tim');
+        const daerahCounts = normalizeCounterMap(filteredRows, 'daerah', 'Tanpa Daerah');
+        const metodeCounts = normalizeCounterMap(filteredRows, 'metode', '(kosong)');
+        const periodMetricsMap = filteredRows.reduce((acc, row) => {
+            const label = resolvePeriodLabel(row, filters.metricPeriodMode);
+            if (!acc[label]) {
+                acc[label] = {
+                    label,
+                    period_type: filters.metricPeriodMode,
+                    period_number: resolvePeriodNumber(row, filters.metricPeriodMode),
+                    reporting_year: Number(row.reporting_year || 0),
+                    total: 0,
+                    selesai: 0,
+                    dikembalikan: 0,
+                };
+            }
+            acc[label].total += 1;
+            if (row.hasil === 'Selesai') {
+                acc[label].selesai += 1;
+            }
+            if (row.hasil === 'Dikembalikan') {
+                acc[label].dikembalikan += 1;
+            }
+            return acc;
+        }, {});
+        const selectedPeriodMetric = Object.values(periodMetricsMap)
+            .map((item) => ({ ...item, achievement_percentage: item.total ? Number(((item.selesai / item.total) * 100).toFixed(2)) : 0 }))
+            .sort((left, right) => left.reporting_year - right.reporting_year || left.period_number - right.period_number || String(left.label).localeCompare(String(right.label)));
+
+        const completion = {
+            selesai: hasilCounts.Selesai || 0,
+            dikembalikan: hasilCounts.Dikembalikan || 0,
+            achievementPercentage: filteredRows.length ? Number((((hasilCounts.Selesai || 0) / filteredRows.length) * 100).toFixed(2)) : 0,
+        };
+
+        return {
+            filters,
+            filteredRows,
+            hasilCounts,
+            jenisCounts,
+            timKerjaCounts,
+            daerahCounts,
+            metodeCounts,
+            topDaerah: buildTopItems(daerahCounts, 10),
+            topJenis: buildTopItems(jenisCounts, 1)[0] || null,
+            topTimKerja: buildTopItems(timKerjaCounts, 1)[0] || null,
+            completion,
+            selectedPeriodMetric,
+        };
+    }
+
+    function populateDatasetFilterControls(summaryJson) {
+        const dimensions = (summaryJson && summaryJson.filter_dimensions) || {};
+        buildSelectOptions(datasetFilterReportingYear, dimensions.reporting_years || [], state.datasetFilters.reportingYear, 'Semua Tahun');
+        buildSelectOptions(datasetFilterStatus, dimensions.hasil_options || [], state.datasetFilters.status, 'Semua Status');
+        buildSelectOptions(datasetFilterJenis, dimensions.jenis_options || [], state.datasetFilters.jenis, 'Semua Jenis');
+        const dateRange = resolveDateRange(summaryJson);
+        if (datasetFilterDateStart) {
+            datasetFilterDateStart.min = formatDateInputValue(dateRange.min);
+            datasetFilterDateStart.max = formatDateInputValue(dateRange.max);
+            datasetFilterDateStart.value = state.datasetFilters.dateStart || '';
+        }
+        if (datasetFilterDateEnd) {
+            datasetFilterDateEnd.min = formatDateInputValue(dateRange.min);
+            datasetFilterDateEnd.max = formatDateInputValue(dateRange.max);
+            datasetFilterDateEnd.value = state.datasetFilters.dateEnd || '';
+        }
+        if (datasetMetricPeriodMode) {
+            datasetMetricPeriodMode.value = state.datasetFilters.metricPeriodMode || 'quarterly';
+        }
+    }
+
+    function populateResultFilterControls() {
+        buildSelectOptions(resultsFilterReportingYear, Array.from(new Set(state.results.map((item) => item.reporting_year).filter(Boolean))).sort(), state.resultFilters.reportingYear, 'Semua Tahun');
+        buildSelectOptions(resultsFilterStatus, Array.from(new Set(state.results.map((item) => item.completion_status || item.status).filter(Boolean))).sort(), state.resultFilters.status, 'Semua Status');
+    }
+
+    function getFilteredResults() {
+        return state.results.filter((result) => {
+            if (state.resultFilters.reportingYear && String(result.reporting_year) !== String(state.resultFilters.reportingYear)) {
+                return false;
+            }
+            const resultStatus = result.completion_status || result.status;
+            if (state.resultFilters.status && String(resultStatus) !== String(state.resultFilters.status)) {
+                return false;
+            }
+            return true;
+        });
+    }
+
+    async function handleResultRowSelection(indicatorVersionId) {
+        const normalizedIndicatorVersionId = Number(indicatorVersionId) || null;
+        state.selectedIndicatorVersionId = normalizedIndicatorVersionId;
+        renderResultsTable();
+        const indicatorWorkspace = findIndicatorWorkspaceByVersionId(normalizedIndicatorVersionId);
+        const linkedReport = findReportWorkspaceByIndicatorVersionId(normalizedIndicatorVersionId);
+        if (linkedReport && linkedReport.report && linkedReport.report.id) {
+            await loadReportDetail(linkedReport.report.id);
+        }
+        if (indicatorWorkspace && indicatorWorkspace.indicator && indicatorWorkspace.indicator.id) {
+            await loadIndicatorDetail(indicatorWorkspace.indicator.id, {
+                autoOpenDataset: true,
+                selectedIndicatorVersionId: normalizedIndicatorVersionId,
+            });
+            setActiveIndicatorTab('result-history');
+        }
+    }
+
+    function wireResultTableActions() {
+        if (!resultsTableBody) {
+            return;
+        }
+        resultsTableBody.querySelectorAll('[data-result-indicator-version-id]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const indicatorVersionId = button.getAttribute('data-result-indicator-version-id');
+                await handleResultRowSelection(indicatorVersionId);
+            });
+        });
+    }
+
+    function bindAnalyticsFilterControls() {
+        if (resultsFilterReportingYear) {
+            resultsFilterReportingYear.addEventListener('change', () => {
+                state.resultFilters.reportingYear = resultsFilterReportingYear.value;
+                renderResultsTable();
+            });
+        }
+        if (resultsFilterStatus) {
+            resultsFilterStatus.addEventListener('change', () => {
+                state.resultFilters.status = resultsFilterStatus.value;
+                renderResultsTable();
+            });
+        }
+        [datasetFilterReportingYear, datasetFilterStatus, datasetFilterJenis, datasetFilterDateStart, datasetFilterDateEnd, datasetMetricPeriodMode].filter(Boolean).forEach((element) => {
+            element.addEventListener('change', () => {
+                state.datasetFilters.reportingYear = datasetFilterReportingYear ? datasetFilterReportingYear.value : state.datasetFilters.reportingYear;
+                state.datasetFilters.status = datasetFilterStatus ? datasetFilterStatus.value : state.datasetFilters.status;
+                state.datasetFilters.jenis = datasetFilterJenis ? datasetFilterJenis.value : state.datasetFilters.jenis;
+                state.datasetFilters.dateStart = datasetFilterDateStart ? datasetFilterDateStart.value : state.datasetFilters.dateStart;
+                state.datasetFilters.dateEnd = datasetFilterDateEnd ? datasetFilterDateEnd.value : state.datasetFilters.dateEnd;
+                state.datasetFilters.metricPeriodMode = datasetMetricPeriodMode ? datasetMetricPeriodMode.value : state.datasetFilters.metricPeriodMode;
+                if (state.currentDatasetDetail) {
+                    renderDatasetDetail(state.currentDatasetDetail);
+                }
+            });
+        });
+        if (datasetQuickRanges) {
+            datasetQuickRanges.querySelectorAll('[data-quick-range]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    if (!state.currentDatasetDetail) {
+                        return;
+                    }
+                    const latestRun = (state.currentDatasetDetail.runs || [])[0] || null;
+                    applyQuickDatePreset((latestRun && latestRun.summary_json) || {}, button.getAttribute('data-quick-range'));
+                    state.datasetFilters.dateStart = datasetFilterDateStart ? datasetFilterDateStart.value : state.datasetFilters.dateStart;
+                    state.datasetFilters.dateEnd = datasetFilterDateEnd ? datasetFilterDateEnd.value : state.datasetFilters.dateEnd;
+                    renderDatasetDetail(state.currentDatasetDetail);
+                });
+            });
+        }
     }
 
     function renderSummaryCards() {
@@ -579,21 +1176,28 @@
         if (!resultsTableBody) {
             return;
         }
-        if (!state.results.length) {
-            resultsTableBody.innerHTML = '<tr><td colspan="7" class="text-muted">Belum ada result yang bisa ditampilkan.</td></tr>';
+        populateResultFilterControls();
+        const filteredResults = getFilteredResults();
+        if (!filteredResults.length) {
+            resultsTableBody.innerHTML = '<tr><td colspan="8" class="text-muted">Belum ada result yang cocok dengan filter saat ini.</td></tr>';
             return;
         }
-        resultsTableBody.innerHTML = state.results.map((result) => `
-            <tr>
-                <td>${escapeHtml(result.indicator_version_id || '-')}</td>
-                <td>${escapeHtml(result.reporting_year || '-')}</td>
-                <td>${escapeHtml(result.completion_status || result.status || '-')}</td>
-                <td>${escapeHtml(result.measured_value || '-')}</td>
-                <td>${escapeHtml(result.target_value || '-')}</td>
-                <td>${escapeHtml(result.achievement_percentage || '-')}</td>
-                <td>${escapeHtml(result.qualitative_summary || result.constraint_notes || '-')}</td>
-            </tr>
-        `).join('');
+        resultsTableBody.innerHTML = filteredResults.map((result) => {
+            const isSelected = state.selectedIndicatorVersionId && Number(result.indicator_version_id) === Number(state.selectedIndicatorVersionId);
+            return `
+                <tr class="${isSelected ? 'table-primary' : ''}" data-result-indicator-version-id="${escapeHtml(result.indicator_version_id || '')}">
+                    <td>${escapeHtml(result.indicator_version_id || '-')}</td>
+                    <td>${escapeHtml(result.reporting_year || '-')}</td>
+                    <td>${escapeHtml(result.completion_status || result.status || '-')}</td>
+                    <td>${escapeHtml(result.measured_value || '-')}</td>
+                    <td>${escapeHtml(result.target_value || '-')}</td>
+                    <td>${escapeHtml(result.achievement_percentage || '-')}</td>
+                    <td>${escapeHtml(result.qualitative_summary || result.constraint_notes || '-')}</td>
+                    <td><button type="button" class="btn btn-sm ${isSelected ? 'btn-primary' : 'btn-soft-primary'}" data-result-indicator-version-id="${escapeHtml(result.indicator_version_id || '')}">${isSelected ? 'Dipilih' : 'Buka'}</button></td>
+                </tr>
+            `;
+        }).join('');
+        wireResultTableActions();
     }
 
     function renderDatasetRunPreviewTable(rows) {
@@ -631,9 +1235,21 @@
         const runs = data.runs || [];
         const activeVersion = publishedVersion || draftVersion || null;
         const latestRun = runs[0] || null;
-        const completion = latestRun && latestRun.summary_json && latestRun.summary_json.completion;
-        const topDaerah = latestRun && latestRun.summary_json && latestRun.summary_json.top_daerah;
         state.selectedDatasetId = dataset.id || null;
+        state.currentDatasetDetail = data;
+
+        populateDatasetFilterControls(latestRun && latestRun.summary_json);
+        const filteredDataset = applyDatasetFilters(latestRun && latestRun.summary_json);
+        const completion = filteredDataset.completion;
+        const topDaerah = filteredDataset.topDaerah;
+        const filteredPreviewRows = filteredDataset.filteredRows.slice(0, 5).map((row) => ({
+            tanggal: row.tanggal,
+            daerah: row.daerah,
+            jenis: row.jenis,
+            hasil: row.hasil,
+            tim_kerja: row.tim_kerja,
+            periode: resolvePeriodLabel(row, filteredDataset.filters.metricPeriodMode),
+        }));
 
         const linkedIndicator = state.indicators.find((item) => (item.published_version && dataset.id && item.published_version.dataset_id === dataset.id) || (item.draft_version && dataset.id && item.draft_version.dataset_id === dataset.id));
         datasetDetailPanel.innerHTML = `
@@ -653,77 +1269,34 @@
                 </div>
             </div>
             <div class="row g-3 mb-3">
-                <div class="col-md-4">
-                    <div class="border rounded p-3 bg-light-subtle h-100">
-                        <div class="text-muted small">Version aktif</div>
-                        <div class="fw-semibold">${escapeHtml(activeVersion ? `v${activeVersion.version_number}` : '-')}</div>
-                        <div class="text-muted small mt-2">Primary Source</div>
-                        <div>${escapeHtml(dataset.primary_source_ref || '-')}</div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="border rounded p-3 bg-light-subtle h-100">
-                        <div class="text-muted small">Rows run terbaru</div>
-                        <div class="fw-semibold">${escapeHtml(formatNumber((latestRun && latestRun.result_row_count) || 0))}</div>
-                        <div class="text-muted small mt-2">Freshness</div>
-                        <div>${escapeHtml((latestRun && latestRun.freshness_status) || '-')}</div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="border rounded p-3 bg-light-subtle h-100">
-                        <div class="text-muted small">Outcome harmonisasi</div>
-                        <div class="fw-semibold">${escapeHtml(completion ? `${completion.selesai} selesai / ${completion.dikembalikan} dikembalikan` : '-')}</div>
-                        <div class="text-muted small mt-2">Top daerah</div>
-                        <div>${escapeHtml(topDaerah && topDaerah.length ? `${topDaerah[0].label} (${topDaerah[0].count})` : '-')}</div>
-                    </div>
-                </div>
+                <div class="col-md-3"><div class="border rounded p-3 bg-light-subtle h-100"><div class="text-muted small">Version aktif</div><div class="fw-semibold">${escapeHtml(activeVersion ? `v${activeVersion.version_number}` : '-')}</div><div class="text-muted small mt-2">Primary Source</div><div>${escapeHtml(dataset.primary_source_ref || '-')}</div></div></div>
+                <div class="col-md-3"><div class="border rounded p-3 bg-light-subtle h-100"><div class="text-muted small">Rows setelah filter</div><div class="fw-semibold">${escapeHtml(formatNumber(filteredDataset.filteredRows.length || 0))}</div><div class="text-muted small mt-2">Freshness</div><div>${escapeHtml((latestRun && latestRun.freshness_status) || '-')}</div></div></div>
+                <div class="col-md-3"><div class="border rounded p-3 bg-light-subtle h-100"><div class="text-muted small">Outcome harmonisasi</div><div class="fw-semibold">${escapeHtml(`${completion.selesai} selesai / ${completion.dikembalikan} dikembalikan`)}</div><div class="text-muted small mt-2">Persentase selesai</div><div>${escapeHtml(`${completion.achievementPercentage}%`)}</div></div></div>
+                <div class="col-md-3"><div class="border rounded p-3 bg-light-subtle h-100"><div class="text-muted small">Top daerah</div><div class="fw-semibold">${escapeHtml(topDaerah && topDaerah.length ? `${topDaerah[0].label} (${topDaerah[0].count})` : '-') }</div><div class="text-muted small mt-2">Mode periode</div><div>${escapeHtml(mapMetricPeriodModeLabel(filteredDataset.filters.metricPeriodMode))}</div></div></div>
             </div>
             <div class="row g-3 mb-3">
-                <div class="col-md-6">
-                    <div class="border rounded p-3 bg-white h-100">
-                        <div class="fw-semibold mb-2">Source Contract JSON</div>
-                        ${formatJsonBlock(activeVersion && activeVersion.source_contract_json, 'Source contract belum tersedia.')}
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="border rounded p-3 bg-white h-100">
-                        <div class="fw-semibold mb-2">Query & Transform Spec</div>
-                        ${formatJsonBlock({ query_spec_json: activeVersion && activeVersion.query_spec_json, transform_spec_json: activeVersion && activeVersion.transform_spec_json }, 'Spec dataset belum tersedia.')}
-                    </div>
-                </div>
-                <div class="col-12">
-                    <div class="border rounded p-3 bg-white">
-                        <div class="fw-semibold mb-2">Summary JSON Run Terbaru</div>
-                        ${formatJsonBlock(latestRun && latestRun.summary_json, 'Summary run terbaru belum tersedia.')}
-                    </div>
-                </div>
+                <div class="col-md-6"><div class="border rounded p-3 bg-white h-100"><div class="fw-semibold mb-2">Source Contract JSON</div>${formatJsonBlock(activeVersion && activeVersion.source_contract_json, 'Source contract belum tersedia.')}</div></div>
+                <div class="col-md-6"><div class="border rounded p-3 bg-white h-100"><div class="fw-semibold mb-2">Query & Transform Spec</div>${formatJsonBlock({ query_spec_json: activeVersion && activeVersion.query_spec_json, transform_spec_json: activeVersion && activeVersion.transform_spec_json }, 'Spec dataset belum tersedia.')}</div></div>
+                <div class="col-12"><div class="border rounded p-3 bg-white"><div class="fw-semibold mb-2">Summary JSON Run Terbaru</div>${formatJsonBlock(latestRun && latestRun.summary_json, 'Summary run terbaru belum tersedia.')}</div></div>
                 <div class="col-12">
                     <div class="border rounded p-3 bg-white">
                         <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
                             <div>
                                 <div class="fw-semibold">Chart Ringan Summary Run</div>
-                                <div class="text-muted small">Membaca pola hasil, jenis, dan tim kerja langsung dari summary_json tanpa nunggu dashboard final.</div>
+                                <div class="text-muted small">Chart kini sadar filter reporting year / status / jenis serta mode timeseries yang bisa tumbuh dari harian, mingguan, bulanan, triwulan, semester, sampai tahunan.</div>
                             </div>
                         </div>
                         <div class="row g-3">
                             <div class="col-lg-4"><div id="analyticsChartHasilCounts" class="analytics-chart-box"></div></div>
                             <div class="col-lg-4"><div id="analyticsChartJenisCounts" class="analytics-chart-box"></div></div>
                             <div class="col-lg-4"><div id="analyticsChartTimKerjaCounts" class="analytics-chart-box"></div></div>
-                            <div class="col-12"><div id="analyticsChartTopDaerah" class="analytics-chart-box"></div></div>
+                            <div class="col-12 col-xl-6"><div id="analyticsChartTopDaerah" class="analytics-chart-box"></div></div>
+                            <div class="col-12 col-xl-6"><div id="analyticsChartPeriodMetrics" class="analytics-chart-box"></div></div>
                         </div>
                     </div>
                 </div>
-                <div class="col-12">
-                    <div class="border rounded p-3 bg-white">
-                        <div class="fw-semibold mb-2">Preview Result Rows</div>
-                        ${renderDatasetRunPreviewTable(latestRun && latestRun.result_preview_json)}
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="border rounded p-3 bg-white h-100">
-                        <div class="fw-semibold mb-2">Versi Dataset</div>
-                        <div class="list-group list-group-flush">
-                            ${versions.length ? versions.map((version) => `
+                <div class="col-12"><div class="border rounded p-3 bg-white"><div class="fw-semibold mb-2">Preview Result Rows Setelah Filter</div>${renderDatasetRunPreviewTable(filteredPreviewRows)}</div></div>
+                <div class="col-md-6"><div class="border rounded p-3 bg-white h-100"><div class="fw-semibold mb-2">Versi Dataset</div><div class="list-group list-group-flush">${versions.length ? versions.map((version) => `
                                 <div class="list-group-item px-0">
                                     <div class="d-flex justify-content-between gap-2">
                                         <div>
@@ -733,15 +1306,8 @@
                                         <span class="badge bg-secondary-subtle text-secondary">${escapeHtml(version.freshness_strategy || '-')}</span>
                                     </div>
                                 </div>
-                            `).join('') : '<div class="text-muted">Belum ada versi dataset.</div>'}
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="border rounded p-3 bg-white h-100">
-                        <div class="fw-semibold mb-2">Run History</div>
-                        <div class="list-group list-group-flush">
-                            ${runs.length ? runs.slice(0, 5).map((run) => {
+                            `).join('') : '<div class="text-muted">Belum ada versi dataset.</div>'}</div></div></div>
+                <div class="col-md-6"><div class="border rounded p-3 bg-white h-100"><div class="fw-semibold mb-2">Run History</div><div class="list-group list-group-flush">${runs.length ? runs.slice(0, 5).map((run) => {
                                 const tone = resolveRunStatusTone(run.status);
                                 return `
                                     <div class="list-group-item px-0">
@@ -755,14 +1321,12 @@
                                         <div class="text-muted small mt-2">Rows ${escapeHtml(formatNumber(run.result_row_count || 0))} • Materialization ${escapeHtml(run.materialization_ref || '-')}</div>
                                     </div>
                                 `;
-                            }).join('') : '<div class="text-muted">Belum ada histori run.</div>'}
-                        </div>
-                    </div>
-                </div>
+                            }).join('') : '<div class="text-muted">Belum ada histori run.</div>'}</div></div></div>
             </div>
         `;
         wireQuickFlowActions(datasetDetailPanel);
-        renderDatasetSummaryCharts(latestRun && latestRun.summary_json);
+        renderDatasetSummaryCharts(filteredDataset);
+        renderDatasetInsights(filteredDataset);
     }
 
     function wireQuickFlowActions(scope) {
@@ -777,47 +1341,119 @@
         });
     }
 
-    function renderDatasetSummaryCharts(summaryJson) {
-        const summary = summaryJson || {};
-        renderApexChart('hasilCounts', '#analyticsChartHasilCounts', {
-            chart: { type: 'donut', height: 260, toolbar: { show: false } },
-            series: toChartSeriesMap(summary.hasil_counts).map((item) => item.count),
-            labels: toChartSeriesMap(summary.hasil_counts).map((item) => item.label),
-            legend: { position: 'bottom' },
-            title: { text: 'Distribusi Hasil', align: 'left', style: { fontSize: '14px' } },
-            dataLabels: { enabled: true },
-            noData: { text: 'Belum ada data hasil.' },
+    function renderDatasetSummaryCharts(filteredDataset) {
+        const summary = filteredDataset || {};
+        const hasilSeries = toChartSeriesMap(summary.hasilCounts);
+        renderPlotlyChart('hasilCounts', '#analyticsChartHasilCounts', [{
+            type: 'pie',
+            hole: 0.5,
+            labels: hasilSeries.map((item) => item.label),
+            values: hasilSeries.map((item) => item.count),
+            textinfo: 'label+value',
+            hovertemplate: '%{label}: %{value}<extra></extra>',
+            marker: { colors: ['#0ab39c', '#f06548', '#405189', '#f7b84b', '#299cdb'] },
+        }], {
+            title: { text: 'Distribusi Hasil', x: 0, xanchor: 'left', font: { size: 14 } },
+            height: 260,
+            emptyMessage: 'Belum ada data hasil.',
         });
 
-        const jenisSeries = toChartSeriesMap(summary.jenis_counts);
-        renderApexChart('jenisCounts', '#analyticsChartJenisCounts', {
-            chart: { type: 'bar', height: 260, toolbar: { show: false } },
-            series: [{ name: 'Dokumen', data: jenisSeries.map((item) => item.count) }],
-            xaxis: { categories: jenisSeries.map((item) => item.label) },
-            plotOptions: { bar: { borderRadius: 4, distributed: true } },
-            title: { text: 'Distribusi Jenis', align: 'left', style: { fontSize: '14px' } },
-            legend: { show: false },
-            noData: { text: 'Belum ada data jenis.' },
+        const jenisSeries = toChartSeriesMap(summary.jenisCounts);
+        renderPlotlyChart('jenisCounts', '#analyticsChartJenisCounts', [{
+            type: 'bar',
+            x: jenisSeries.map((item) => item.label),
+            y: jenisSeries.map((item) => item.count),
+            text: jenisSeries.map((item) => item.count),
+            textposition: 'outside',
+            cliponaxis: false,
+            hovertemplate: '%{x}: %{y}<extra>Dokumen</extra>',
+            marker: { color: '#405189' },
+        }], {
+            title: { text: 'Distribusi Jenis', x: 0, xanchor: 'left', font: { size: 14 } },
+            height: 260,
+            showlegend: false,
+            xaxis: { automargin: true },
+            yaxis: { title: { text: 'Dokumen' }, rangemode: 'tozero' },
+            emptyMessage: 'Belum ada data jenis.',
         });
 
-        const timKerjaSeries = toChartSeriesMap(summary.tim_kerja_counts);
-        renderApexChart('timKerjaCounts', '#analyticsChartTimKerjaCounts', {
-            chart: { type: 'radar', height: 260, toolbar: { show: false } },
-            series: [{ name: 'Dokumen', data: timKerjaSeries.map((item) => item.count) }],
-            xaxis: { categories: timKerjaSeries.map((item) => item.label) },
-            title: { text: 'Sebaran Tim Kerja', align: 'left', style: { fontSize: '14px' } },
-            noData: { text: 'Belum ada data tim kerja.' },
+        const timKerjaSeries = toChartSeriesMap(summary.timKerjaCounts);
+        renderPlotlyChart('timKerjaCounts', '#analyticsChartTimKerjaCounts', [{
+            type: 'scatterpolar',
+            r: timKerjaSeries.map((item) => item.count),
+            theta: timKerjaSeries.map((item) => item.label),
+            fill: 'toself',
+            name: 'Dokumen',
+            hovertemplate: '%{theta}: %{r}<extra>Dokumen</extra>',
+            line: { color: '#0ab39c' },
+            marker: { color: '#0ab39c' },
+        }], {
+            title: { text: 'Sebaran Tim Kerja', x: 0, xanchor: 'left', font: { size: 14 } },
+            height: 260,
+            polar: { radialaxis: { visible: true, rangemode: 'tozero' } },
+            emptyMessage: 'Belum ada data tim kerja.',
         });
 
-        const topDaerahSeries = Array.isArray(summary.top_daerah) ? summary.top_daerah.slice(0, 10) : [];
-        renderApexChart('topDaerah', '#analyticsChartTopDaerah', {
-            chart: { type: 'bar', height: 320, toolbar: { show: false } },
-            series: [{ name: 'Dokumen', data: topDaerahSeries.map((item) => Number(item.count || 0)) }],
-            xaxis: { categories: topDaerahSeries.map((item) => item.label) },
-            plotOptions: { bar: { horizontal: true, borderRadius: 4 } },
-            title: { text: 'Top Daerah', align: 'left', style: { fontSize: '14px' } },
-            legend: { show: false },
-            noData: { text: 'Belum ada data daerah.' },
+        const topDaerahSeries = Array.isArray(summary.topDaerah) ? summary.topDaerah.slice(0, 10) : [];
+        renderPlotlyChart('topDaerah', '#analyticsChartTopDaerah', [{
+            type: 'bar',
+            orientation: 'h',
+            x: topDaerahSeries.map((item) => Number(item.count || 0)).reverse(),
+            y: topDaerahSeries.map((item) => item.label).reverse(),
+            text: topDaerahSeries.map((item) => Number(item.count || 0)).reverse(),
+            textposition: 'outside',
+            cliponaxis: false,
+            hovertemplate: '%{y}: %{x}<extra>Dokumen</extra>',
+            marker: { color: '#f7b84b' },
+        }], {
+            title: { text: 'Top Daerah', x: 0, xanchor: 'left', font: { size: 14 } },
+            height: 320,
+            showlegend: false,
+            margin: { t: 56, r: 32, b: 40, l: 120 },
+            xaxis: { title: { text: 'Dokumen' }, rangemode: 'tozero' },
+            yaxis: { automargin: true },
+            emptyMessage: 'Belum ada data daerah.',
+        });
+
+        const periodSeries = Array.isArray(summary.selectedPeriodMetric) ? summary.selectedPeriodMetric : [];
+        const periodModeLabel = mapMetricPeriodModeLabel(summary.filters && summary.filters.metricPeriodMode);
+        renderPlotlyChart('periodMetrics', '#analyticsChartPeriodMetrics', [
+            {
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Total Dokumen',
+                x: periodSeries.map((item) => item.label),
+                y: periodSeries.map((item) => item.total),
+                hovertemplate: '%{x}<br>Total: %{y}<extra></extra>',
+                line: { color: '#405189', width: 3 },
+            },
+            {
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Selesai',
+                x: periodSeries.map((item) => item.label),
+                y: periodSeries.map((item) => item.selesai),
+                hovertemplate: '%{x}<br>Selesai: %{y}<extra></extra>',
+                line: { color: '#0ab39c', width: 3 },
+            },
+            {
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Persentase Selesai',
+                x: periodSeries.map((item) => item.label),
+                y: periodSeries.map((item) => item.achievement_percentage),
+                hovertemplate: '%{x}<br>Selesai: %{y}%<extra></extra>',
+                line: { color: '#f06548', width: 4, dash: 'dot' },
+                yaxis: 'y2',
+            },
+        ], {
+            title: { text: `Metric Periode (${periodModeLabel})`, x: 0, xanchor: 'left', font: { size: 14 } },
+            height: 320,
+            hovermode: 'x unified',
+            xaxis: { automargin: true },
+            yaxis: { title: { text: 'Jumlah Dokumen' }, rangemode: 'tozero' },
+            yaxis2: { title: { text: '% Selesai' }, overlaying: 'y', side: 'right', rangemode: 'tozero', ticksuffix: '%' },
+            emptyMessage: 'Belum ada data periode.',
         });
     }
 
@@ -928,11 +1564,13 @@
             const url = config.analyticsIndicatorDetailUrlTemplate.replace('__INDICATOR_ID__', String(indicatorId));
             const data = await fetchJson(url);
             state.selectedIndicatorId = data.indicator && data.indicator.id ? data.indicator.id : Number(indicatorId);
+            const activeVersion = data.published_version || data.draft_version || {};
+            state.selectedIndicatorVersionId = options.selectedIndicatorVersionId || activeVersion.id || null;
             renderIndicatorDetail(data);
             wireQuickFlowActions(indicatorDetailPanel);
             renderIndicatorsGrid();
+            renderResultsTable();
             if (options.autoOpenDataset) {
-                const activeVersion = data.published_version || data.draft_version || {};
                 if (activeVersion.dataset_id) {
                     await loadDatasetDetail(activeVersion.dataset_id);
                 }
@@ -955,6 +1593,7 @@
 
     async function bootstrap() {
         renderIndicatorTabNavigation();
+        bindAnalyticsFilterControls();
         setActiveIndicatorTab('definition');
         renderPlaceholder(reportDetailPanel, 'Pilih salah satu report untuk melihat detail.');
         renderPlaceholder(indicatorDetailPanel, 'Pilih salah satu indikator untuk melihat ringkasan utama.');
@@ -973,7 +1612,7 @@
             renderPlaceholder(indicatorDetailPanel, error.message || 'Gagal memuat workspace analytics.');
             renderPlaceholder(datasetDetailPanel, error.message || 'Gagal memuat detail dataset.');
             if (resultsTableBody) {
-                resultsTableBody.innerHTML = `<tr><td colspan="7" class="text-danger">${escapeHtml(error.message || 'Gagal memuat data.')}</td></tr>`;
+                resultsTableBody.innerHTML = `<tr><td colspan="8" class="text-danger">${escapeHtml(error.message || 'Gagal memuat data.')}</td></tr>`;
             }
             if (datasetRunsList) {
                 datasetRunsList.innerHTML = `<div class="text-danger">${escapeHtml(error.message || 'Gagal memuat dataset runs.')}</div>`;

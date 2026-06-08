@@ -1,7 +1,7 @@
 import argparse
 import csv
 import os
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
 from openpyxl import load_workbook
@@ -280,6 +280,61 @@ def build_harmonisasi_demo_payload(xlsx_path=DEFAULT_HARMONISASI_XLSX_PATH):
         if row.get('TanggalISO')
     ), default=datetime.now().year)
 
+    row_snapshots = []
+    yearly_periods = defaultdict(lambda: {'label': None, 'period_type': 'yearly', 'period_number': 1, 'reporting_year': None, 'total': 0, 'selesai': 0, 'dikembalikan': 0})
+    semester_periods = defaultdict(lambda: {'label': None, 'period_type': 'semesterly', 'period_number': None, 'reporting_year': None, 'total': 0, 'selesai': 0, 'dikembalikan': 0})
+    quarterly_periods = defaultdict(lambda: {'label': None, 'period_type': 'quarterly', 'period_number': None, 'reporting_year': None, 'total': 0, 'selesai': 0, 'dikembalikan': 0})
+
+    for row in rows:
+        iso_date = row.get('TanggalISO')
+        normalized_date = _normalize_harmonisasi_date(iso_date) if iso_date else None
+        row_year = normalized_date.year if normalized_date else reporting_year
+        quarter_number = ((normalized_date.month - 1) // 3 + 1) if normalized_date else 1
+        semester_number = 1 if (not normalized_date or normalized_date.month <= 6) else 2
+        quarter_label = f'{row_year}-Q{quarter_number}'
+        semester_label = f'{row_year}-S{semester_number}'
+        year_label = str(row_year)
+        snapshot = {
+            'tanggal': iso_date,
+            'reporting_year': row_year,
+            'quarter_number': quarter_number,
+            'quarter_label': quarter_label,
+            'semester_number': semester_number,
+            'semester_label': semester_label,
+            'year_label': year_label,
+            'daerah': row.get('Daerah') or 'Tanpa Daerah',
+            'jenis': row.get('Jenis') or 'Tanpa Jenis',
+            'hasil': row.get('Hasil') or 'Tanpa Hasil',
+            'tim_kerja': row.get('Tim Kerja') or 'Tanpa Tim',
+            'metode': (row.get('Metode') or '').strip() or '(kosong)',
+        }
+        row_snapshots.append(snapshot)
+
+        for bucket, label, period_type, period_number in (
+            (yearly_periods[year_label], year_label, 'yearly', 1),
+            (semester_periods[semester_label], semester_label, 'semesterly', semester_number),
+            (quarterly_periods[quarter_label], quarter_label, 'quarterly', quarter_number),
+        ):
+            bucket['label'] = label
+            bucket['period_type'] = period_type
+            bucket['period_number'] = period_number
+            bucket['reporting_year'] = row_year
+            bucket['total'] += 1
+            if snapshot['hasil'] == 'Selesai':
+                bucket['selesai'] += 1
+            if snapshot['hasil'] == 'Dikembalikan':
+                bucket['dikembalikan'] += 1
+
+    def _serialize_period_metrics(periods):
+        serialized = []
+        for item in periods.values():
+            total = item['total']
+            serialized.append({
+                **item,
+                'achievement_percentage': round((item['selesai'] / total) * 100, 2) if total else 0,
+            })
+        return sorted(serialized, key=lambda item: (item['reporting_year'], item['period_number'], item['label']))
+
     summary = {
         'source_file': xlsx_path,
         'row_count': total_rows,
@@ -299,6 +354,17 @@ def build_harmonisasi_demo_payload(xlsx_path=DEFAULT_HARMONISASI_XLSX_PATH):
             'dikembalikan': returned_count,
             'achievement_percentage': achievement_percentage,
         },
+        'filter_dimensions': {
+            'reporting_years': sorted({item['reporting_year'] for item in row_snapshots}),
+            'hasil_options': sorted({item['hasil'] for item in row_snapshots}),
+            'jenis_options': sorted({item['jenis'] for item in row_snapshots}),
+        },
+        'period_metrics': {
+            'yearly': _serialize_period_metrics(yearly_periods),
+            'semesterly': _serialize_period_metrics(semester_periods),
+            'quarterly': _serialize_period_metrics(quarterly_periods),
+        },
+        'row_snapshots': row_snapshots,
     }
 
     submissions = []
