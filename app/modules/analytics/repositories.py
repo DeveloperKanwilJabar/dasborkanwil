@@ -324,6 +324,22 @@ class AnalyticsReportDefinitionRepository(BaseRepository):
 
         return self.find_one_by(report_key=report_key)
 
+    def get_by_dataset_id(self, dataset_id):
+        """Mengambil satu report aktif/draft yang terhubung ke dataset tertentu bila ada."""
+
+        return self.model.query.filter(
+            AnalyticsReportDefinition.dataset_id == dataset_id,
+            AnalyticsReportDefinition.deleted_at == None,
+        ).order_by(AnalyticsReportDefinition.updated_at.desc()).first()
+
+    def list_by_dataset_id(self, dataset_id):
+        """Mengambil seluruh report yang terhubung ke satu dataset."""
+
+        return self.model.query.filter(
+            AnalyticsReportDefinition.dataset_id == dataset_id,
+            AnalyticsReportDefinition.deleted_at == None,
+        ).order_by(AnalyticsReportDefinition.updated_at.desc()).all()
+
     def list_by_status(self, status):
         """Mengambil daftar entity berdasarkan status bisnisnya.
 

@@ -12,13 +12,14 @@ def make_report_definition(**overrides):
         'id': 21,
         'uuid': 'report-def-uuid',
         'report_key': 'pk-kanwil',
+        'dataset_id': 7,
         'name': 'PK Kanwil',
         'description': 'Laporan kinerja kanwil.',
         'report_type': 'performance_report',
         'category_key': 'pk',
         'status': 'active',
         'is_active': True,
-        'settings_json': {},
+        'settings_json': {'linked_dataset_name': 'Dataset Wilayah', 'linked_dataset_key': 'dataset-wilayah'},
         'tags_json': [],
         'created_at': None,
         'updated_at': None,
@@ -33,6 +34,7 @@ def make_report_version(**overrides):
         'uuid': 'report-version-uuid',
         'report_definition_id': 21,
         'version_number': 1,
+        'dataset_version_id': 21,
         'status': 'draft',
         'is_current_draft': True,
         'is_current_published': False,
@@ -194,6 +196,7 @@ def test_analytics_api_routes_are_registered():
 
     expected_routes = [
         '/api/v1/analytics/reports',
+        '/api/v1/analytics/reports/<int:report_definition_id>',
         '/api/v1/analytics/reports/<int:report_definition_id>/versions',
         '/api/v1/analytics/report-versions/<int:version_id>/publish',
         '/api/v1/analytics/indicators',
@@ -215,17 +218,37 @@ def test_post_analytics_report_returns_created_payload(monkeypatch):
     client = app.test_client()
 
     class StubAnalyticsReportService:
-        def create_report_definition(self, data, actor=None):
-            return make_report_definition(report_key=data['report_key'], name=data['name'])
+        def create_report_bundle(self, data, actor=None):
+            report_data = data.get('report', {})
+            draft_data = data.get('draft_version', {})
+            return {
+                'report': make_report_definition(
+                    report_key=report_data['report_key'],
+                    name=report_data['name'],
+                    dataset_id=report_data['dataset_id'],
+                ),
+                'draft_version': make_report_version(
+                    title=draft_data['title'],
+                    dataset_version_id=draft_data['dataset_version_id'],
+                ),
+            }
 
     monkeypatch.setattr('app.api.v1.analytics.routes.AnalyticsReportService', StubAnalyticsReportService)
 
     response = client.post(
         '/api/v1/analytics/reports',
         json={
-            'report_key': 'pk-kanwil',
-            'name': 'PK Kanwil',
-            'report_type': 'performance_report',
+            'report': {
+                'report_key': 'pk-kanwil',
+                'name': 'PK Kanwil',
+                'dataset_id': 7,
+                'report_type': 'performance_report',
+            },
+            'draft_version': {
+                'title': 'PK Kanwil 2026',
+                'dataset_version_id': 21,
+                'blocks': [{'type': 'metric_cards'}],
+            },
         },
     )
 
@@ -233,7 +256,54 @@ def test_post_analytics_report_returns_created_payload(monkeypatch):
     payload = response.get_json()
     assert payload['success'] is True
     assert payload['data']['report']['report_key'] == 'pk-kanwil'
-    assert payload['data']['report']['name'] == 'PK Kanwil'
+    assert payload['data']['report']['dataset_id'] == 7
+    assert payload['data']['draft_version']['dataset_version_id'] == 21
+
+
+def test_put_analytics_report_returns_updated_payload(monkeypatch):
+    app = create_app('testing')
+    client = app.test_client()
+
+    class StubAnalyticsReportService:
+        def update_report_bundle(self, report_definition_id, data, actor=None):
+            report_data = data.get('report', {})
+            draft_data = data.get('draft_version', {})
+            return {
+                'report': make_report_definition(
+                    id=report_definition_id,
+                    report_key=report_data['report_key'],
+                    name=report_data['name'],
+                    dataset_id=report_data['dataset_id'],
+                ),
+                'draft_version': make_report_version(
+                    report_definition_id=report_definition_id,
+                    dataset_version_id=draft_data['dataset_version_id'],
+                    title=draft_data['title'],
+                ),
+            }
+
+    monkeypatch.setattr('app.api.v1.analytics.routes.AnalyticsReportService', StubAnalyticsReportService)
+
+    response = client.put(
+        '/api/v1/analytics/reports/21',
+        json={
+            'report': {
+                'report_key': 'pk-kanwil',
+                'name': 'PK Kanwil Update',
+                'dataset_id': 7,
+            },
+            'draft_version': {
+                'title': 'PK Kanwil 2026 Rev A',
+                'dataset_version_id': 22,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['data']['report']['name'] == 'PK Kanwil Update'
+    assert payload['data']['draft_version']['dataset_version_id'] == 22
 
 
 

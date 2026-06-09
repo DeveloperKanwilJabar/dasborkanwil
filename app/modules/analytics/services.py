@@ -40,140 +40,230 @@ from .repositories import (
 
 
 class AnalyticsDatasetService(BaseService):
-    """Service CRUD bisnis untuk dataset analytics dan versi datasetnya.
+    """Service CRUD bisnis untuk dataset analytics dan versi kontraknya.
 
-    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
-    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
+    Flow domain yang dijaga service ini adalah:
+    source operasional -> dataset contract -> publish version -> dataset run -> report.
+    Dengan begitu submissions/registry tetap menjadi data mentah, sedangkan report
+    membaca dataset yang sudah punya kontrak field, metric, dimension, dan filter.
 
     Example:
         >>> service = AnalyticsDatasetService()
     """
 
+    ALLOWED_SOURCE_DOMAINS = {
+        AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION,
+        AnalyticsDataset.SOURCE_DOMAIN_DATA_REGISTRY,
+        AnalyticsDataset.SOURCE_DOMAIN_HYBRID,
+    }
+
+    ALLOWED_REPORTING_YEAR_MODES = {
+        AnalyticsDataset.REPORTING_YEAR_MODE_ACTIVE,
+        AnalyticsDataset.REPORTING_YEAR_MODE_EXPLICIT,
+        AnalyticsDataset.REPORTING_YEAR_MODE_ALL_TIME,
+    }
+
+    ALLOWED_SOURCE_TYPES = {
+        AnalyticsDataset.SOURCE_TYPE_SUBMISSION_FACT,
+        AnalyticsDataset.SOURCE_TYPE_PUBLISHED_REGISTRY_DIMENSION,
+        AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT,
+        AnalyticsDataset.SOURCE_TYPE_HYBRID_FACT_DIMENSION,
+    }
+
+    ALLOWED_GRAIN_KEYS = {
+        AnalyticsDatasetVersion.GRAIN_PER_SUBMISSION,
+        AnalyticsDatasetVersion.GRAIN_PER_FORM_PER_YEAR,
+        AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR,
+        AnalyticsDatasetVersion.GRAIN_PER_REGISTRY_RECORD_PER_YEAR,
+    }
+
+    ALLOWED_FRESHNESS_SOURCE_TYPES = {
+        AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT,
+        AnalyticsDatasetVersion.FRESHNESS_SOURCE_DATA_REGISTRY_MATERIALIZED_AT,
+        AnalyticsDatasetVersion.FRESHNESS_SOURCE_HYBRID_WATERMARK,
+    }
+
+    ALLOWED_FRESHNESS_STRATEGIES = {
+        AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP,
+        AnalyticsDatasetVersion.FRESHNESS_STRATEGY_SOURCE_WATERMARK_COMPARE,
+        AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MANUAL_ASSERTION,
+    }
+
     def __init__(self, dataset_repository=None, dataset_version_repository=None):
-        """Inisialisasi class beserta dependency yang diperlukan.
-
-        Args:
-            dataset_repository (Any): Parameter `dataset_repository` untuk operasi init.
-            dataset_version_repository (Any): Parameter `dataset_version_repository` untuk operasi init.
-
-        Returns:
-            Any: Nilai hasil eksekusi fungsi service.
-
-        Example:
-            >>> service = AnalyticsDatasetService()
-        """
+        """Inisialisasi class beserta dependency yang diperlukan."""
 
         super().__init__(repository=dataset_repository or AnalyticsDatasetRepository())
         self.version_repository = dataset_version_repository or AnalyticsDatasetVersionRepository()
 
-    def create_dataset(self, data, actor=None):
-        """Membuat definisi dataset analytics baru.
+    def create_dataset_bundle(self, data, actor=None):
+        """Membuat dataset beserta draft contract awal dalam satu operasi.
 
-        Args:
-            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
-            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
-
-        Returns:
-            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
-
-        Example:
-            >>> service.create_dataset(data=..., actor=...)
+        Endpoint UI create dataset lebih nyaman bila identitas dataset, source picker,
+        dan contract field langsung tersimpan sebagai satu paket. Method ini membuat
+        definition dataset lalu otomatis menyiapkan draft version pertamanya.
         """
+
+        dataset_payload = self._extract_dataset_payload(data)
+        version_payload = self._extract_version_payload(data, dataset_payload=dataset_payload)
+        dataset = self.create_dataset(dataset_payload, actor=actor)
+        draft_version = self.create_dataset_version(dataset.id, version_payload, actor=actor)
+        return {
+            'dataset': dataset,
+            'draft_version': draft_version,
+        }
+
+    def update_dataset_bundle(self, dataset_id, data, actor=None):
+        """Memperbarui definition dataset dan meng-upsert draft contract aktif.
+
+        Bila draft version sudah ada, ia di-update di tempat. Bila belum ada
+        (misalnya dataset sudah punya version published saja), method ini akan
+        membuat draft version baru agar perubahan contract tidak menimpa histori
+        published sebelumnya.
+        """
+
+        dataset_payload = self._extract_dataset_payload(data)
+        version_payload = self._extract_version_payload(data, dataset_payload=dataset_payload)
+        dataset = self.update_dataset(dataset_id, dataset_payload, actor=actor)
+        draft_version = self.upsert_draft_version(dataset_id, version_payload, actor=actor)
+        return {
+            'dataset': dataset,
+            'draft_version': draft_version,
+        }
+
+    def create_dataset(self, data, actor=None):
+        """Membuat definisi dataset analytics baru."""
+
+        normalized = self._normalize_dataset_payload(data)
+        self._ensure_dataset_key_available(normalized['dataset_key'])
 
         dataset = AnalyticsDataset(
             uuid=str(uuid.uuid4()),
-            dataset_key=data.get('dataset_key'),
-            name=data.get('name') or data.get('dataset_key') or 'Untitled dataset',
-            description=data.get('description'),
-            source_domain=data.get('source_domain', AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION),
-            source_type=data.get('source_type', AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT),
-            primary_source_ref=data.get('primary_source_ref'),
-            status=data.get('status', AnalyticsDataset.STATUS_DRAFT),
-            is_active=data.get('is_active', True),
-            is_year_scoped=data.get('is_year_scoped', True),
-            default_reporting_year_mode=data.get(
-                'default_reporting_year_mode',
-                AnalyticsDataset.REPORTING_YEAR_MODE_ACTIVE,
-            ),
-            owner_scope_type=data.get('owner_scope_type'),
-            owner_scope_code=data.get('owner_scope_code'),
-            owner_scope_name=data.get('owner_scope_name'),
-            owner_scope_path=data.get('owner_scope_path') or [],
-            settings_json=data.get('settings_json') or {},
-            tags_json=data.get('tags_json') or [],
+            dataset_key=normalized['dataset_key'],
+            name=normalized['name'],
+            description=normalized['description'],
+            source_domain=normalized['source_domain'],
+            source_type=normalized['source_type'],
+            primary_source_ref=normalized['primary_source_ref'],
+            status=normalized['status'],
+            is_active=normalized['is_active'],
+            is_year_scoped=normalized['is_year_scoped'],
+            default_reporting_year_mode=normalized['default_reporting_year_mode'],
+            owner_scope_type=normalized['owner_scope_type'],
+            owner_scope_code=normalized['owner_scope_code'],
+            owner_scope_name=normalized['owner_scope_name'],
+            owner_scope_path=normalized['owner_scope_path'],
+            settings_json=normalized['settings_json'],
+            tags_json=normalized['tags_json'],
         )
         self._apply_actor_audit(dataset, actor, action='create')
         return self.repository.save(dataset)
 
-    def create_dataset_version(self, dataset_id, data, actor=None):
-        """Membuat version dataset analytics baru.
-
-        Args:
-            dataset_id (Any): Primary key internal dataset analytics target.
-            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
-            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
-
-        Returns:
-            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
-
-        Example:
-            >>> service.create_dataset_version(dataset_id=..., data=..., actor=...)
-        """
+    def update_dataset(self, dataset_id, data, actor=None):
+        """Memperbarui metadata definition dataset analytics."""
 
         dataset = self.repository.get_by_id(dataset_id)
         if not dataset:
             raise ValueError('Analytics dataset tidak ditemukan.')
 
+        normalized = self._normalize_dataset_payload(data, existing_dataset=dataset)
+        self._ensure_dataset_key_available(normalized['dataset_key'], ignore_dataset_id=dataset_id)
+
+        dataset.dataset_key = normalized['dataset_key']
+        dataset.name = normalized['name']
+        dataset.description = normalized['description']
+        dataset.source_domain = normalized['source_domain']
+        dataset.source_type = normalized['source_type']
+        dataset.primary_source_ref = normalized['primary_source_ref']
+        dataset.status = normalized['status']
+        dataset.is_active = normalized['is_active']
+        dataset.is_year_scoped = normalized['is_year_scoped']
+        dataset.default_reporting_year_mode = normalized['default_reporting_year_mode']
+        dataset.owner_scope_type = normalized['owner_scope_type']
+        dataset.owner_scope_code = normalized['owner_scope_code']
+        dataset.owner_scope_name = normalized['owner_scope_name']
+        dataset.owner_scope_path = normalized['owner_scope_path']
+        dataset.settings_json = normalized['settings_json']
+        dataset.tags_json = normalized['tags_json']
+        self._apply_actor_audit(dataset, actor, action='update')
+        return self.repository.save(dataset)
+
+    def create_dataset_version(self, dataset_id, data, actor=None):
+        """Membuat version dataset analytics baru."""
+
+        dataset = self.repository.get_by_id(dataset_id)
+        if not dataset:
+            raise ValueError('Analytics dataset tidak ditemukan.')
+
+        normalized = self._normalize_dataset_version_payload(dataset, data)
         version = AnalyticsDatasetVersion(
             uuid=str(uuid.uuid4()),
             dataset_id=dataset_id,
             version_number=self.version_repository.get_next_version_number(dataset_id),
-            status=data.get('status', AnalyticsDatasetVersion.STATUS_DRAFT),
-            is_current_draft=data.get('is_current_draft', True),
-            is_current_published=data.get('is_current_published', False),
-            source_contract_json=data.get('source_contract_json') or {},
-            query_spec_json=data.get('query_spec_json') or {},
-            transform_spec_json=data.get('transform_spec_json') or {},
-            join_registry_spec_json=data.get('join_registry_spec_json') or [],
-            grain_key=data.get('grain_key', AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR),
-            output_schema_json=data.get('output_schema_json') or [],
-            dimension_definitions_json=data.get('dimension_definitions_json') or [],
-            metric_definitions_json=data.get('metric_definitions_json') or [],
-            default_filters_json=data.get('default_filters_json') or {},
-            sort_spec_json=data.get('sort_spec_json') or [],
-            freshness_source_type=data.get(
-                'freshness_source_type',
-                AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT,
-            ),
-            freshness_source_ref=data.get('freshness_source_ref'),
-            freshness_strategy=data.get(
-                'freshness_strategy',
-                AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP,
-            ),
-            freshness_policy_json=data.get('freshness_policy_json') or {},
-            publish_notes=data.get('publish_notes'),
-            published_at=data.get('published_at'),
+            status=normalized['status'],
+            is_current_draft=normalized['is_current_draft'],
+            is_current_published=normalized['is_current_published'],
+            source_contract_json=normalized['source_contract_json'],
+            query_spec_json=normalized['query_spec_json'],
+            transform_spec_json=normalized['transform_spec_json'],
+            join_registry_spec_json=normalized['join_registry_spec_json'],
+            grain_key=normalized['grain_key'],
+            output_schema_json=normalized['output_schema_json'],
+            dimension_definitions_json=normalized['dimension_definitions_json'],
+            metric_definitions_json=normalized['metric_definitions_json'],
+            default_filters_json=normalized['default_filters_json'],
+            sort_spec_json=normalized['sort_spec_json'],
+            freshness_source_type=normalized['freshness_source_type'],
+            freshness_source_ref=normalized['freshness_source_ref'],
+            freshness_strategy=normalized['freshness_strategy'],
+            freshness_policy_json=normalized['freshness_policy_json'],
+            publish_notes=normalized['publish_notes'],
+            published_at=normalized['published_at'],
         )
         self._apply_actor_audit(version, actor, action='create')
         return self.version_repository.save(version)
 
+    def upsert_draft_version(self, dataset_id, data, actor=None):
+        """Membuat atau memperbarui current draft version untuk dataset tertentu."""
+
+        dataset = self.repository.get_by_id(dataset_id)
+        if not dataset:
+            raise ValueError('Analytics dataset tidak ditemukan.')
+
+        normalized = self._normalize_dataset_version_payload(dataset, data)
+        draft_version = self.version_repository.get_draft_version(dataset_id)
+        if not draft_version:
+            return self.create_dataset_version(dataset_id, normalized, actor=actor)
+
+        draft_version.status = AnalyticsDatasetVersion.STATUS_DRAFT
+        draft_version.is_current_draft = True
+        draft_version.is_current_published = False
+        draft_version.source_contract_json = normalized['source_contract_json']
+        draft_version.query_spec_json = normalized['query_spec_json']
+        draft_version.transform_spec_json = normalized['transform_spec_json']
+        draft_version.join_registry_spec_json = normalized['join_registry_spec_json']
+        draft_version.grain_key = normalized['grain_key']
+        draft_version.output_schema_json = normalized['output_schema_json']
+        draft_version.dimension_definitions_json = normalized['dimension_definitions_json']
+        draft_version.metric_definitions_json = normalized['metric_definitions_json']
+        draft_version.default_filters_json = normalized['default_filters_json']
+        draft_version.sort_spec_json = normalized['sort_spec_json']
+        draft_version.freshness_source_type = normalized['freshness_source_type']
+        draft_version.freshness_source_ref = normalized['freshness_source_ref']
+        draft_version.freshness_strategy = normalized['freshness_strategy']
+        draft_version.freshness_policy_json = normalized['freshness_policy_json']
+        draft_version.publish_notes = normalized['publish_notes']
+        self._apply_actor_audit(draft_version, actor, action='update')
+        return self.version_repository.save(draft_version)
+
     def publish_dataset_version(self, version_id, actor=None):
-        """Mempublish dataset version dan mengarsipkan version published lain.
-
-        Args:
-            version_id (Any): Primary key internal version target.
-            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
-
-        Returns:
-            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
-
-        Example:
-            >>> service.publish_dataset_version(version_id=..., actor=...)
-        """
+        """Mempublish dataset version dan mengarsipkan version published lain."""
 
         version = self.version_repository.get_by_id(version_id)
         if not version:
             raise ValueError('Analytics dataset version tidak ditemukan.')
+
+        if not self._has_contract_content(version):
+            raise ValueError('Analytics dataset version belum memiliki contract field/dimension/metric yang siap dipublish.')
 
         try:
             self.version_repository.archive_published_others(
@@ -199,20 +289,260 @@ class AnalyticsDatasetService(BaseService):
             db.session.rollback()
             raise
 
+    def _extract_dataset_payload(self, data):
+        return dict((data or {}).get('dataset') or data or {})
+
+    def _extract_version_payload(self, data, dataset_payload=None):
+        dataset_payload = dataset_payload or {}
+        version_payload = dict((data or {}).get('draft_version') or {})
+        if version_payload:
+            return version_payload
+
+        return {
+            'source_contract_json': (data or {}).get('source_contract_json'),
+            'query_spec_json': (data or {}).get('query_spec_json'),
+            'transform_spec_json': (data or {}).get('transform_spec_json'),
+            'join_registry_spec_json': (data or {}).get('join_registry_spec_json'),
+            'grain_key': (data or {}).get('grain_key'),
+            'output_schema_json': (data or {}).get('output_schema_json'),
+            'dimension_definitions_json': (data or {}).get('dimension_definitions_json'),
+            'metric_definitions_json': (data or {}).get('metric_definitions_json'),
+            'default_filters_json': (data or {}).get('default_filters_json'),
+            'sort_spec_json': (data or {}).get('sort_spec_json'),
+            'freshness_source_type': (data or {}).get('freshness_source_type'),
+            'freshness_source_ref': (data or {}).get('freshness_source_ref'),
+            'freshness_strategy': (data or {}).get('freshness_strategy'),
+            'freshness_policy_json': (data or {}).get('freshness_policy_json'),
+            'publish_notes': (data or {}).get('publish_notes'),
+            'source_domain': dataset_payload.get('source_domain'),
+            'source_type': dataset_payload.get('source_type'),
+            'primary_source_ref': dataset_payload.get('primary_source_ref'),
+        }
+
+    def _normalize_dataset_payload(self, data, existing_dataset=None):
+        data = data or {}
+        dataset_key = (data.get('dataset_key') or getattr(existing_dataset, 'dataset_key', None) or '').strip()
+        if not dataset_key:
+            raise ValueError('dataset_key wajib diisi untuk analytics dataset.')
+
+        source_domain = data.get('source_domain') or getattr(existing_dataset, 'source_domain', None) or AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION
+        if source_domain not in self.ALLOWED_SOURCE_DOMAINS:
+            raise ValueError('source_domain analytics dataset tidak valid.')
+
+        source_type = data.get('source_type') or getattr(existing_dataset, 'source_type', None)
+        if not source_type:
+            source_type = self._default_source_type_for_domain(source_domain)
+        if source_type not in self.ALLOWED_SOURCE_TYPES:
+            raise ValueError('source_type analytics dataset tidak valid.')
+
+        reporting_year_mode = (
+            data.get('default_reporting_year_mode')
+            or getattr(existing_dataset, 'default_reporting_year_mode', None)
+            or AnalyticsDataset.REPORTING_YEAR_MODE_ACTIVE
+        )
+        if reporting_year_mode not in self.ALLOWED_REPORTING_YEAR_MODES:
+            raise ValueError('default_reporting_year_mode analytics dataset tidak valid.')
+
+        settings_json = self._coerce_dict(data.get('settings_json'), getattr(existing_dataset, 'settings_json', None) or {})
+        settings_json = {
+            **settings_json,
+            'report_family': data.get('report_family', settings_json.get('report_family')),
+            'report_meta_description': data.get('report_meta_description', settings_json.get('report_meta_description')),
+            'report_builder_notes': data.get('report_builder_notes', settings_json.get('report_builder_notes')),
+            'preferred_visualizations': self._coerce_list(
+                data.get('preferred_visualizations', settings_json.get('preferred_visualizations'))
+            ),
+            'supported_period_modes': self._coerce_list(
+                data.get('supported_period_modes', settings_json.get('supported_period_modes'))
+            ),
+            'suggested_report_blocks': self._coerce_list(
+                data.get('suggested_report_blocks', settings_json.get('suggested_report_blocks'))
+            ),
+        }
+
+        return {
+            'dataset_key': dataset_key,
+            'name': (data.get('name') or getattr(existing_dataset, 'name', None) or dataset_key).strip(),
+            'description': data.get('description', getattr(existing_dataset, 'description', None)),
+            'source_domain': source_domain,
+            'source_type': source_type,
+            'primary_source_ref': data.get('primary_source_ref', getattr(existing_dataset, 'primary_source_ref', None)),
+            'status': data.get('status', getattr(existing_dataset, 'status', None) or AnalyticsDataset.STATUS_DRAFT),
+            'is_active': data.get('is_active', getattr(existing_dataset, 'is_active', True)),
+            'is_year_scoped': data.get('is_year_scoped', getattr(existing_dataset, 'is_year_scoped', True)),
+            'default_reporting_year_mode': reporting_year_mode,
+            'owner_scope_type': data.get('owner_scope_type', getattr(existing_dataset, 'owner_scope_type', None)),
+            'owner_scope_code': data.get('owner_scope_code', getattr(existing_dataset, 'owner_scope_code', None)),
+            'owner_scope_name': data.get('owner_scope_name', getattr(existing_dataset, 'owner_scope_name', None)),
+            'owner_scope_path': self._coerce_list(data.get('owner_scope_path', getattr(existing_dataset, 'owner_scope_path', []))),
+            'settings_json': settings_json,
+            'tags_json': self._coerce_list(data.get('tags_json', getattr(existing_dataset, 'tags_json', []))),
+        }
+
+    def _normalize_dataset_version_payload(self, dataset, data):
+        data = data or {}
+        source_contract_json = self._coerce_dict(data.get('source_contract_json'), {})
+        source_contract_json = {
+            **source_contract_json,
+            'source_domain': data.get('source_domain', source_contract_json.get('source_domain', dataset.source_domain)),
+            'source_type': data.get('source_type', source_contract_json.get('source_type', dataset.source_type)),
+            'primary_source_ref': data.get('primary_source_ref', source_contract_json.get('primary_source_ref', dataset.primary_source_ref)),
+            'selected_fields': self._coerce_list(data.get('selected_fields', source_contract_json.get('selected_fields'))),
+            'submission_refs': self._coerce_list(data.get('submission_refs', source_contract_json.get('submission_refs'))),
+            'registry_refs': self._coerce_list(data.get('registry_refs', source_contract_json.get('registry_refs'))),
+            'source_field_map': self._coerce_dict(data.get('source_field_map'), source_contract_json.get('source_field_map') or {}),
+        }
+        if not source_contract_json['selected_fields']:
+            source_contract_json['selected_fields'] = self._infer_selected_fields(source_contract_json, data)
+        if not source_contract_json['selected_fields']:
+            raise ValueError('Analytics dataset draft wajib memiliki selected_fields minimal satu field sumber.')
+
+        grain_key = data.get('grain_key') or AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR
+        if grain_key not in self.ALLOWED_GRAIN_KEYS:
+            raise ValueError('grain_key analytics dataset tidak valid.')
+
+        freshness_source_type = (
+            data.get('freshness_source_type')
+            or self._default_freshness_source_type(dataset.source_domain)
+        )
+        if freshness_source_type not in self.ALLOWED_FRESHNESS_SOURCE_TYPES:
+            raise ValueError('freshness_source_type analytics dataset tidak valid.')
+
+        freshness_strategy = data.get('freshness_strategy') or AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP
+        if freshness_strategy not in self.ALLOWED_FRESHNESS_STRATEGIES:
+            raise ValueError('freshness_strategy analytics dataset tidak valid.')
+
+        dimension_definitions_json = self._coerce_list(data.get('dimension_definitions_json'))
+        metric_definitions_json = self._coerce_list(data.get('metric_definitions_json'))
+        if not metric_definitions_json:
+            metric_definitions_json = self._infer_metric_definitions(data)
+        output_schema_json = self._coerce_list(data.get('output_schema_json'))
+        if not output_schema_json:
+            output_schema_json = dimension_definitions_json + metric_definitions_json
+        if not metric_definitions_json:
+            raise ValueError('Analytics dataset draft wajib memiliki metric_definitions_json minimal satu metric.')
+
+        return {
+            'status': data.get('status', AnalyticsDatasetVersion.STATUS_DRAFT),
+            'is_current_draft': data.get('is_current_draft', True),
+            'is_current_published': data.get('is_current_published', False),
+            'source_contract_json': source_contract_json,
+            'query_spec_json': self._coerce_dict(data.get('query_spec_json'), {}),
+            'transform_spec_json': self._coerce_dict(data.get('transform_spec_json'), {}),
+            'join_registry_spec_json': self._coerce_list(data.get('join_registry_spec_json')),
+            'grain_key': grain_key,
+            'output_schema_json': output_schema_json,
+            'dimension_definitions_json': dimension_definitions_json,
+            'metric_definitions_json': metric_definitions_json,
+            'default_filters_json': self._coerce_dict(data.get('default_filters_json'), {}),
+            'sort_spec_json': self._coerce_list(data.get('sort_spec_json')),
+            'freshness_source_type': freshness_source_type,
+            'freshness_source_ref': data.get('freshness_source_ref'),
+            'freshness_strategy': freshness_strategy,
+            'freshness_policy_json': self._coerce_dict(data.get('freshness_policy_json'), {}),
+            'publish_notes': data.get('publish_notes'),
+            'published_at': data.get('published_at'),
+        }
+
+    def _ensure_dataset_key_available(self, dataset_key, ignore_dataset_id=None):
+        existing = self.repository.get_by_key(dataset_key)
+        if existing and getattr(existing, 'id', None) != ignore_dataset_id:
+            raise ValueError('dataset_key analytics dataset sudah dipakai oleh dataset lain.')
+
+    def _default_source_type_for_domain(self, source_domain):
+        if source_domain == AnalyticsDataset.SOURCE_DOMAIN_DATA_REGISTRY:
+            return AnalyticsDataset.SOURCE_TYPE_PUBLISHED_REGISTRY_DIMENSION
+        if source_domain == AnalyticsDataset.SOURCE_DOMAIN_HYBRID:
+            return AnalyticsDataset.SOURCE_TYPE_HYBRID_FACT_DIMENSION
+        return AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT
+
+    def _default_freshness_source_type(self, source_domain):
+        if source_domain == AnalyticsDataset.SOURCE_DOMAIN_DATA_REGISTRY:
+            return AnalyticsDatasetVersion.FRESHNESS_SOURCE_DATA_REGISTRY_MATERIALIZED_AT
+        if source_domain == AnalyticsDataset.SOURCE_DOMAIN_HYBRID:
+            return AnalyticsDatasetVersion.FRESHNESS_SOURCE_HYBRID_WATERMARK
+        return AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT
+
+    def _infer_selected_fields(self, source_contract_json, data):
+        inferred_fields = []
+
+        for item in self._coerce_list(data.get('output_schema_json')):
+            if isinstance(item, dict) and item.get('key'):
+                inferred_fields.append(item.get('key'))
+
+        for item in self._coerce_list(data.get('dimension_definitions_json')):
+            if isinstance(item, dict) and item.get('key'):
+                inferred_fields.append(item.get('key'))
+
+        for item in self._coerce_list(data.get('metric_definitions_json')):
+            if isinstance(item, dict) and item.get('key'):
+                inferred_fields.append(item.get('key'))
+
+        if source_contract_json.get('source_field_map'):
+            inferred_fields.extend(list(source_contract_json['source_field_map'].keys()))
+
+        if not inferred_fields:
+            inferred_fields.extend(
+                key for key in source_contract_json.keys()
+                if key not in {'source_domain', 'source_type', 'primary_source_ref', 'selected_fields', 'submission_refs', 'registry_refs', 'source_field_map'}
+            )
+
+        seen = set()
+        normalized_fields = []
+        for item in inferred_fields:
+            if item and item not in seen:
+                seen.add(item)
+                normalized_fields.append(item)
+        return normalized_fields
+
+    def _infer_metric_definitions(self, data):
+        inferred_metrics = []
+        query_spec = self._coerce_dict(data.get('query_spec_json'), {})
+
+        for item in self._coerce_list(data.get('output_schema_json')):
+            if isinstance(item, dict) and item.get('key'):
+                inferred_metrics.append({'key': item.get('key')})
+
+        for item in self._coerce_list(query_spec.get('select')):
+            if isinstance(item, dict) and item.get('key'):
+                inferred_metrics.append({'key': item.get('key')})
+            elif isinstance(item, str) and item.strip():
+                raw_key = item.split(' as ')[-1].split(' AS ')[-1].strip()
+                normalized_key = raw_key.replace('count(*)', 'count').replace('(', '_').replace(')', '').replace('*', 'all').replace(' ', '_')
+                inferred_metrics.append({'key': normalized_key or 'metric_auto'})
+
+        seen = set()
+        normalized_metrics = []
+        for item in inferred_metrics:
+            key = item.get('key') if isinstance(item, dict) else None
+            if key and key not in seen:
+                seen.add(key)
+                normalized_metrics.append({'key': key})
+        return normalized_metrics
+
+    def _has_contract_content(self, version):
+        return bool(
+            getattr(version, 'source_contract_json', None)
+            and getattr(version, 'metric_definitions_json', None)
+            and getattr(version, 'output_schema_json', None)
+        )
+
+    def _coerce_list(self, value):
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return list(value)
+        return [value]
+
+    def _coerce_dict(self, value, default=None):
+        if value is None:
+            return dict(default or {})
+        if isinstance(value, dict):
+            return dict(value)
+        raise ValueError('Payload JSON analytics dataset harus berbentuk object/dict.')
+
     def _apply_actor_audit(self, obj, actor=None, action='create'):
-        """Helper internal untuk apply actor audit.
-
-        Args:
-            obj (Any): Parameter `obj` untuk operasi apply actor audit.
-            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
-            action (Any): Parameter `action` untuk operasi apply actor audit.
-
-        Returns:
-            Any: Nilai hasil eksekusi fungsi service.
-
-        Example:
-            >>> service._apply_actor_audit(obj=..., actor=..., action=...)
-        """
+        """Helper internal untuk apply actor audit."""
 
         if not actor:
             return obj
@@ -766,109 +1096,157 @@ class AnalyticsDatasetRunService(BaseService):
 
 
 class AnalyticsReportService(BaseService):
-    """Service pengelolaan definisi report analytics dan versinya.
+    """Service pengelolaan definisi report analytics dan versi semi-CMS-nya.
 
-    Class ini dipakai sebagai lapisan orkestrasi business rule di atas repository
-    dan model, sehingga route/controller tidak perlu menyimpan logika domain.
-
-    Example:
-        >>> service = AnalyticsReportService()
+    Report diperlakukan sebagai layer semi-CMS yang membaca kontrak dataset
+    terkurasi, bukan source mentah langsung. Karena itu service ini menjaga
+    boundary dataset -> report dengan relasi eksplisit ke dataset dan dataset
+    version aktif.
     """
 
-    def __init__(self, report_definition_repository=None, report_version_repository=None):
-        """Inisialisasi class beserta dependency yang diperlukan.
+    DEFAULT_REPORT_BLOCKS = [
+        'metric_cards',
+        'plotly_timeseries',
+        'detail_table',
+        'narrative',
+    ]
+    DEFAULT_PERIOD_PRESETS = [
+        'current_quarter',
+        'current_semester',
+        'current_year',
+    ]
 
-        Args:
-            report_definition_repository (Any): Parameter `report_definition_repository` untuk operasi init.
-            report_version_repository (Any): Parameter `report_version_repository` untuk operasi init.
-
-        Returns:
-            Any: Nilai hasil eksekusi fungsi service.
-
-        Example:
-            >>> service = AnalyticsReportService()
-        """
+    def __init__(self, report_definition_repository=None, report_version_repository=None, dataset_repository=None, dataset_version_repository=None):
+        """Inisialisasi dependency service report dan dataset."""
 
         super().__init__(repository=report_definition_repository or AnalyticsReportDefinitionRepository())
         self.version_repository = report_version_repository or AnalyticsReportVersionRepository()
+        self.dataset_repository = dataset_repository or AnalyticsDatasetRepository()
+        self.dataset_version_repository = dataset_version_repository or AnalyticsDatasetVersionRepository()
+
+    def create_report_bundle(self, data, actor=None):
+        """Membuat report definition sekaligus draft version awal berbasis dataset."""
+
+        report_data = data.get('report') if isinstance(data.get('report'), dict) else data
+        draft_data = data.get('draft_version') if isinstance(data.get('draft_version'), dict) else {}
+
+        report = self.create_report_definition(report_data, actor=actor)
+        draft_version = self.create_report_version(report.id, draft_data, actor=actor)
+        return {
+            'report': report,
+            'draft_version': draft_version,
+        }
+
+    def update_report_bundle(self, report_definition_id, data, actor=None):
+        """Memperbarui report definition dan draft version aktif secara atomik."""
+
+        report_data = data.get('report') if isinstance(data.get('report'), dict) else data
+        draft_data = data.get('draft_version') if isinstance(data.get('draft_version'), dict) else {}
+
+        report = self.update_report_definition(report_definition_id, report_data, actor=actor)
+        draft_version = self.upsert_draft_version(report.id, draft_data, actor=actor)
+        return {
+            'report': report,
+            'draft_version': draft_version,
+        }
 
     def create_report_definition(self, data, actor=None):
-        """Membuat definisi report analytics baru.
+        """Membuat definisi report analytics baru."""
 
-        Args:
-            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
-            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
-
-        Returns:
-            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
-
-        Example:
-            >>> service.create_report_definition(data=..., actor=...)
-        """
-
+        normalized = self._normalize_report_definition_payload(data)
         report = AnalyticsReportDefinition(
             uuid=str(uuid.uuid4()),
-            report_key=data.get('report_key'),
-            name=data.get('name') or data.get('report_key') or 'Untitled report',
-            description=data.get('description'),
-            report_type=data.get('report_type', AnalyticsReportDefinition.TYPE_CUSTOM),
-            category_key=data.get('category_key'),
-            status=data.get('status', AnalyticsReportDefinition.STATUS_DRAFT),
-            is_active=data.get('is_active', True),
-            settings_json=data.get('settings_json') or {},
-            tags_json=data.get('tags_json') or [],
+            report_key=normalized['report_key'],
+            dataset_id=normalized['dataset_id'],
+            name=normalized['name'],
+            description=normalized['description'],
+            report_type=normalized['report_type'],
+            category_key=normalized['category_key'],
+            status=normalized['status'],
+            is_active=normalized['is_active'],
+            settings_json=normalized['settings_json'],
+            tags_json=normalized['tags_json'],
         )
         self._apply_actor_audit(report, actor, action='create')
         return self.repository.save(report)
 
+    def update_report_definition(self, report_definition_id, data, actor=None):
+        """Memperbarui definisi report analytics yang sudah ada."""
+
+        report = self.repository.get_by_id(report_definition_id)
+        if not report:
+            raise ValueError('Analytics report definition tidak ditemukan.')
+
+        normalized = self._normalize_report_definition_payload(data, existing=report)
+        report.report_key = normalized['report_key']
+        report.dataset_id = normalized['dataset_id']
+        report.name = normalized['name']
+        report.description = normalized['description']
+        report.report_type = normalized['report_type']
+        report.category_key = normalized['category_key']
+        report.status = normalized['status']
+        report.is_active = normalized['is_active']
+        report.settings_json = normalized['settings_json']
+        report.tags_json = normalized['tags_json']
+        self._apply_actor_audit(report, actor, action='update')
+        return self.repository.save(report)
+
     def create_report_version(self, report_definition_id, data, actor=None):
-        """Membuat version report analytics baru.
+        """Membuat version report analytics baru."""
 
-        Args:
-            report_definition_id (Any): Primary key internal definisi report target.
-            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
-            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+        report = self.repository.get_by_id(report_definition_id)
+        if not report:
+            raise ValueError('Analytics report definition tidak ditemukan.')
 
-        Returns:
-            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
-
-        Example:
-            >>> service.create_report_version(report_definition_id=..., data=..., actor=...)
-        """
-
+        normalized = self._normalize_report_version_payload(report, data)
         version = AnalyticsReportVersion(
             uuid=str(uuid.uuid4()),
             report_definition_id=report_definition_id,
             version_number=self.version_repository.get_next_version_number(report_definition_id),
-            status=data.get('status', AnalyticsReportVersion.STATUS_DRAFT),
-            is_current_draft=data.get('is_current_draft', True),
-            is_current_published=data.get('is_current_published', False),
-            title=data.get('title') or f'Report version {report_definition_id}',
-            meta_description=data.get('meta_description'),
-            structure_json=data.get('structure_json') or {},
-            narrative_guidance_json=data.get('narrative_guidance_json') or {},
-            published_at=data.get('published_at'),
+            dataset_version_id=normalized['dataset_version_id'],
+            status=normalized['status'],
+            is_current_draft=normalized['is_current_draft'],
+            is_current_published=normalized['is_current_published'],
+            title=normalized['title'],
+            meta_description=normalized['meta_description'],
+            structure_json=normalized['structure_json'],
+            narrative_guidance_json=normalized['narrative_guidance_json'],
+            published_at=normalized['published_at'],
         )
         self._apply_actor_audit(version, actor, action='create')
         return self.version_repository.save(version)
 
+    def upsert_draft_version(self, report_definition_id, data, actor=None):
+        """Meng-update draft aktif atau membuat draft baru bila belum ada."""
+
+        report = self.repository.get_by_id(report_definition_id)
+        if not report:
+            raise ValueError('Analytics report definition tidak ditemukan.')
+
+        draft_version = self.version_repository.get_draft_version(report_definition_id)
+        if not draft_version:
+            return self.create_report_version(report_definition_id, data, actor=actor)
+
+        normalized = self._normalize_report_version_payload(report, data, existing=draft_version)
+        draft_version.dataset_version_id = normalized['dataset_version_id']
+        draft_version.status = normalized['status']
+        draft_version.is_current_draft = normalized['is_current_draft']
+        draft_version.is_current_published = normalized['is_current_published']
+        draft_version.title = normalized['title']
+        draft_version.meta_description = normalized['meta_description']
+        draft_version.structure_json = normalized['structure_json']
+        draft_version.narrative_guidance_json = normalized['narrative_guidance_json']
+        self._apply_actor_audit(draft_version, actor, action='update')
+        return self.version_repository.save(draft_version)
+
     def publish_report_version(self, version_id, actor=None):
-        """Mempublish report version dan menandai definisi report sebagai active.
-
-        Args:
-            version_id (Any): Primary key internal version target.
-            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
-
-        Returns:
-            Any: Entity atau ringkasan hasil operasi bisnis yang sudah dipersist.
-
-        Example:
-            >>> service.publish_report_version(version_id=..., actor=...)
-        """
+        """Mempublish report version dan menandai definisi report sebagai active."""
 
         version = self.version_repository.get_by_id(version_id)
         if not version:
             raise ValueError('Analytics report version tidak ditemukan.')
+        if not getattr(version, 'dataset_version_id', None):
+            raise ValueError('Report version wajib terhubung ke dataset version sebelum dipublish.')
 
         try:
             self.version_repository.archive_published_others(
@@ -886,6 +1264,8 @@ class AnalyticsReportService(BaseService):
             if report_definition:
                 report_definition.status = AnalyticsReportDefinition.STATUS_ACTIVE
                 report_definition.is_active = True
+                if not getattr(report_definition, 'dataset_id', None) and getattr(version.definition, 'dataset_id', None):
+                    report_definition.dataset_id = version.definition.dataset_id
                 self._apply_actor_audit(report_definition, actor, action='update')
                 self.repository.save(report_definition)
 
@@ -893,6 +1273,155 @@ class AnalyticsReportService(BaseService):
         except Exception:
             db.session.rollback()
             raise
+
+    def _normalize_report_definition_payload(self, data, existing=None):
+        data = data or {}
+        settings_json = self._coerce_dict(data.get('settings_json'), getattr(existing, 'settings_json', None) or {})
+        tags_json = self._coerce_list(data.get('tags_json', getattr(existing, 'tags_json', None) or []))
+        dataset_id = data.get('dataset_id', getattr(existing, 'dataset_id', None))
+        if dataset_id in ('', None):
+            dataset_id = None
+        if dataset_id is not None:
+            dataset_id = int(dataset_id)
+            dataset = self.dataset_repository.get_by_id(dataset_id)
+            if not dataset:
+                raise ValueError('Dataset analytics untuk report tidak ditemukan.')
+            settings_json = {
+                **settings_json,
+                'linked_dataset_key': getattr(dataset, 'dataset_key', None),
+                'linked_dataset_name': getattr(dataset, 'name', None),
+            }
+
+        report_key = data.get('report_key', getattr(existing, 'report_key', None))
+        if not report_key:
+            raise ValueError('report_key wajib diisi.')
+
+        return {
+            'report_key': report_key,
+            'dataset_id': dataset_id,
+            'name': data.get('name') or getattr(existing, 'name', None) or report_key,
+            'description': data.get('description', getattr(existing, 'description', None)),
+            'report_type': data.get('report_type', getattr(existing, 'report_type', None) or AnalyticsReportDefinition.TYPE_CUSTOM),
+            'category_key': data.get('category_key', getattr(existing, 'category_key', None)),
+            'status': data.get('status', getattr(existing, 'status', None) or AnalyticsReportDefinition.STATUS_DRAFT),
+            'is_active': data.get('is_active', getattr(existing, 'is_active', None) if existing is not None else True),
+            'settings_json': settings_json,
+            'tags_json': tags_json,
+        }
+
+    def _normalize_report_version_payload(self, report, data, existing=None):
+        data = data or {}
+        dataset_version_id = data.get('dataset_version_id', getattr(existing, 'dataset_version_id', None))
+        if dataset_version_id in ('', None):
+            dataset_version_id = None
+        if dataset_version_id is None and getattr(report, 'dataset_id', None):
+            published_version = self.dataset_version_repository.get_published_version(report.dataset_id)
+            draft_version = self.dataset_version_repository.get_draft_version(report.dataset_id)
+            preferred_version = draft_version or published_version
+            dataset_version_id = getattr(preferred_version, 'id', None)
+        if dataset_version_id is not None:
+            dataset_version_id = int(dataset_version_id)
+            dataset_version = self.dataset_version_repository.get_by_id(dataset_version_id)
+            if not dataset_version:
+                raise ValueError('Dataset version untuk report tidak ditemukan.')
+        else:
+            dataset_version = None
+
+        structure_json = self._coerce_dict(data.get('structure_json'), getattr(existing, 'structure_json', None) or {})
+        structure_json = self._normalize_report_structure(report, dataset_version, structure_json, data)
+        narrative_guidance_json = self._coerce_dict(data.get('narrative_guidance_json'), getattr(existing, 'narrative_guidance_json', None) or {})
+        narrative_guidance_json = {
+            **narrative_guidance_json,
+            'intro': data.get('narrative_intro', narrative_guidance_json.get('intro')),
+            'methodology': data.get('narrative_methodology', narrative_guidance_json.get('methodology')),
+            'summary_prompt': data.get('summary_prompt', narrative_guidance_json.get('summary_prompt')),
+        }
+
+        return {
+            'dataset_version_id': dataset_version_id,
+            'status': data.get('status', getattr(existing, 'status', None) or AnalyticsReportVersion.STATUS_DRAFT),
+            'is_current_draft': data.get('is_current_draft', getattr(existing, 'is_current_draft', None) if existing is not None else True),
+            'is_current_published': data.get('is_current_published', getattr(existing, 'is_current_published', None) if existing is not None else False),
+            'title': data.get('title') or getattr(existing, 'title', None) or getattr(report, 'name', None) or 'Untitled report version',
+            'meta_description': data.get('meta_description', getattr(existing, 'meta_description', None)),
+            'structure_json': structure_json,
+            'narrative_guidance_json': narrative_guidance_json,
+            'published_at': data.get('published_at', getattr(existing, 'published_at', None)),
+        }
+
+    def _normalize_report_structure(self, report, dataset_version, structure_json, data):
+        blocks = self._coerce_list(data.get('blocks') or structure_json.get('blocks') or structure_json.get('block_definitions'))
+        if not blocks:
+            dataset = getattr(report, 'dataset', None)
+            dataset_settings = getattr(dataset, 'settings_json', None) or {}
+            suggested_blocks = self._coerce_list(dataset_settings.get('suggested_report_blocks'))
+            blocks = [{'type': item, 'title': str(item).replace('_', ' ').title()} for item in (suggested_blocks or self.DEFAULT_REPORT_BLOCKS)]
+        else:
+            normalized_blocks = []
+            for index, block in enumerate(blocks, start=1):
+                if isinstance(block, str):
+                    normalized_blocks.append({'type': block, 'title': block.replace('_', ' ').title(), 'order': index})
+                elif isinstance(block, dict):
+                    normalized_blocks.append({
+                        'type': block.get('type') or block.get('block_type') or f'block_{index}',
+                        'title': block.get('title') or block.get('label') or f'Block {index}',
+                        'order': block.get('order', index),
+                        'config': self._coerce_dict(block.get('config'), {}),
+                    })
+            blocks = normalized_blocks
+        if not blocks:
+            raise ValueError('Report builder wajib memiliki minimal satu block.')
+
+        period_config = self._coerce_dict(data.get('period_preset_config'), structure_json.get('period_preset_config') or {})
+        supported_period_modes = self._coerce_list(data.get('supported_period_modes') or period_config.get('supported_period_modes'))
+        quick_presets = self._coerce_list(data.get('quick_presets') or period_config.get('quick_presets'))
+        if not supported_period_modes:
+            dataset = getattr(report, 'dataset', None)
+            dataset_settings = getattr(dataset, 'settings_json', None) or {}
+            supported_period_modes = self._coerce_list(dataset_settings.get('supported_period_modes')) or ['quarterly', 'semester', 'yearly']
+        if not quick_presets:
+            quick_presets = self.DEFAULT_PERIOD_PRESETS
+
+        filter_schema = self._coerce_dict(data.get('filter_schema'), structure_json.get('filter_schema') or {})
+        layout = self._coerce_dict(data.get('layout'), structure_json.get('layout') or {})
+        dataset_contract = self._coerce_dict(structure_json.get('dataset_contract'), {})
+        if dataset_version:
+            dataset_contract = {
+                **dataset_contract,
+                'dataset_id': getattr(report, 'dataset_id', None),
+                'dataset_version_id': dataset_version.id,
+                'dataset_version_number': dataset_version.version_number,
+                'grain_key': getattr(dataset_version, 'grain_key', None),
+                'output_schema_json': getattr(dataset_version, 'output_schema_json', None) or [],
+                'dimension_definitions_json': getattr(dataset_version, 'dimension_definitions_json', None) or [],
+                'metric_definitions_json': getattr(dataset_version, 'metric_definitions_json', None) or [],
+            }
+
+        return {
+            **structure_json,
+            'dataset_contract': dataset_contract,
+            'period_preset_config': {
+                **period_config,
+                'supported_period_modes': supported_period_modes,
+                'quick_presets': quick_presets,
+                'default_mode': data.get('default_period_mode', period_config.get('default_mode') or supported_period_modes[0]),
+            },
+            'filter_schema': filter_schema,
+            'layout': layout,
+            'blocks': blocks,
+        }
+
+    def _coerce_dict(self, value, default=None):
+        if isinstance(value, dict):
+            return value
+        return default or {}
+
+    def _coerce_list(self, value):
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return list(value)
+        return [value]
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
         """Helper internal untuk apply actor audit.

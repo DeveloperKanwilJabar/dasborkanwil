@@ -351,6 +351,7 @@ class AnalyticsReportDefinition(db.Model):
     uuid = db.Column('uuid', db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
 
     report_key = db.Column('report_key', db.String(150), unique=True, nullable=False)
+    dataset_id = db.Column('dataset_id', db.Integer(), db.ForeignKey('analytics_datasets.id'), nullable=True, index=True)
     name = db.Column('name', db.String(255), nullable=False)
     description = db.Column('description', db.Text(), nullable=True)
     report_type = db.Column('report_type', db.String(50), nullable=False, server_default=TYPE_CUSTOM, index=True)
@@ -378,6 +379,7 @@ class AnalyticsReportDefinition(db.Model):
         lazy='select',
         cascade='save-update, merge',
     )
+    dataset = relationship('AnalyticsDataset', lazy='joined')
 
     __table_args__ = (
         db.Index('ix_analytics_report_definitions_deleted_at', 'deleted_at'),
@@ -398,6 +400,7 @@ class AnalyticsReportVersion(db.Model):
 
     report_definition_id = db.Column('report_definition_id', db.Integer(), db.ForeignKey('analytics_report_definitions.id'), nullable=False, index=True)
     version_number = db.Column('version_number', db.Integer(), nullable=False)
+    dataset_version_id = db.Column('dataset_version_id', db.Integer(), db.ForeignKey('analytics_dataset_versions.id'), nullable=True, index=True)
 
     status = db.Column('status', db.String(30), nullable=False, server_default=STATUS_DRAFT, index=True)
     is_current_draft = db.Column('is_current_draft', db.Boolean(), nullable=False, server_default='true', index=True)
@@ -425,6 +428,7 @@ class AnalyticsReportVersion(db.Model):
         back_populates='versions',
         lazy='joined',
     )
+    dataset_version = relationship('AnalyticsDatasetVersion', lazy='joined')
     indicator_mappings = relationship(
         'AnalyticsReportVersionIndicator',
         back_populates='report_version',

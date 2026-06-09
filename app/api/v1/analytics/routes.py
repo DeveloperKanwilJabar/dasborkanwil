@@ -13,6 +13,7 @@ from app.core.extensions import db
 from app.core.utils import json_response
 from app.modules.analytics.services import (
     AnalyticsDatasetRunService,
+    AnalyticsDatasetService,
     AnalyticsIndicatorResultService,
     AnalyticsIndicatorService,
     AnalyticsQueryService,
@@ -61,6 +62,27 @@ CREATE_DATASET_RUN_DOC = build_spec(
     parameters=[path_parameter('dataset_id', description='ID dataset analytics.', example=77), path_parameter('dataset_version_id', description='ID dataset version yang akan dijalankan.', example=78)],
     responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics dataset run berhasil dimulai.'), 'Analytics dataset run berhasil dimulai.', success_status=201),
 )
+CREATE_DATASET_DOC = build_spec(
+    tag='Analytics',
+    summary='Buat analytics dataset beserta draft contract awal.',
+    description='Membuat definition dataset lalu langsung menyiapkan draft version pertamanya agar source picker, selected fields, dimension, metric, dan report readiness bisa dikelola sebagai satu flow.',
+    parameters=[],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics dataset berhasil dibuat.'), 'Analytics dataset berhasil dibuat.', success_status=201),
+)
+UPDATE_DATASET_DOC = build_spec(
+    tag='Analytics',
+    summary='Perbarui analytics dataset dan draft contract aktif.',
+    description='Mengubah metadata dataset lalu meng-update draft version aktif. Bila draft belum ada, backend akan membuat draft baru tanpa merusak versi published sebelumnya.',
+    parameters=[path_parameter('dataset_id', description='ID dataset analytics.', example=77)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics dataset berhasil diperbarui.'), 'Analytics dataset berhasil diperbarui.'),
+)
+PUBLISH_DATASET_VERSION_DOC = build_spec(
+    tag='Analytics',
+    summary='Publish dataset version.',
+    description='Mempublish draft contract dataset agar siap dipakai dataset run dan report dinamis.',
+    parameters=[path_parameter('version_id', description='ID dataset version.', example=78)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics dataset version berhasil dipublish.'), 'Analytics dataset version berhasil dipublish.'),
+)
 LIST_REPORTS_DOC = build_spec(
     tag='Analytics',
     summary='Ambil daftar analytics report.',
@@ -98,10 +120,17 @@ LIST_INDICATOR_RESULTS_DOC = build_spec(
 )
 CREATE_REPORT_DOC = build_spec(
     tag='Analytics',
-    summary='Buat report definition baru.',
-    description='Membuat definisi report analytics baru sebelum memiliki version draft/published.',
+    summary='Buat report analytics beserta draft builder awal.',
+    description='Membuat definisi report yang terhubung ke dataset lalu langsung menyiapkan draft semi-CMS berisi block, preset periode, filter schema, dan narrative guidance.',
     parameters=[],
     responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics report berhasil dibuat.'), 'Analytics report berhasil dibuat.', success_status=201),
+)
+UPDATE_REPORT_DOC = build_spec(
+    tag='Analytics',
+    summary='Perbarui report analytics dan draft builder aktif.',
+    description='Mengubah metadata report, relasi dataset, dataset version, serta schema builder report seperti block/layout/filter/preset periode tanpa perlu scroll ke metadata terpisah.',
+    parameters=[path_parameter('report_definition_id', description='ID report definition.', example=21)],
+    responses=standard_responses(envelope_schema({'type': 'object'}, message_example='Analytics report berhasil diperbarui.'), 'Analytics report berhasil diperbarui.'),
 )
 CREATE_REPORT_VERSION_DOC = build_spec(
     tag='Analytics',
@@ -205,6 +234,7 @@ def serialize_report_definition(report):
         'id': report.id,
         'uuid': report.uuid,
         'report_key': report.report_key,
+        'dataset_id': getattr(report, 'dataset_id', None),
         'name': report.name,
         'description': report.description,
         'report_type': report.report_type,
@@ -228,6 +258,7 @@ def serialize_report_version(version):
         'uuid': version.uuid,
         'report_definition_id': version.report_definition_id,
         'version_number': version.version_number,
+        'dataset_version_id': getattr(version, 'dataset_version_id', None),
         'status': version.status,
         'is_current_draft': version.is_current_draft,
         'is_current_published': version.is_current_published,
@@ -523,6 +554,39 @@ def serialize_indicator_workspace_item(item):
     }
 
 
+@api_analytics_bp.route('/datasets', methods=['POST'])
+@swag_from(CREATE_DATASET_DOC)
+def create_dataset_definition():
+    """Membuat dataset analytics beserta draft contract awal.
+
+    Payload create menggabungkan definition dataset dan draft contract agar flow
+    `source -> selected fields -> dimension/metric -> report readiness` bisa
+    disimpan sekaligus dari UI builder Domain 5.
+    """
+
+    data = request.get_json(silent=True) or {}
+    try:
+        result = AnalyticsDatasetService().create_dataset_bundle(data, actor=current_actor())
+        return json_response(
+            True,
+            'Analytics dataset berhasil dibuat.',
+            {
+                'dataset': serialize_dataset_definition(result.get('dataset')),
+                'draft_version': serialize_dataset_version(result.get('draft_version')),
+            },
+            status=201,
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except PermissionError as error:
+        current_app.logger.warning('Create analytics dataset API authorization error: %s', str(error))
+        return authorization_error_response(error)
+    except Exception as error:
+        db.session.rollback()
+        current_app.logger.error('Create analytics dataset API error: %s', str(error))
+        return json_response(False, 'Gagal membuat analytics dataset.', status=500)
+
+
 @api_analytics_bp.route('/datasets', methods=['GET'])
 @swag_from(LIST_DATASETS_DOC)
 def list_dataset_definitions():
@@ -561,6 +625,42 @@ def get_dataset_workspace(dataset_id):
     except Exception as error:
         current_app.logger.error('Get analytics dataset detail API error: %s', str(error))
         return json_response(False, 'Gagal mengambil detail analytics dataset.', status=500)
+
+
+@api_analytics_bp.route('/datasets/<int:dataset_id>', methods=['PUT'])
+@swag_from(UPDATE_DATASET_DOC)
+def update_dataset_definition(dataset_id):
+    """Memperbarui dataset analytics dan draft contract aktif.
+
+    Route ini dipakai editor dataset supaya perubahan source picker, selected
+    fields, metric, dimension, dan notes semi-CMS report tetap terkonsolidasi
+    pada satu save action.
+    """
+
+    data = request.get_json(silent=True) or {}
+    try:
+        result = AnalyticsDatasetService().update_dataset_bundle(
+            dataset_id=dataset_id,
+            data=data,
+            actor=current_actor(),
+        )
+        return json_response(
+            True,
+            'Analytics dataset berhasil diperbarui.',
+            {
+                'dataset': serialize_dataset_definition(result.get('dataset')),
+                'draft_version': serialize_dataset_version(result.get('draft_version')),
+            },
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except PermissionError as error:
+        current_app.logger.warning('Update analytics dataset API authorization error: %s', str(error))
+        return authorization_error_response(error)
+    except Exception as error:
+        db.session.rollback()
+        current_app.logger.error('Update analytics dataset API error: %s', str(error))
+        return json_response(False, 'Gagal memperbarui analytics dataset.', status=500)
 
 
 @api_analytics_bp.route('/datasets/<int:dataset_id>/runs', methods=['GET'])
@@ -633,6 +733,30 @@ def create_dataset_run(dataset_id, dataset_version_id):
         db.session.rollback()
         current_app.logger.error('Create analytics dataset run API error: %s', str(error))
         return json_response(False, 'Gagal memulai analytics dataset run.', status=500)
+
+
+@api_analytics_bp.route('/dataset-versions/<int:version_id>/publish', methods=['POST'])
+@swag_from(PUBLISH_DATASET_VERSION_DOC)
+def publish_dataset_version(version_id):
+    """Mempublish dataset contract agar siap dipakai dataset run dan report dinamis."""
+
+    request.get_json(silent=True) or {}
+    try:
+        version = AnalyticsDatasetService().publish_dataset_version(version_id, actor=current_actor())
+        return json_response(
+            True,
+            'Analytics dataset version berhasil dipublish.',
+            {'dataset_version': serialize_dataset_version(version)},
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except PermissionError as error:
+        current_app.logger.warning('Publish analytics dataset version API authorization error: %s', str(error))
+        return authorization_error_response(error)
+    except Exception as error:
+        db.session.rollback()
+        current_app.logger.error('Publish analytics dataset version API error: %s', str(error))
+        return json_response(False, 'Gagal publish analytics dataset version.', status=500)
 
 
 @api_analytics_bp.route('/reports', methods=['GET'])
@@ -752,10 +876,26 @@ def list_indicator_results():
 @api_analytics_bp.route('/reports', methods=['POST'])
 @swag_from(CREATE_REPORT_DOC)
 def create_report_definition():
+    """Membuat report analytics sekaligus draft builder semi-CMS.
+
+    Payload dapat memakai bentuk flat atau nested:
+    - report: metadata report + dataset_id
+    - draft_version: dataset_version_id, blocks, filter_schema, layout,
+      period_preset_config, quick_presets, supported_period_modes,
+      meta_description, narrative_*.
+    """
     data = request.get_json(silent=True) or {}
     try:
-        report = AnalyticsReportService().create_report_definition(data, actor=current_actor())
-        return json_response(True, 'Analytics report berhasil dibuat.', {'report': serialize_report_definition(report)}, status=201)
+        result = AnalyticsReportService().create_report_bundle(data, actor=current_actor())
+        return json_response(
+            True,
+            'Analytics report berhasil dibuat.',
+            {
+                'report': serialize_report_definition(result.get('report')),
+                'draft_version': serialize_report_version(result.get('draft_version')),
+            },
+            status=201,
+        )
     except ValueError as error:
         return validation_error_response(error)
     except PermissionError as error:
@@ -765,6 +905,36 @@ def create_report_definition():
         db.session.rollback()
         current_app.logger.error('Create analytics report API error: %s', str(error))
         return json_response(False, 'Gagal membuat analytics report.', status=500)
+
+
+@api_analytics_bp.route('/reports/<int:report_definition_id>', methods=['PUT'])
+@swag_from(UPDATE_REPORT_DOC)
+def update_report_definition(report_definition_id):
+    """Memperbarui report analytics dan draft builder aktif."""
+    data = request.get_json(silent=True) or {}
+    try:
+        result = AnalyticsReportService().update_report_bundle(
+            report_definition_id,
+            data,
+            actor=current_actor(),
+        )
+        return json_response(
+            True,
+            'Analytics report berhasil diperbarui.',
+            {
+                'report': serialize_report_definition(result.get('report')),
+                'draft_version': serialize_report_version(result.get('draft_version')),
+            },
+        )
+    except ValueError as error:
+        return validation_error_response(error)
+    except PermissionError as error:
+        current_app.logger.warning('Update analytics report API authorization error: %s', str(error))
+        return authorization_error_response(error)
+    except Exception as error:
+        db.session.rollback()
+        current_app.logger.error('Update analytics report API error: %s', str(error))
+        return json_response(False, 'Gagal memperbarui analytics report.', status=500)
 
 
 @api_analytics_bp.route('/reports/<int:report_definition_id>/versions', methods=['POST'])

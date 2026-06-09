@@ -1,0 +1,239 @@
+{% extends 'partials/base.html' %}
+{% block title %}Workspace Dataset Analytics{% endblock %}
+
+{% set active_version = draft_version or published_version %}
+{% set source_contract = active_version.source_contract_json if active_version and active_version.source_contract_json else {} %}
+{% set dataset_settings = dataset.settings_json if dataset and dataset.settings_json else {} %}
+{% set selected_fields = source_contract.get('selected_fields', []) or [] %}
+{% set preferred_visualizations = dataset_settings.get('preferred_visualizations', []) or [] %}
+{% set supported_period_modes = dataset_settings.get('supported_period_modes', []) or [] %}
+{% set suggested_report_blocks = dataset_settings.get('suggested_report_blocks', []) or [] %}
+
+{% block content %}
+<div class="main-content">
+<div class="page-content">
+  <div class="container-fluid">
+    <div class="row mb-3">
+      <div class="col-12">
+        <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+          <div>
+            <h4 class="mb-sm-0">Workspace Dataset Analytics</h4>
+            <p class="text-muted mb-0">Dataset adalah kontrak analitik di tengah antara source mentah dan report semi-CMS.</p>
+          </div>
+          <div class="page-title-right d-flex gap-2">
+            <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-light">Katalog Dataset</a>
+            {% if dataset %}
+            <a href="{{ url_for('analytics_web.analytics_dataset_edit', dataset_id=dataset.id) }}" class="btn btn-soft-primary">Edit Dataset</a>
+            {% if linked_report_item and linked_report_item.get('report') %}
+            <a href="{{ url_for('analytics_web.analytics_report_edit', report_definition_id=linked_report_item.get('report').id) }}" class="btn btn-soft-info">Edit Report</a>
+            {% else %}
+            <a href="{{ url_for('analytics_web.analytics_report_create', dataset_id=dataset.id) }}" class="btn btn-soft-info">Buat Report</a>
+            {% endif %}
+            <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=dataset.id) }}" class="btn btn-primary">Buka Report</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if error_message %}
+    <div class="alert alert-danger">{{ error_message }}</div>
+    {% endif %}
+
+    <div class="row g-3 mb-3">
+      <div class="col-xl-3 col-md-6">
+        <div class="card card-animate h-100">
+          <div class="card-body">
+            <p class="text-uppercase fw-medium text-muted mb-2">Source Summary</p>
+            <h5 class="mb-1">{{ dataset.source_domain if dataset else '-' }}</h5>
+            <p class="text-muted mb-0">{{ dataset.source_type if dataset else '-' }}</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-md-6">
+        <div class="card card-animate h-100">
+          <div class="card-body">
+            <p class="text-uppercase fw-medium text-muted mb-2">Selected Fields</p>
+            <h5 class="mb-1">{{ selected_fields|length }}</h5>
+            <p class="text-muted mb-0">Field kurasi siap masuk dataset contract.</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-md-6">
+        <div class="card card-animate h-100">
+          <div class="card-body">
+            <p class="text-uppercase fw-medium text-muted mb-2">Versi Dataset</p>
+            <h5 class="mb-1">{{ versions|length }}</h5>
+            <p class="text-muted mb-0">Draft dan published version terkelola terpisah.</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-md-6">
+        <div class="card card-animate h-100 bg-primary-subtle border-primary-subtle">
+          <div class="card-body">
+            <p class="text-uppercase fw-medium text-primary mb-2">Latest Run Snapshot</p>
+            <h5 class="mb-1">{{ latest_run.status if latest_run else 'belum ada run' }}</h5>
+            <p class="text-muted mb-0">{{ latest_run.result_row_count if latest_run and latest_run.result_row_count is not none else 0 }} row hasil materialisasi terakhir.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-xxl-8">
+        <div class="card">
+          <div class="card-header d-flex align-items-center justify-content-between">
+            <h5 class="card-title mb-0">Kontrak Dataset Aktif</h5>
+            {% if active_version %}
+            <span class="badge bg-soft-secondary text-secondary">Version {{ active_version.version_number }} · {{ active_version.status }}</span>
+            {% endif %}
+          </div>
+          <div class="card-body">
+            <div class="row g-3 mb-3">
+              <div class="col-lg-6">
+                <div class="border rounded p-3 h-100">
+                  <h6 class="mb-3">Source Summary</h6>
+                  <dl class="row mb-0">
+                    <dt class="col-sm-4">Dataset</dt><dd class="col-sm-8">{{ dataset.name if dataset else '-' }}</dd>
+                    <dt class="col-sm-4">Primary Ref</dt><dd class="col-sm-8">{{ dataset.primary_source_ref if dataset else '-' }}</dd>
+                    <dt class="col-sm-4">Grain</dt><dd class="col-sm-8">{{ active_version.grain_key if active_version else '-' }}</dd>
+                    <dt class="col-sm-4">Freshness</dt><dd class="col-sm-8">{{ active_version.freshness_source_type if active_version else '-' }}</dd>
+                  </dl>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="border rounded p-3 h-100">
+                  <h6 class="mb-3">Report Readiness</h6>
+                  <dl class="row mb-0">
+                    <dt class="col-sm-4">Family</dt><dd class="col-sm-8">{{ dataset_settings.get('report_family', '-') }}</dd>
+                    <dt class="col-sm-4">Visual</dt><dd class="col-sm-8">{{ preferred_visualizations|join(', ') if preferred_visualizations else '-' }}</dd>
+                    <dt class="col-sm-4">Periode</dt><dd class="col-sm-8">{{ supported_period_modes|join(', ') if supported_period_modes else '-' }}</dd>
+                    <dt class="col-sm-4">Blocks</dt><dd class="col-sm-8">{{ suggested_report_blocks|join(', ') if suggested_report_blocks else '-' }}</dd>
+                  </dl>
+                </div>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <h6 class="mb-2">Field Kurasi Dataset</h6>
+              {% if selected_fields %}
+              <div class="d-flex flex-wrap gap-2">
+                {% for field in selected_fields %}
+                <span class="badge bg-light text-body border">{{ field }}</span>
+                {% endfor %}
+              </div>
+              {% else %}
+              <p class="text-muted mb-0">Belum ada selected field yang dikurasi.</p>
+              {% endif %}
+            </div>
+
+            <div class="row g-3">
+              <div class="col-lg-6">
+                <h6 class="mb-2">Dimension Definitions</h6>
+                <pre class="bg-light-subtle border rounded p-3 small mb-0" style="max-height: 300px; overflow:auto;">{{ ((active_version.dimension_definitions_json | default([], true)) if active_version else []) | tojson(indent=2) }}</pre>
+              </div>
+              <div class="col-lg-6">
+                <h6 class="mb-2">Metric Definitions</h6>
+                <pre class="bg-light-subtle border rounded p-3 small mb-0" style="max-height: 300px; overflow:auto;">{{ ((active_version.metric_definitions_json | default([], true)) if active_version else []) | tojson(indent=2) }}</pre>
+              </div>
+              <div class="col-lg-6">
+                <h6 class="mb-2">Default Filters</h6>
+                <pre class="bg-light-subtle border rounded p-3 small mb-0" style="max-height: 260px; overflow:auto;">{{ ((active_version.default_filters_json | default({}, true)) if active_version else {}) | tojson(indent=2) }}</pre>
+              </div>
+              <div class="col-lg-6">
+                <h6 class="mb-2">Query & Transform</h6>
+                <pre class="bg-light-subtle border rounded p-3 small mb-0" style="max-height: 260px; overflow:auto;">{{ {
+  'query_spec_json': (active_version.query_spec_json | default({}, true)) if active_version else {},
+  'transform_spec_json': (active_version.transform_spec_json | default({}, true)) if active_version else {},
+  'join_registry_spec_json': (active_version.join_registry_spec_json | default([], true)) if active_version else []
+} | tojson(indent=2) }}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Riwayat Run</h5>
+          </div>
+          <div class="card-body">
+            {% if runs %}
+            <div class="table-responsive">
+              <table class="table table-nowrap align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Run ID</th>
+                    <th>Status</th>
+                    <th>Tahun</th>
+                    <th>Rows</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for run in runs %}
+                  <tr>
+                    <td>#{{ run.id }}</td>
+                    <td>{{ run.status }}</td>
+                    <td>{{ run.requested_reporting_year or '-' }}</td>
+                    <td>{{ run.result_row_count if run.result_row_count is not none else 0 }}</td>
+                    <td>{{ run.updated_at or '-' }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">Belum ada run untuk dataset ini.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="col-xxl-4">
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Narasi Definisional</h5>
+          </div>
+          <div class="card-body">
+            <p class="text-muted mb-0">{{ dataset_settings.get('report_meta_description', 'Belum ada meta description report untuk dataset ini.') }}</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Linked Registries</h5>
+          </div>
+          <div class="card-body">
+            {% if linked_registries %}
+            <div class="list-group list-group-flush">
+              {% for item in linked_registries %}
+              <div class="list-group-item px-0">
+                <div class="fw-semibold">{{ item.registry.name }}</div>
+                <div class="text-muted small">{{ item.registry.registry_code }} · {{ item.dataset_count }} dataset</div>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">Belum ada registry terhubung.</p>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Arah Report Dinamis</h5>
+          </div>
+          <div class="card-body">
+            <ul class="text-muted ps-3 mb-0">
+              <li>Cards, chart, tabel, peta, dan narasi diambil dari dataset contract ini.</li>
+              <li>Preset periode seperti triwulan, semester, dan tahunan hidup di layer report.</li>
+              <li>Perubahan formula/target harus masuk versi dataset/report baru, bukan overwrite histori lama.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+{% endblock %}

@@ -108,6 +108,7 @@ def test_dataset_run_api_routes_are_registered():
     expected_routes = [
         '/api/v1/analytics/datasets',
         '/api/v1/analytics/datasets/<int:dataset_id>',
+        '/api/v1/analytics/dataset-versions/<int:version_id>/publish',
         '/api/v1/analytics/datasets/<int:dataset_id>/runs',
         '/api/v1/analytics/datasets/<int:dataset_id>/versions/<int:dataset_version_id>/runs',
         '/api/v1/analytics/runs/<int:run_id>',
@@ -115,6 +116,115 @@ def test_dataset_run_api_routes_are_registered():
 
     for route in expected_routes:
         assert route in rules
+
+
+def test_create_analytics_dataset_returns_dataset_and_draft(monkeypatch):
+    app = create_app('testing')
+    client = app.test_client()
+
+    class StubAnalyticsDatasetService:
+        def create_dataset_bundle(self, data, actor=None):
+            assert data['dataset']['dataset_key'] == 'indikator-pk'
+            assert data['draft_version']['source_contract_json']['selected_fields'] == ['nama_indikator', 'target']
+            return {
+                'dataset': make_dataset(id=77, dataset_key='indikator-pk', name='Dataset PK'),
+                'draft_version': make_dataset_version(
+                    id=88,
+                    dataset_id=77,
+                    status='draft',
+                    is_current_draft=True,
+                    is_current_published=False,
+                    source_contract_json={'selected_fields': ['nama_indikator', 'target']},
+                    metric_definitions_json=[{'key': 'capaian'}],
+                    output_schema_json=[{'key': 'nama_indikator'}, {'key': 'capaian'}],
+                ),
+            }
+
+    monkeypatch.setattr('app.api.v1.analytics.routes.AnalyticsDatasetService', StubAnalyticsDatasetService)
+
+    response = client.post(
+        '/api/v1/analytics/datasets',
+        json={
+            'dataset': {'dataset_key': 'indikator-pk'},
+            'draft_version': {
+                'source_contract_json': {'selected_fields': ['nama_indikator', 'target']},
+                'metric_definitions_json': [{'key': 'capaian'}],
+                'output_schema_json': [{'key': 'nama_indikator'}, {'key': 'capaian'}],
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['data']['dataset']['id'] == 77
+    assert payload['data']['draft_version']['status'] == 'draft'
+
+
+def test_update_analytics_dataset_returns_dataset_and_draft(monkeypatch):
+    app = create_app('testing')
+    client = app.test_client()
+
+    class StubAnalyticsDatasetService:
+        def update_dataset_bundle(self, dataset_id, data, actor=None):
+            assert dataset_id == 11
+            assert data['dataset']['name'] == 'Dataset PK Revisi'
+            return {
+                'dataset': make_dataset(id=11, name='Dataset PK Revisi'),
+                'draft_version': make_dataset_version(
+                    id=22,
+                    dataset_id=11,
+                    status='draft',
+                    is_current_draft=True,
+                    is_current_published=False,
+                    metric_definitions_json=[{'key': 'capaian'}],
+                    output_schema_json=[{'key': 'nama_indikator'}, {'key': 'capaian'}],
+                ),
+            }
+
+    monkeypatch.setattr('app.api.v1.analytics.routes.AnalyticsDatasetService', StubAnalyticsDatasetService)
+
+    response = client.put(
+        '/api/v1/analytics/datasets/11',
+        json={
+            'dataset': {'name': 'Dataset PK Revisi'},
+            'draft_version': {
+                'source_contract_json': {'selected_fields': ['nama_indikator', 'target']},
+                'metric_definitions_json': [{'key': 'capaian'}],
+                'output_schema_json': [{'key': 'nama_indikator'}, {'key': 'capaian'}],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['data']['dataset']['name'] == 'Dataset PK Revisi'
+    assert payload['data']['draft_version']['id'] == 22
+
+
+def test_publish_analytics_dataset_version_returns_published_payload(monkeypatch):
+    app = create_app('testing')
+    client = app.test_client()
+
+    class StubAnalyticsDatasetService:
+        def publish_dataset_version(self, version_id, actor=None):
+            assert version_id == 22
+            return make_dataset_version(
+                id=22,
+                status='published',
+                is_current_draft=False,
+                is_current_published=True,
+            )
+
+    monkeypatch.setattr('app.api.v1.analytics.routes.AnalyticsDatasetService', StubAnalyticsDatasetService)
+
+    response = client.post('/api/v1/analytics/dataset-versions/22/publish', json={})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['data']['dataset_version']['status'] == 'published'
 
 
 def test_get_analytics_datasets_returns_summary_payload(monkeypatch):

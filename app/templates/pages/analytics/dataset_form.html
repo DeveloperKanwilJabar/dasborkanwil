@@ -1,0 +1,489 @@
+{% extends 'partials/base.html' %}
+{% block title %}{{ 'Buat Dataset Analytics' if page_mode == 'create' else 'Edit Dataset Analytics' }}{% endblock %}
+
+{% set dataset_settings = dataset.settings_json if dataset and dataset.settings_json else {} %}
+{% set version = active_version or namespace() %}
+{% set source_contract = active_version.source_contract_json if active_version and active_version.source_contract_json else {} %}
+{% set query_spec = active_version.query_spec_json if active_version and active_version.query_spec_json else {} %}
+{% set transform_spec = active_version.transform_spec_json if active_version and active_version.transform_spec_json else {} %}
+{% set join_registry_spec = active_version.join_registry_spec_json if active_version and active_version.join_registry_spec_json else [] %}
+{% set output_schema = active_version.output_schema_json if active_version and active_version.output_schema_json else [] %}
+{% set dimensions = active_version.dimension_definitions_json if active_version and active_version.dimension_definitions_json else [] %}
+{% set metrics = active_version.metric_definitions_json if active_version and active_version.metric_definitions_json else [] %}
+{% set default_filters = active_version.default_filters_json if active_version and active_version.default_filters_json else {} %}
+{% set sort_spec = active_version.sort_spec_json if active_version and active_version.sort_spec_json else [] %}
+{% set freshness_policy = active_version.freshness_policy_json if active_version and active_version.freshness_policy_json else {} %}
+{% set builder_options = builder_options or {} %}
+{% set source_domain_options = builder_options.get('source_domain_options', []) %}
+{% set source_type_options = builder_options.get('source_type_options', []) %}
+{% set grain_options = builder_options.get('grain_options', []) %}
+{% set freshness_source_options = builder_options.get('freshness_source_options', []) %}
+{% set freshness_strategy_options = builder_options.get('freshness_strategy_options', []) %}
+{% set reporting_year_mode_options = builder_options.get('reporting_year_mode_options', []) %}
+
+{% block content %}
+<div class="main-content">
+<div class="page-content">
+  <div class="container-fluid">
+    <div class="row mb-3">
+      <div class="col-12">
+        <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+          <div>
+            <h4 class="mb-sm-0">{{ 'Buat Dataset Analytics' if page_mode == 'create' else 'Edit Dataset Analytics' }}</h4>
+            <p class="text-muted mb-0">Flow Domain 5 dijaga eksplisit: source data mentah -> dataset contract -> report semi-CMS.</p>
+          </div>
+          <div class="page-title-right d-flex gap-2">
+            <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-light">Kembali ke katalog</a>
+            {% if dataset %}
+            <a href="{{ url_for('analytics_web.analytics_dataset_workspace', dataset_id=dataset.id) }}" class="btn btn-soft-primary">Workspace Dataset</a>
+            <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=dataset.id) }}" class="btn btn-primary">Buka Report</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if error_message %}
+    <div class="alert alert-danger">{{ error_message }}</div>
+    {% endif %}
+
+    <div class="row g-3 mb-3">
+      <div class="col-xl-3 col-md-6">
+        <div class="card card-animate h-100">
+          <div class="card-body">
+            <p class="text-uppercase fw-medium text-muted mb-2">Step 1 — Identitas Dataset</p>
+            <h5 class="mb-2">Identitas & family report</h5>
+            <p class="text-muted mb-0">Tentukan dataset key, nama dataset, deskripsi, dan keluarga report seperti PK, Renaksi, atau report generik lainnya.</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-md-6">
+        <div class="card card-animate h-100">
+          <div class="card-body">
+            <p class="text-uppercase fw-medium text-muted mb-2">Step 2 — Source Picker</p>
+            <h5 class="mb-2">Submission / registry / hybrid</h5>
+            <p class="text-muted mb-0">Source picker memisahkan data mentah dari contract analytics sehingga field yang dipakai report bisa dikurasi.</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-md-6">
+        <div class="card card-animate h-100">
+          <div class="card-body">
+            <p class="text-uppercase fw-medium text-muted mb-2">Step 3 — Contract & Publish</p>
+            <h5 class="mb-2">Dimension, metric, grain, freshness</h5>
+            <p class="text-muted mb-0">Version dataset menyimpan kontrak transformasi dan siap dipublish tanpa menimpa histori report lama.</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-3 col-md-6">
+        <div class="card card-animate h-100 bg-primary-subtle border-primary-subtle">
+          <div class="card-body">
+            <p class="text-uppercase fw-medium text-primary mb-2">Step 4 — Report Readiness</p>
+            <h5 class="mb-2">Semi-CMS report dinamis</h5>
+            <p class="text-muted mb-0">Siapkan narasi meta description, jenis blok visual, dan preset waktu agar report bisa fleksibel untuk PK, Renaksi, dan use case lain.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-xxl-8">
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Builder Dataset Analytics</h5>
+          </div>
+          <div class="card-body">
+            <form id="analyticsDatasetBuilderForm">
+              <div class="row g-3">
+                <div class="col-lg-6">
+                  <label class="form-label">Dataset Key</label>
+                  <input class="form-control" name="dataset_key" value="{{ dataset.dataset_key if dataset else '' }}" placeholder="contoh: indikator-pk" required>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Nama Dataset</label>
+                  <input class="form-control" name="name" value="{{ dataset.name if dataset else '' }}" placeholder="Contoh: Dataset Indikator PK" required>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Deskripsi Dataset</label>
+                  <textarea class="form-control" rows="3" name="description" placeholder="Jelaskan konteks dataset dan angka bisnis yang akan dibaca report.">{{ dataset.description if dataset else '' }}</textarea>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label">Report Family</label>
+                  <input class="form-control" name="report_family" value="{{ dataset_settings.get('report_family', '') }}" placeholder="PK / Renaksi / Indikator Kinerja">
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label">Mode Tahun Default</label>
+                  <select class="form-select" name="default_reporting_year_mode">
+                    {% set selected_reporting_year_mode = dataset.default_reporting_year_mode if dataset else 'active_year' %}
+                    {% for value, label in reporting_year_mode_options %}
+                    <option value="{{ value }}" {% if selected_reporting_year_mode == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label">Tags</label>
+                  <input class="form-control" name="tags_csv" value="{{ (dataset.tags_json or []) | join(', ') if dataset else '' }}" placeholder="pk, tahunan, strategi">
+                </div>
+
+                <div class="col-12"><hr class="text-muted"></div>
+
+                <div class="col-lg-4">
+                  <label class="form-label">Source Domain</label>
+                  <select class="form-select" name="source_domain">
+                    {% set selected_source_domain = dataset.source_domain if dataset else 'submission' %}
+                    {% for value, label in source_domain_options %}
+                    <option value="{{ value }}" {% if selected_source_domain == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label">Source Type</label>
+                  <select class="form-select" name="source_type">
+                    {% set selected_source_type = dataset.source_type if dataset else 'aggregated_submission_fact' %}
+                    {% for value, label in source_type_options %}
+                    <option value="{{ value }}" {% if selected_source_type == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label">Primary Source Ref</label>
+                  <input class="form-control" name="primary_source_ref" value="{{ dataset.primary_source_ref if dataset else '' }}" placeholder="form_code / registry_code / hybrid_ref">
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Submission Refs</label>
+                  <textarea class="form-control" rows="2" name="submission_refs_csv" placeholder="Pisahkan dengan koma">{{ (source_contract.get('submission_refs', []) or []) | join(', ') }}</textarea>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Registry Refs</label>
+                  <textarea class="form-control" rows="2" name="registry_refs_csv" placeholder="Pisahkan dengan koma">{{ (source_contract.get('registry_refs', []) or []) | join(', ') }}</textarea>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Selected Fields</label>
+                  <textarea class="form-control" rows="4" name="selected_fields_csv" placeholder="nama_indikator, tipe_perhitungan, target_capaian, nilai_realisasi, reporting_year">{{ (source_contract.get('selected_fields', []) or []) | join(', ') }}</textarea>
+                  <div class="form-text">Field ini adalah field kurasi yang nanti masuk ke dataset contract, bukan seluruh field mentah dari submissions/registry.</div>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Source Field Map (JSON)</label>
+                  <textarea class="form-control font-monospace" rows="5" name="source_field_map_json">{{ source_contract.get('source_field_map', {}) | tojson(indent=2) }}</textarea>
+                </div>
+
+                <div class="col-12"><hr class="text-muted"></div>
+
+                <div class="col-lg-4">
+                  <label class="form-label">Grain Key</label>
+                  <select class="form-select" name="grain_key">
+                    {% set selected_grain = active_version.grain_key if active_version else 'per_scope_per_year' %}
+                    {% for value, label in grain_options %}
+                    <option value="{{ value }}" {% if selected_grain == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label">Freshness Source</label>
+                  <select class="form-select" name="freshness_source_type">
+                    {% set selected_freshness_source = active_version.freshness_source_type if active_version else 'submissions.submitted_at' %}
+                    {% for value, label in freshness_source_options %}
+                    <option value="{{ value }}" {% if selected_freshness_source == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-lg-4">
+                  <label class="form-label">Freshness Strategy</label>
+                  <select class="form-select" name="freshness_strategy">
+                    {% set selected_freshness_strategy = active_version.freshness_strategy if active_version else 'max_timestamp' %}
+                    {% for value, label in freshness_strategy_options %}
+                    <option value="{{ value }}" {% if selected_freshness_strategy == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Dimension Definitions (JSON Array)</label>
+                  <textarea class="form-control font-monospace" rows="6" name="dimension_definitions_json">{{ dimensions | tojson(indent=2) }}</textarea>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Metric Definitions (JSON Array)</label>
+                  <textarea class="form-control font-monospace" rows="6" name="metric_definitions_json">{{ metrics | tojson(indent=2) }}</textarea>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Output Schema (JSON Array)</label>
+                  <textarea class="form-control font-monospace" rows="6" name="output_schema_json">{{ output_schema | tojson(indent=2) }}</textarea>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Default Filters (JSON)</label>
+                  <textarea class="form-control font-monospace" rows="5" name="default_filters_json">{{ default_filters | tojson(indent=2) }}</textarea>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Sort Spec (JSON Array)</label>
+                  <textarea class="form-control font-monospace" rows="5" name="sort_spec_json">{{ sort_spec | tojson(indent=2) }}</textarea>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Query Spec (JSON)</label>
+                  <textarea class="form-control font-monospace" rows="6" name="query_spec_json">{{ query_spec | tojson(indent=2) }}</textarea>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Transform Spec (JSON)</label>
+                  <textarea class="form-control font-monospace" rows="6" name="transform_spec_json">{{ transform_spec | tojson(indent=2) }}</textarea>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Join Registry Spec (JSON Array)</label>
+                  <textarea class="form-control font-monospace" rows="5" name="join_registry_spec_json">{{ join_registry_spec | tojson(indent=2) }}</textarea>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Freshness Policy (JSON)</label>
+                  <textarea class="form-control font-monospace" rows="5" name="freshness_policy_json">{{ freshness_policy | tojson(indent=2) }}</textarea>
+                </div>
+
+                <div class="col-12"><hr class="text-muted"></div>
+
+                <div class="col-12">
+                  <label class="form-label">Meta Description Report</label>
+                  <textarea class="form-control" rows="3" name="report_meta_description" placeholder="Narasi definisional indikator/report yang nanti bisa dipakai blok narasi dinamis pada report.">{{ dataset_settings.get('report_meta_description', '') }}</textarea>
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Preferred Visualizations</label>
+                  <input class="form-control" name="preferred_visualizations_csv" value="{{ (dataset_settings.get('preferred_visualizations', []) or []) | join(', ') }}" placeholder="cards, chart, table, map, narrative">
+                </div>
+                <div class="col-lg-6">
+                  <label class="form-label">Supported Period Modes</label>
+                  <input class="form-control" name="supported_period_modes_csv" value="{{ (dataset_settings.get('supported_period_modes', []) or []) | join(', ') }}" placeholder="quarterly, semester, yearly">
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Suggested Report Blocks</label>
+                  <input class="form-control" name="suggested_report_blocks_csv" value="{{ (dataset_settings.get('suggested_report_blocks', []) or []) | join(', ') }}" placeholder="metric_cards, plotly_timeseries, map, narrative, detail_table">
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Report Builder Notes</label>
+                  <textarea class="form-control" rows="4" name="report_builder_notes" placeholder="Catatan semi-CMS untuk tim developer/analyst saat membuat report dari dataset ini.">{{ dataset_settings.get('report_builder_notes', '') }}</textarea>
+                </div>
+              </div>
+
+              <div class="d-flex flex-wrap gap-2 mt-4">
+                <button type="submit" class="btn btn-primary" id="analyticsDatasetSaveButton">Simpan Draft Dataset</button>
+                <button type="button" class="btn btn-success" id="analyticsDatasetPublishButton" {% if not active_version %}disabled{% endif %}>Publish Draft</button>
+                {% if dataset %}
+                <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=dataset.id) }}" class="btn btn-soft-info">Lanjut ke Report</a>
+                {% endif %}
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-xxl-4">
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Guidance Report Dinamis</h5>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info mb-3">
+              Report tidak langsung membaca submissions mentah. Report harus membaca dataset contract yang sudah memilih field, grain, dimension, metric, dan filter waktu.
+            </div>
+            <ol class="ps-3 text-muted mb-4">
+              <li>Submissions / registry tetap menjadi source data mentah.</li>
+              <li>Dataset mengkurasi field yang masuk ke contract analytics.</li>
+              <li>Report membaca dataset untuk menyusun chart, tabel, peta, dan narasi.</li>
+              <li>Preset periode seperti triwulan, semester, dan tahunan hidup di layer report.</li>
+            </ol>
+
+            <h6 class="text-uppercase text-muted">Linked Registry</h6>
+            {% if linked_registries %}
+            <div class="list-group list-group-flush">
+              {% for item in linked_registries %}
+              <div class="list-group-item px-0">
+                <div class="fw-semibold">{{ item.registry.name }}</div>
+                <div class="text-muted small">{{ item.registry.registry_code }} · {{ item.dataset_count }} dataset terkait</div>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">Belum ada linkage registry yang terdeteksi dari source saat ini.</p>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Contoh Mental Model</h5>
+          </div>
+          <div class="card-body">
+            <div class="border rounded p-3 bg-light-subtle">
+              <div class="fw-semibold mb-2">Contoh PK</div>
+              <ul class="mb-0 text-muted ps-3">
+                <li>Source: submissions indikator + registry wilayah</li>
+                <li>Selected fields: nama indikator, target, realisasi, wilayah, periode</li>
+                <li>Metric: capaian %, deviasi, progres absolut</li>
+                <li>Report blocks: metric cards, plotly timeseries, table, map, narrative</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="card d-none" id="analyticsDatasetBuilderResultCard">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Hasil Simpan</h5>
+          </div>
+          <div class="card-body">
+            <pre class="small mb-0" id="analyticsDatasetBuilderResult"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+(function () {
+  const form = document.getElementById('analyticsDatasetBuilderForm');
+  if (!form) {
+    return;
+  }
+
+  const saveButton = document.getElementById('analyticsDatasetSaveButton');
+  const publishButton = document.getElementById('analyticsDatasetPublishButton');
+  const resultCard = document.getElementById('analyticsDatasetBuilderResultCard');
+  const resultNode = document.getElementById('analyticsDatasetBuilderResult');
+  const pageMode = {{ page_mode | tojson }};
+  const datasetId = {{ (dataset.id if dataset else None) | tojson }};
+  const activeVersionId = {{ (active_version.id if active_version else None) | tojson }};
+  const createUrl = {{ url_for('api_analytics_v1.create_dataset_definition') | tojson }};
+  const updateUrl = datasetId ? `/api/v1/analytics/datasets/${datasetId}` : null;
+  const publishUrl = activeVersionId ? `/api/v1/analytics/dataset-versions/${activeVersionId}/publish` : null;
+
+  function parseCsv(value) {
+    return (value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function parseJson(name, fallback) {
+    const raw = form.elements[name].value.trim();
+    if (!raw) {
+      return fallback;
+    }
+    return JSON.parse(raw);
+  }
+
+  function buildPayload() {
+    return {
+      dataset: {
+        dataset_key: form.elements.dataset_key.value.trim(),
+        name: form.elements.name.value.trim(),
+        description: form.elements.description.value.trim(),
+        report_family: form.elements.report_family.value.trim(),
+        report_meta_description: form.elements.report_meta_description.value.trim(),
+        report_builder_notes: form.elements.report_builder_notes.value.trim(),
+        default_reporting_year_mode: form.elements.default_reporting_year_mode.value,
+        source_domain: form.elements.source_domain.value,
+        source_type: form.elements.source_type.value,
+        primary_source_ref: form.elements.primary_source_ref.value.trim(),
+        tags_json: parseCsv(form.elements.tags_csv.value),
+        preferred_visualizations: parseCsv(form.elements.preferred_visualizations_csv.value),
+        supported_period_modes: parseCsv(form.elements.supported_period_modes_csv.value),
+        suggested_report_blocks: parseCsv(form.elements.suggested_report_blocks_csv.value)
+      },
+      draft_version: {
+        source_contract_json: {
+          source_domain: form.elements.source_domain.value,
+          source_type: form.elements.source_type.value,
+          primary_source_ref: form.elements.primary_source_ref.value.trim(),
+          selected_fields: parseCsv(form.elements.selected_fields_csv.value),
+          submission_refs: parseCsv(form.elements.submission_refs_csv.value),
+          registry_refs: parseCsv(form.elements.registry_refs_csv.value),
+          source_field_map: parseJson('source_field_map_json', {})
+        },
+        grain_key: form.elements.grain_key.value,
+        freshness_source_type: form.elements.freshness_source_type.value,
+        freshness_strategy: form.elements.freshness_strategy.value,
+        dimension_definitions_json: parseJson('dimension_definitions_json', []),
+        metric_definitions_json: parseJson('metric_definitions_json', []),
+        output_schema_json: parseJson('output_schema_json', []),
+        default_filters_json: parseJson('default_filters_json', {}),
+        sort_spec_json: parseJson('sort_spec_json', []),
+        query_spec_json: parseJson('query_spec_json', {}),
+        transform_spec_json: parseJson('transform_spec_json', {}),
+        join_registry_spec_json: parseJson('join_registry_spec_json', []),
+        freshness_policy_json: parseJson('freshness_policy_json', {})
+      }
+    };
+  }
+
+  async function submitPayload(url, method) {
+    const payload = buildPayload();
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    resultCard.classList.remove('d-none');
+    resultNode.textContent = JSON.stringify(result, null, 2);
+    if (!response.ok || result.success === false) {
+      throw new Error(result.message || 'Permintaan gagal diproses.');
+    }
+    return result;
+  }
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    saveButton.disabled = true;
+    saveButton.textContent = 'Menyimpan...';
+    try {
+      const result = await submitPayload(pageMode === 'create' ? createUrl : updateUrl, pageMode === 'create' ? 'POST' : 'PUT');
+      alert(result.message || 'Dataset berhasil disimpan.');
+      const savedDatasetId = result?.data?.dataset?.id;
+      if (pageMode === 'create' && savedDatasetId) {
+        window.location.href = `/analytics/datasets/${savedDatasetId}/edit`;
+        return;
+      }
+      window.location.reload();
+    } catch (error) {
+      alert(error.message || 'Gagal menyimpan dataset.');
+    } finally {
+      saveButton.disabled = false;
+      saveButton.textContent = 'Simpan Draft Dataset';
+    }
+  });
+
+  if (publishButton) {
+    publishButton.addEventListener('click', async function () {
+      if (!publishUrl) {
+        alert('Draft version belum tersedia untuk dipublish. Simpan draft dulu bro.');
+        return;
+      }
+      publishButton.disabled = true;
+      publishButton.textContent = 'Publishing...';
+      try {
+        const response = await fetch(publishUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: JSON.stringify({})
+        });
+        const result = await response.json();
+        resultCard.classList.remove('d-none');
+        resultNode.textContent = JSON.stringify(result, null, 2);
+        if (!response.ok || result.success === false) {
+          throw new Error(result.message || 'Publish gagal diproses.');
+        }
+        alert(result.message || 'Draft version berhasil dipublish.');
+        window.location.reload();
+      } catch (error) {
+        alert(error.message || 'Gagal publish dataset version.');
+      } finally {
+        publishButton.disabled = false;
+        publishButton.textContent = 'Publish Draft';
+      }
+    });
+  }
+})();
+</script>
+</div>
+{% endblock %}

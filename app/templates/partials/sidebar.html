@@ -86,7 +86,19 @@
                             <div class="collapse menu-dropdown" id="sidebarAnalytics">
                                 <ul class="nav nav-sm flex-column">
                                     <li class="nav-item">
-                                        <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="nav-link" data-key="t-analytics-list">Daftar Analytics</a>
+                                        <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="nav-link" data-key="t-analytics-datasets">Dataset Analytics</a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a href="{{ url_for('analytics_web.analytics_report_index') }}" class="nav-link" data-key="t-analytics-reports">Report Analytics</a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a href="{{ url_for('analytics_web.analytics_registry_linkage') }}" class="nav-link" data-key="t-analytics-registry-linkage">Linkage Registry</a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a href="{{ url_for('analytics_web.analytics_dataset_create') }}" class="nav-link" data-key="t-analytics-create-dataset">Buat Dataset</a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a href="{{ url_for('analytics_web.analytics_report_create') }}" class="nav-link" data-key="t-analytics-create-report">Buat Report</a>
                                     </li>
                                 </ul>
                             </div>

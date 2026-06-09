@@ -1,5 +1,5 @@
 {% extends "partials/base.html" %}
-{% block title %}Analytics Domain 5{% endblock title %}
+{% block title %}Analytics Datasets{% endblock title %}
 
 {% block content %}
 <div class="main-content">
@@ -9,11 +9,12 @@
                 <div class="col-12">
                     <div class="page-title-box d-sm-flex align-items-center justify-content-between">
                         <div>
-                            <h4 class="mb-sm-0">Analytics Domain 5</h4>
-                            <p class="text-muted mb-0">Daftar registry yang sudah publish sebagai pintu masuk detail report yang lebih fokus dan humanis.</p>
+                            <h4 class="mb-sm-0">Analytics Datasets</h4>
+                            <p class="text-muted mb-0">Dataset analytics adalah entry point utama Domain 5. Dari sinilah user membuat contract, menjalankan run, lalu membuka report.</p>
                         </div>
                         <div class="page-title-right d-flex gap-2 flex-wrap justify-content-end">
-                            <a href="{{ url_for('data_registry_web.registry_index') }}" class="btn btn-soft-secondary btn-sm">Buka Data Registries</a>
+                            <a href="{{ url_for('analytics_web.analytics_registry_linkage') }}" class="btn btn-soft-secondary btn-sm">Linkage Registry</a>
+                            <a href="{{ url_for('analytics_web.analytics_dataset_create') }}" class="btn btn-primary btn-sm">Buat Dataset</a>
                         </div>
                     </div>
                 </div>
@@ -28,29 +29,39 @@
             {% endif %}
 
             <div class="row g-4 mb-4">
-                <div class="col-md-6 col-xl-4">
+                <div class="col-md-6 col-xl-3">
                     <div class="card h-100">
                         <div class="card-body">
-                            <p class="text-muted mb-2">Registry Publish</p>
-                            <div class="display-6">{{ total_published_registries }}</div>
-                            <small class="text-muted">Hanya registry yang sudah punya versi published ditampilkan di analytics.</small>
+                            <p class="text-muted mb-2">Total Dataset</p>
+                            <div class="display-6">{{ total_datasets }}</div>
+                            <small class="text-muted">Katalog utama analytics yang bisa dibuka ke workspace atau report.</small>
                         </div>
                     </div>
                 </div>
-                <div class="col-md-6 col-xl-4">
+                <div class="col-md-6 col-xl-3">
                     <div class="card h-100">
                         <div class="card-body">
-                            <p class="text-muted mb-2">Dataset Terkait</p>
-                            <div class="display-6">{{ total_related_datasets }}</div>
-                            <small class="text-muted">Dipakai untuk memberi konteks ringkas sebelum masuk ke detail report.</small>
+                            <p class="text-muted mb-2">Versi Publish Aktif</p>
+                            <div class="display-6">{{ total_published_versions }}</div>
+                            <small class="text-muted">Dataset yang sudah punya versi publish dan siap dijalankan.</small>
                         </div>
                     </div>
                 </div>
-                <div class="col-md-12 col-xl-4">
+                <div class="col-md-6 col-xl-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <p class="text-muted mb-2">Latest Run Terdeteksi</p>
+                            <div class="display-6">{{ total_latest_runs }}</div>
+                            <small class="text-muted">Dipakai untuk observability ringan dan rasa percaya ke angka/chart.</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-xl-3">
                     <div class="card h-100 bg-primary-subtle border-primary-subtle">
                         <div class="card-body">
-                            <h5 class="mb-2">Alur baru lebih fokus</h5>
-                            <p class="text-muted mb-0">List analytics sekarang cukup tabel. Metadata dipisah halaman sendiri, sedangkan preset, kartu angka, chart, dan peta difokuskan di halaman detail report.</p>
+                            <p class="text-muted mb-2">Linkage Registry</p>
+                            <div class="display-6">{{ total_registry_links }}</div>
+                            <small class="text-muted">Relasi eksplisit dataset ke registry, bukan heuristik judul semata.</small>
                         </div>
                     </div>
                 </div>
@@ -61,46 +72,76 @@
                     <div class="card">
                         <div class="card-header border-0 align-items-center d-flex">
                             <div class="flex-grow-1">
-                                <h5 class="card-title mb-0">Daftar Data Registry yang Sudah Publish</h5>
+                                <h5 class="card-title mb-0">Katalog Dataset Analytics</h5>
                             </div>
                         </div>
                         <div class="card-body">
-                            {% if registry_items %}
+                            {% if dataset_items %}
                             <div class="table-responsive table-card">
                                 <table class="table table-sm table-bordered align-middle mb-0">
                                     <thead class="table-light">
                                         <tr>
-                                            <th>Nama Registry</th>
-                                            <th>Slug / Kode</th>
-                                            <th>Versi Publish</th>
-                                            <th>Dataset Terkait</th>
+                                            <th>Dataset</th>
+                                            <th>Source</th>
+                                            <th>Versi Aktif</th>
+                                            <th>Registry Terkait</th>
+                                            <th>Last Run</th>
                                             <th class="text-end">Aksi</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {% for item in registry_items %}
-                                        {% set registry = item.registry %}
-                                        {% set published_version = item.published_version %}
+                                        {% for item in dataset_items %}
+                                        {% set dataset = item.dataset %}
+                                        {% set active_version = item.draft_version or item.published_version %}
+                                        {% set latest_run = item.latest_run %}
                                         <tr>
                                             <td>
-                                                <div class="fw-semibold">{{ registry.name }}</div>
-                                                <div class="text-muted fs-12">{{ registry.description or '-' }}</div>
+                                                <div class="fw-semibold">{{ dataset.name }}</div>
+                                                <div class="text-muted fs-12"><code>{{ dataset.dataset_key }}</code></div>
+                                                <div class="text-muted fs-12">{{ dataset.description or '-' }}</div>
                                             </td>
                                             <td>
-                                                <div><code>{{ registry.registry_slug }}</code></div>
-                                                <div class="text-muted fs-12">{{ registry.registry_code or '-' }}</div>
+                                                <div>{{ dataset.source_domain or '-' }}</div>
+                                                <div class="text-muted fs-12">{{ dataset.source_type or '-' }}</div>
+                                                <div class="text-muted fs-12">{{ dataset.primary_source_ref or '-' }}</div>
                                             </td>
                                             <td>
-                                                <span class="badge bg-success-subtle text-success">Published v{{ published_version.version_number }}</span>
+                                                {% if active_version %}
+                                                <span class="badge bg-success-subtle text-success">v{{ active_version.version_number }}</span>
+                                                {% else %}
+                                                <span class="badge bg-secondary-subtle text-secondary">Belum ada versi</span>
+                                                {% endif %}
                                             </td>
                                             <td>
-                                                <span class="badge bg-info-subtle text-info">{{ item.related_dataset_count }} dataset</span>
+                                                {% if item.linked_registries %}
+                                                    <div class="d-flex flex-wrap gap-1">
+                                                    {% for registry_item in item.linked_registries %}
+                                                        <span class="badge bg-info-subtle text-info">{{ registry_item.registry.name }}</span>
+                                                    {% endfor %}
+                                                    </div>
+                                                {% else %}
+                                                    <span class="text-muted">Belum ada linkage registry</span>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                {% if latest_run %}
+                                                <div class="fw-semibold">{{ latest_run.status or '-' }}</div>
+                                                <div class="text-muted fs-12">Rows: {{ latest_run.result_row_count or 0 }}</div>
+                                                <div class="text-muted fs-12">{{ latest_run.updated_at or '-' }}</div>
+                                                {% else %}
+                                                <span class="text-muted">Belum ada run</span>
+                                                {% endif %}
                                             </td>
                                             <td class="text-end">
                                                 <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
-                                                    <a href="{{ url_for('analytics_web.analytics_report_detail', registry_id=registry.id) }}" class="btn btn-sm btn-primary">Buka Detail Report</a>
-                                                    <a href="{{ url_for('analytics_web.analytics_report_metadata', registry_id=registry.id) }}" class="btn btn-sm btn-soft-secondary">Metadata</a>
-                                                    <a href="{{ url_for('data_registry_web.registry_workspace', registry_id=registry.id) }}" class="btn btn-sm btn-soft-primary">Workspace Registry</a>
+                                                    <a href="{{ url_for('analytics_web.analytics_dataset_workspace', dataset_id=dataset.id) }}" class="btn btn-sm btn-soft-primary">Workspace</a>
+                                                    <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=dataset.id) }}" class="btn btn-sm btn-primary">Viewer</a>
+                                                    {% if item.get('linked_report_item') and item.get('linked_report_item').get('report') %}
+                                                    <a href="{{ url_for('analytics_web.analytics_report_edit', report_definition_id=item.get('linked_report_item').get('report').id) }}" class="btn btn-sm btn-soft-info">Builder Report</a>
+                                                    {% else %}
+                                                    <a href="{{ url_for('analytics_web.analytics_report_create', dataset_id=dataset.id) }}" class="btn btn-sm btn-soft-info">Buat Report</a>
+                                                    {% endif %}
+                                                    <a href="{{ url_for('analytics_web.analytics_dataset_edit', dataset_id=dataset.id) }}" class="btn btn-sm btn-soft-secondary">Edit</a>
                                                 </div>
                                             </td>
                                         </tr>
@@ -112,12 +153,12 @@
                             <div class="text-center py-5">
                                 <div class="avatar-md mx-auto mb-3">
                                     <div class="avatar-title bg-light text-primary rounded-circle fs-2">
-                                        <i class="ri-bar-chart-box-line"></i>
+                                        <i class="ri-database-line"></i>
                                     </div>
                                 </div>
-                                <h5 class="mb-2">Belum ada registry publish</h5>
-                                <p class="text-muted mb-4">Publish dulu Data Registry supaya bisa tampil di daftar analytics dan punya pintu masuk ke detail report.</p>
-                                <a href="{{ url_for('data_registry_web.registry_index') }}" class="btn btn-primary btn-sm">Buka Data Registries</a>
+                                <h5 class="mb-2">Belum ada dataset analytics</h5>
+                                <p class="text-muted mb-4">Buat dataset dulu agar source operasional bisa diterjemahkan menjadi contract, run, lalu report yang manusiawi.</p>
+                                <a href="{{ url_for('analytics_web.analytics_dataset_create') }}" class="btn btn-primary btn-sm">Buat Dataset</a>
                             </div>
                             {% endif %}
                         </div>

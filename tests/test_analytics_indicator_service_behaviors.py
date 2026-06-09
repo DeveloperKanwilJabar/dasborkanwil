@@ -155,6 +155,34 @@ class StubReportVersionIndicatorRepository(SaveMixin):
     pass
 
 
+class StubDatasetRepository:
+    def __init__(self, datasets=None):
+        self.datasets = {item.id: item for item in (datasets or []) if getattr(item, 'id', None) is not None}
+
+    def get_by_id(self, dataset_id):
+        return self.datasets.get(dataset_id)
+
+
+class StubDatasetVersionRepository:
+    def __init__(self, versions=None):
+        self.versions = {item.id: item for item in (versions or []) if getattr(item, 'id', None) is not None}
+
+    def get_by_id(self, version_id):
+        return self.versions.get(version_id)
+
+    def get_published_version(self, dataset_id):
+        for version in self.versions.values():
+            if getattr(version, 'dataset_id', None) == dataset_id and getattr(version, 'is_current_published', False):
+                return version
+        return None
+
+    def get_draft_version(self, dataset_id):
+        for version in self.versions.values():
+            if getattr(version, 'dataset_id', None) == dataset_id and getattr(version, 'is_current_draft', False):
+                return version
+        return None
+
+
 class StubResultRepository(SaveMixin):
     def __init__(self, results=None):
         super().__init__()
@@ -219,6 +247,7 @@ def test_create_publish_indicator_and_report_flow_archives_previous_versions():
             id=21,
             uuid='report-def-uuid',
             report_key='pk-kanwil',
+            dataset_id=7,
             name='PK Kanwil',
             status=AnalyticsReportDefinition.STATUS_DRAFT,
         )
@@ -226,17 +255,34 @@ def test_create_publish_indicator_and_report_flow_archives_previous_versions():
             id=31,
             uuid='report-version-uuid-1',
             report_definition_id=21,
+            dataset_version_id=701,
             version_number=1,
             status=AnalyticsReportVersion.STATUS_PUBLISHED,
             is_current_draft=False,
             is_current_published=True,
             title='PK 2025',
         )
+        dataset = SimpleNamespace(id=7, dataset_key='dataset-pk', name='Dataset PK', settings_json={})
+        dataset_version = SimpleNamespace(
+            id=701,
+            dataset_id=7,
+            version_number=5,
+            is_current_published=True,
+            is_current_draft=False,
+            grain_key='per_scope_per_year',
+            output_schema_json=[],
+            dimension_definitions_json=[],
+            metric_definitions_json=[],
+        )
         report_definition_repository = StubReportDefinitionRepository([report_definition])
         report_version_repository = StubReportVersionRepository([old_report_version])
+        dataset_repository = StubDatasetRepository([dataset])
+        dataset_version_repository = StubDatasetVersionRepository([dataset_version])
         report_service = AnalyticsReportService(
             report_definition_repository=report_definition_repository,
             report_version_repository=report_version_repository,
+            dataset_repository=dataset_repository,
+            dataset_version_repository=dataset_version_repository,
         )
 
         indicator_definition = AnalyticsIndicatorDefinition(

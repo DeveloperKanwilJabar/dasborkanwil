@@ -1,5 +1,6 @@
 (function () {
     const config = window.analyticsWorkspaceConfig || {};
+    const reportConfig = window.analyticsReportConfig || {};
     const Plotly = window.Plotly;
     const L = window.L;
 
@@ -15,6 +16,8 @@
     const datasetMetricPeriodMode = document.getElementById('analyticsDatasetMetricPeriodMode');
     const datasetQuickRanges = document.getElementById('analyticsDatasetQuickRanges');
     const chartContainer = document.getElementById('analyticsDatasetChart');
+    const detailTableContainer = document.getElementById('analyticsDatasetDetailTable');
+    const narrativeContainer = document.getElementById('analyticsDatasetNarrative');
     const mapContainer = document.getElementById('analyticsDatasetMap');
     const mapSummary = document.getElementById('analyticsDatasetMapSummary');
     const datasetRunButton = document.getElementById('analyticsDatasetRunButton');
@@ -36,7 +39,7 @@
             jenis: '',
             dateStart: '',
             dateEnd: '',
-            metricPeriodMode: 'quarterly',
+            metricPeriodMode: reportConfig.default_period_mode || 'quarterly',
         },
     };
 
@@ -257,6 +260,69 @@
                     </table>
                 </div>
                 <div class="alert alert-light border mb-0">${escapeHtml(dataset.description || 'Belum ada deskripsi dataset.')}</div>
+            </div>
+        `;
+    }
+
+    function renderDetailTable(rows) {
+        if (!detailTableContainer) {
+            return;
+        }
+        if (!rows.length) {
+            detailTableContainer.innerHTML = '<div class="alert alert-light border mb-0">Belum ada baris yang cocok dengan filter aktif.</div>';
+            return;
+        }
+
+        const previewRows = rows.slice(0, 8);
+        detailTableContainer.innerHTML = `
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Tanggal</th>
+                        <th>Daerah</th>
+                        <th>Jenis</th>
+                        <th>Status</th>
+                        <th>Tahun</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${previewRows.map(function (row) {
+                        return `
+                            <tr>
+                                <td>${escapeHtml(row.tanggal || '-')}</td>
+                                <td>${escapeHtml(row.daerah || row.label || row.record_label || '-')}</td>
+                                <td>${escapeHtml(row.jenis || '-')}</td>
+                                <td>${escapeHtml(row.hasil || '-')}</td>
+                                <td>${escapeHtml(row.reporting_year || '-')}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+            <div class="text-muted fs-12 mt-3">Menampilkan ${escapeHtml(formatNumber(previewRows.length))} dari ${escapeHtml(formatNumber(rows.length))} baris aktif.</div>
+        `;
+    }
+
+    function renderNarrative(rows, summaryJson) {
+        if (!narrativeContainer) {
+            return;
+        }
+        const total = rows.length;
+        const selesai = rows.filter((row) => String(row.hasil || '').toLowerCase() === 'selesai').length;
+        const dikembalikan = rows.filter((row) => String(row.hasil || '').toLowerCase() === 'dikembalikan').length;
+        const achievement = total ? (selesai / total) * 100 : 0;
+        const activeYear = state.filters.reportingYear || ((summaryJson && summaryJson.filter_dimensions && summaryJson.filter_dimensions.reporting_years || []).join(', ') || 'semua tahun');
+        const activeMode = state.filters.metricPeriodMode || reportConfig.default_period_mode || 'quarterly';
+        const intro = reportConfig.meta_description || 'Narasi report belum dikurasi di builder.';
+        const rangeText = state.filters.dateStart || state.filters.dateEnd
+            ? `${state.filters.dateStart || 'awal data'} s.d. ${state.filters.dateEnd || 'akhir data'}`
+            : 'seluruh rentang data aktif';
+
+        narrativeContainer.innerHTML = `
+            <div class="alert alert-warning-subtle border border-warning-subtle mb-0">${escapeHtml(intro)}</div>
+            <div>
+                <div class="fw-semibold mb-1">Ringkasan Otomatis Viewer</div>
+                <p class="mb-0 text-muted">Pada mode ${escapeHtml(activeMode)}, viewer membaca ${escapeHtml(formatNumber(total))} baris untuk ${escapeHtml(activeYear)} dengan ${escapeHtml(formatNumber(selesai))} status selesai dan ${escapeHtml(formatNumber(dikembalikan))} status dikembalikan. Achievement saat ini berada di ${escapeHtml(formatPercent(achievement))} untuk rentang ${escapeHtml(rangeText)}.</p>
             </div>
         `;
     }
@@ -574,6 +640,8 @@
         renderDatasetSummary(dataset, activeVersion, latestRun, filteredRows);
         renderExecutionBridge(detail, latestRun);
         renderChart(filteredRows);
+        renderDetailTable(filteredRows);
+        renderNarrative(filteredRows, summaryJson);
         renderMap(filteredRows);
     }
 

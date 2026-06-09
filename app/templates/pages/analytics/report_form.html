@@ -1,0 +1,355 @@
+{% extends 'partials/base.html' %}
+{% block title %}{{ 'Buat Report Analytics' if page_mode == 'create' else 'Edit Report Analytics' }}{% endblock %}
+
+{% set active_dataset_id = report.dataset_id if report else (preselected_dataset.get('dataset').id if preselected_dataset and preselected_dataset.get('dataset') else None) %}
+{% set structure = active_version.structure_json if active_version and active_version.structure_json else {} %}
+{% set narrative = active_version.narrative_guidance_json if active_version and active_version.narrative_guidance_json else {} %}
+{% set period_config = structure.get('period_preset_config', {}) or {} %}
+{% set blocks = structure.get('blocks', []) or [] %}
+{% set filter_schema = structure.get('filter_schema', {}) or {} %}
+{% set layout_config = structure.get('layout', {}) or {} %}
+{% set report_type_options = builder_options.get('report_type_options', []) %}
+{% set period_mode_options = builder_options.get('period_mode_options', []) %}
+{% set quick_preset_options = builder_options.get('quick_preset_options', []) %}
+{% set block_type_options = builder_options.get('block_type_options', []) %}
+
+{% block content %}
+<div class="main-content">
+  <div class="page-content">
+    <div class="container-fluid">
+      <div class="row mb-3">
+        <div class="col-12">
+          <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+            <div>
+              <h4 class="mb-sm-0">{{ 'Buat Report Analytics' if page_mode == 'create' else 'Edit Report Analytics' }}</h4>
+              <p class="text-muted mb-0">Report adalah layer semi-CMS di atas dataset contract. Preset waktu, angka, chart, tabel, peta, dan narasi dikonfigurasi di sini.</p>
+            </div>
+            <div class="page-title-right d-flex gap-2">
+              <a href="{{ url_for('analytics_web.analytics_report_index') }}" class="btn btn-light">Katalog Report</a>
+              <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-soft-secondary">Katalog Dataset</a>
+              {% if report and report.dataset_id %}
+              <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=report.dataset_id) }}" class="btn btn-primary">Buka Viewer</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if error_message %}
+      <div class="alert alert-danger">{{ error_message }}</div>
+      {% endif %}
+
+      <div class="row g-3 mb-3">
+        <div class="col-xl-3 col-md-6">
+          <div class="card card-animate h-100">
+            <div class="card-body">
+              <p class="text-uppercase text-muted fw-medium mb-2">Step 1</p>
+              <h5 class="mb-1">Pilih Dataset</h5>
+              <p class="text-muted mb-0">Report wajib terhubung ke dataset publish/draft tertentu.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+          <div class="card card-animate h-100">
+            <div class="card-body">
+              <p class="text-uppercase text-muted fw-medium mb-2">Step 2</p>
+              <h5 class="mb-1">Preset & Filter</h5>
+              <p class="text-muted mb-0">Definisikan preset waktu dan filter interaktif tanpa campur metadata panjang.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+          <div class="card card-animate h-100">
+            <div class="card-body">
+              <p class="text-uppercase text-muted fw-medium mb-2">Step 3</p>
+              <h5 class="mb-1">Block Report</h5>
+              <p class="text-muted mb-0">Susun cards, Plotly timeseries, tabel, peta, dan narasi.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+          <div class="card card-animate h-100">
+            <div class="card-body">
+              <p class="text-uppercase text-muted fw-medium mb-2">Step 4</p>
+              <h5 class="mb-1">Publish</h5>
+              <p class="text-muted mb-0">Draft builder siap dipublish menjadi viewer report aktif.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <form id="analytics-report-form" class="card">
+        <div class="card-header">
+          <h5 class="card-title mb-1">Builder Report Semi-CMS</h5>
+          <p class="text-muted mb-0">Metadata ringkas dipisah dari interaksi visual supaya pengguna fokus ke preset, angka, dan chart.</p>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-lg-6">
+              <label class="form-label">Dataset Analytics</label>
+              <select class="form-select" name="dataset_id" required>
+                <option value="">Pilih dataset</option>
+                {% for item in dataset_items %}
+                  {% set dataset = item.get('dataset') %}
+                  <option value="{{ dataset.id }}" {% if active_dataset_id == dataset.id %}selected{% endif %}>{{ dataset.name }} — {{ dataset.dataset_key }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-lg-6">
+              <label class="form-label">Dataset Version</label>
+              <select class="form-select" name="dataset_version_id">
+                <option value="">Auto pakai draft/published aktif</option>
+                {% for item in dataset_items %}
+                  {% set dataset = item.get('dataset') %}
+                  {% set draft_ver = item.get('draft_version') %}
+                  {% set published_ver = item.get('published_version') %}
+                  {% if draft_ver %}
+                  <option value="{{ draft_ver.id }}" {% if active_version and active_version.dataset_version_id == draft_ver.id %}selected{% endif %}>{{ dataset.name }} — Draft v{{ draft_ver.version_number }}</option>
+                  {% endif %}
+                  {% if published_ver %}
+                  <option value="{{ published_ver.id }}" {% if active_version and active_version.dataset_version_id == published_ver.id %}selected{% endif %}>{{ dataset.name }} — Publish v{{ published_ver.version_number }}</option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-lg-4">
+              <label class="form-label">Report Key</label>
+              <input class="form-control" name="report_key" value="{{ report.report_key if report else '' }}" placeholder="pk-kanwil-summary" required>
+            </div>
+            <div class="col-lg-4">
+              <label class="form-label">Nama Report</label>
+              <input class="form-control" name="name" value="{{ report.name if report else '' }}" placeholder="PK Kanwil" required>
+            </div>
+            <div class="col-lg-4">
+              <label class="form-label">Kategori</label>
+              <input class="form-control" name="category_key" value="{{ report.category_key if report else '' }}" placeholder="pk / renaksi / geo / custom">
+            </div>
+
+            <div class="col-lg-6">
+              <label class="form-label">Tipe Report</label>
+              <select class="form-select" name="report_type">
+                {% for value, label in report_type_options %}
+                <option value="{{ value }}" {% if (report.report_type if report else 'custom_report') == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-lg-6">
+              <label class="form-label">Judul Version</label>
+              <input class="form-control" name="title" value="{{ active_version.title if active_version else '' }}" placeholder="PK Kanwil 2026">
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">Deskripsi Ringkas</label>
+              <textarea class="form-control" rows="2" name="description" placeholder="Deskripsi business report.">{{ report.description if report else '' }}</textarea>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Meta Description Viewer</label>
+              <textarea class="form-control" rows="3" name="meta_description" placeholder="Narasi singkat yang tampil pada viewer report.">{{ active_version.meta_description if active_version else '' }}</textarea>
+            </div>
+
+            <div class="col-12"><hr class="text-muted"></div>
+
+            <div class="col-lg-4">
+              <label class="form-label">Default Period Mode</label>
+              <select class="form-select" name="default_period_mode">
+                {% for value, label in period_mode_options %}
+                <option value="{{ value }}" {% if period_config.get('default_mode', 'quarterly') == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-lg-4">
+              <label class="form-label">Supported Period Modes</label>
+              <input class="form-control" name="supported_period_modes_csv" value="{{ (period_config.get('supported_period_modes', []) or []) | join(', ') }}" placeholder="quarterly, semester, yearly">
+            </div>
+            <div class="col-lg-4">
+              <label class="form-label">Quick Presets</label>
+              <input class="form-control" name="quick_presets_csv" value="{{ (period_config.get('quick_presets', []) or []) | join(', ') }}" placeholder="current_quarter, current_semester, current_year">
+            </div>
+
+            <div class="col-lg-6">
+              <label class="form-label">Filter Schema (JSON)</label>
+              <textarea class="form-control font-monospace" rows="7" name="filter_schema_json">{{ filter_schema | tojson(indent=2) }}</textarea>
+            </div>
+            <div class="col-lg-6">
+              <label class="form-label">Layout Config (JSON)</label>
+              <textarea class="form-control font-monospace" rows="7" name="layout_json">{{ layout_config | tojson(indent=2) }}</textarea>
+            </div>
+
+            <div class="col-12"><hr class="text-muted"></div>
+
+            <div class="col-lg-6">
+              <label class="form-label">Blocks (JSON Array)</label>
+              <textarea class="form-control font-monospace" rows="10" name="blocks_json">{{ blocks | tojson(indent=2) }}</textarea>
+              <div class="form-text">Gunakan type seperti metric_cards, plotly_timeseries, detail_table, geo_map, narrative.</div>
+            </div>
+            <div class="col-lg-6">
+              <div class="alert alert-light border mb-0 h-100">
+                <h6 class="mb-2">Contoh block type</h6>
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                  {% for value, label in block_type_options %}
+                  <span class="badge bg-soft-primary text-primary">{{ label }}</span>
+                  {% endfor %}
+                </div>
+                <p class="text-muted mb-1">Struktur block umum:</p>
+<pre class="small mb-0">[
+  {"type":"metric_cards","title":"Ringkasan KPI","config":{"metric_keys":["total","growth"]}},
+  {"type":"plotly_timeseries","title":"Tren Tahunan","config":{"x":"period_label","y":"total"}},
+  {"type":"geo_map","title":"Sebaran Wilayah","config":{"geo_field":"region_code"}},
+  {"type":"narrative","title":"Resume","config":{"source":"ai_or_manual"}}
+]</pre>
+              </div>
+            </div>
+
+            <div class="col-lg-4">
+              <label class="form-label">Narasi Intro</label>
+              <textarea class="form-control" rows="4" name="narrative_intro">{{ narrative.get('intro', '') }}</textarea>
+            </div>
+            <div class="col-lg-4">
+              <label class="form-label">Metodologi</label>
+              <textarea class="form-control" rows="4" name="narrative_methodology">{{ narrative.get('methodology', '') }}</textarea>
+            </div>
+            <div class="col-lg-4">
+              <label class="form-label">Summary Prompt</label>
+              <textarea class="form-control" rows="4" name="summary_prompt">{{ narrative.get('summary_prompt', '') }}</textarea>
+            </div>
+          </div>
+        </div>
+        <div class="card-footer d-flex flex-wrap gap-2 justify-content-between">
+          <div class="text-muted small">
+            Report akan membaca dataset contract terpilih, bukan source mentah langsung.
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary" id="save-report-button">{{ 'Simpan & Buat Draft' if page_mode == 'create' else 'Simpan Draft' }}</button>
+            <button type="button" class="btn btn-success" id="publish-report-button" {% if not active_version %}disabled{% endif %}>Publish Draft</button>
+          </div>
+        </div>
+      </form>
+
+      <div class="card d-none mt-3" id="report-result-card">
+        <div class="card-header"><h6 class="card-title mb-0">Response API</h6></div>
+        <div class="card-body">
+          <pre class="small mb-0" id="report-result-output"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+  const form = document.getElementById('analytics-report-form');
+  if (!form) return;
+
+  const saveButton = document.getElementById('save-report-button');
+  const publishButton = document.getElementById('publish-report-button');
+  const resultCard = document.getElementById('report-result-card');
+  const resultOutput = document.getElementById('report-result-output');
+  const pageMode = {{ page_mode | tojson }};
+  const reportId = {{ report.id if report else 'null' }};
+  let draftVersionId = {{ active_version.id if active_version else 'null' }};
+
+  function csvToArray(value) {
+    return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+  }
+
+  function parseJsonField(name, fallback) {
+    const raw = form.elements[name].value.trim();
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  }
+
+  function buildPayload() {
+    return {
+      report: {
+        dataset_id: form.elements.dataset_id.value ? Number(form.elements.dataset_id.value) : null,
+        report_key: form.elements.report_key.value.trim(),
+        name: form.elements.name.value.trim(),
+        description: form.elements.description.value.trim(),
+        report_type: form.elements.report_type.value,
+        category_key: form.elements.category_key.value.trim() || null,
+      },
+      draft_version: {
+        dataset_version_id: form.elements.dataset_version_id.value ? Number(form.elements.dataset_version_id.value) : null,
+        title: form.elements.title.value.trim(),
+        meta_description: form.elements.meta_description.value.trim(),
+        default_period_mode: form.elements.default_period_mode.value,
+        supported_period_modes: csvToArray(form.elements.supported_period_modes_csv.value),
+        quick_presets: csvToArray(form.elements.quick_presets_csv.value),
+        filter_schema: parseJsonField('filter_schema_json', {}),
+        layout: parseJsonField('layout_json', {}),
+        blocks: parseJsonField('blocks_json', []),
+        narrative_intro: form.elements.narrative_intro.value.trim(),
+        narrative_methodology: form.elements.narrative_methodology.value.trim(),
+        summary_prompt: form.elements.summary_prompt.value.trim(),
+      }
+    };
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    saveButton.disabled = true;
+    saveButton.textContent = 'Menyimpan...';
+    try {
+      const payload = buildPayload();
+      const endpoint = pageMode === 'create' ? '/api/v1/analytics/reports' : `/api/v1/analytics/reports/${reportId}`;
+      const method = pageMode === 'create' ? 'POST' : 'PUT';
+      const response = await fetch(endpoint, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      resultCard.classList.remove('d-none');
+      resultOutput.textContent = JSON.stringify(result, null, 2);
+      if (!response.ok || result.success === false) {
+        throw new Error(result.message || 'Gagal menyimpan report.');
+      }
+      draftVersionId = result.data?.draft_version?.id || draftVersionId;
+      publishButton.disabled = !draftVersionId;
+      alert(result.message || 'Report berhasil disimpan.');
+      if (pageMode === 'create' && result.data?.report?.id) {
+        window.location.href = `/analytics/reports/${result.data.report.id}/edit`;
+        return;
+      }
+    } catch (error) {
+      alert(error.message || 'Terjadi kesalahan saat menyimpan report.');
+    } finally {
+      saveButton.disabled = false;
+      saveButton.textContent = pageMode === 'create' ? 'Simpan & Buat Draft' : 'Simpan Draft';
+    }
+  });
+
+  publishButton?.addEventListener('click', async () => {
+    if (!draftVersionId) {
+      alert('Simpan draft dulu sebelum publish.');
+      return;
+    }
+    publishButton.disabled = true;
+    publishButton.textContent = 'Publishing...';
+    try {
+      const response = await fetch(`/api/v1/analytics/report-versions/${draftVersionId}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const result = await response.json();
+      resultCard.classList.remove('d-none');
+      resultOutput.textContent = JSON.stringify(result, null, 2);
+      if (!response.ok || result.success === false) {
+        throw new Error(result.message || 'Gagal publish report.');
+      }
+      alert(result.message || 'Report berhasil dipublish.');
+      window.location.reload();
+    } catch (error) {
+      alert(error.message || 'Terjadi kesalahan saat publish report.');
+    } finally {
+      publishButton.disabled = false;
+      publishButton.textContent = 'Publish Draft';
+    }
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends 'partials/base.html' %}
+{% block title %}Report Analytics{% endblock %}
+
+{% block content %}
+<div class="main-content">
+  <div class="page-content">
+    <div class="container-fluid">
+      <div class="row mb-3">
+        <div class="col-12">
+          <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+            <div>
+              <h4 class="mb-sm-0">Report Analytics</h4>
+              <p class="text-muted mb-0">Daftar report semi-CMS yang membaca dataset contract publish/draft, lengkap dengan action menuju builder dan viewer.</p>
+            </div>
+            <div class="page-title-right d-flex gap-2">
+              <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-light">Katalog Dataset</a>
+              <a href="{{ url_for('analytics_web.analytics_report_create') }}" class="btn btn-primary">Buat Report</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if error_message %}
+      <div class="alert alert-danger">{{ error_message }}</div>
+      {% endif %}
+
+      <div class="card">
+        <div class="card-header">
+          <h5 class="card-title mb-1">Katalog Report Semi-CMS</h5>
+          <p class="text-muted mb-0">Entry point report dipisah dari metadata registry agar interaksi harian lebih fokus ke preset, angka, chart, dan narasi.</p>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-nowrap align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Report</th>
+                  <th>Dataset</th>
+                  <th>Draft</th>
+                  <th>Published</th>
+                  <th>Indicator Map</th>
+                  <th class="text-end">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in report_items %}
+                  {% set report = item.get('report') %}
+                  {% set draft_version = item.get('draft_version') %}
+                  {% set published_version = item.get('published_version') %}
+                  {% set linked_dataset_name = (report.settings_json or {}).get('linked_dataset_name') if report else None %}
+                  {% set linked_dataset_key = (report.settings_json or {}).get('linked_dataset_key') if report else None %}
+                  <tr>
+                    <td>
+                      <div class="fw-semibold">{{ report.name if report else '-' }}</div>
+                      <div class="text-muted small">{{ report.report_key if report else '' }} · {{ report.category_key if report and report.category_key else 'uncategorized' }}</div>
+                    </td>
+                    <td>
+                      <div>{{ linked_dataset_name or 'Belum terhubung' }}</div>
+                      <div class="text-muted small">{{ linked_dataset_key or '-' }}</div>
+                    </td>
+                    <td>{{ ('v%s'|format(draft_version.version_number)) if draft_version else '-' }}</td>
+                    <td>{{ ('v%s'|format(published_version.version_number)) if published_version else '-' }}</td>
+                    <td>{{ item.get('indicator_mapping_count', 0) }}</td>
+                    <td class="text-end">
+                      <div class="btn-group">
+                        <a href="{{ url_for('analytics_web.analytics_report_edit', report_definition_id=report.id) }}" class="btn btn-sm btn-soft-primary">Builder</a>
+                        {% if report.dataset_id %}
+                        <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=report.dataset_id) }}" class="btn btn-sm btn-primary">Viewer</a>
+                        {% endif %}
+                      </div>
+                    </td>
+                  </tr>
+                {% else %}
+                  <tr>
+                    <td colspan="6" class="text-center text-muted py-4">Belum ada report analytics. Buat report dari dataset yang sudah siap.</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
