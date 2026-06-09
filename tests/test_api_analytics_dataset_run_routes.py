@@ -193,18 +193,18 @@ def test_get_analytics_dataset_runs_returns_run_history(monkeypatch):
     assert payload['data']['runs'][1]['error_code'] == 'QUERY_TIMEOUT'
 
 
-def test_post_analytics_dataset_run_returns_running_payload(monkeypatch):
+def test_post_analytics_dataset_run_returns_execution_payload(monkeypatch):
     app = create_app('testing')
     client = app.test_client()
 
     class StubAnalyticsDatasetRunService:
-        def start_run(self, dataset_id, dataset_version_id, data, actor=None):
+        def execute_run(self, dataset_id, dataset_version_id, data, actor=None):
             assert dataset_id == 11
             assert dataset_version_id == 22
             return make_dataset_run(
                 dataset_id=dataset_id,
                 dataset_version_id=dataset_version_id,
-                status='running',
+                status='succeeded',
                 requested_reporting_year=data['requested_reporting_year'],
                 requested_filters_json=data['requested_filters_json'],
             )
@@ -223,7 +223,7 @@ def test_post_analytics_dataset_run_returns_running_payload(monkeypatch):
     assert response.status_code == 201
     payload = response.get_json()
     assert payload['success'] is True
-    assert payload['data']['run']['status'] == 'running'
+    assert payload['data']['run']['status'] == 'succeeded'
     assert payload['data']['run']['dataset_version_id'] == 22
 
 

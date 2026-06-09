@@ -3,10 +3,14 @@
 Modul ini mengelola dataset analytics, run dataset, definisi report, indikator, hasil indikator, progress entry, dan query workspace yang dipakai UI maupun API analytics."""
 
 import uuid
+from collections import Counter, defaultdict
+from datetime import datetime
 
 from app.core.extensions import db
 from app.core.services.base import BaseService
 from app.core.utils import now_utc
+from app.modules.form.models import Form
+from app.modules.submission.models import Submission
 
 from .models import (
     AnalyticsDataset,
@@ -323,6 +327,12 @@ class AnalyticsDatasetRunService(BaseService):
 
         run.status = AnalyticsDatasetRun.STATUS_SUCCEEDED
         run.finished_at = data.get('finished_at') or now_utc()
+        if run.started_at and run.finished_at:
+            run.duration_ms = int((run.finished_at - run.started_at).total_seconds() * 1000)
+        run.freshness_status = data.get('freshness_status', run.freshness_status or AnalyticsDatasetRun.FRESHNESS_UNKNOWN)
+        run.source_watermark = data.get('source_watermark')
+        run.source_snapshot_json = data.get('source_snapshot_json') or run.source_snapshot_json or {}
+        run.freshness_evaluated_at = data.get('freshness_evaluated_at') or now_utc()
         run.result_row_count = data.get('result_row_count')
         run.result_schema_json = data.get('result_schema_json') or []
         run.result_preview_json = data.get('result_preview_json') or []
@@ -356,11 +366,377 @@ class AnalyticsDatasetRunService(BaseService):
 
         run.status = AnalyticsDatasetRun.STATUS_FAILED
         run.finished_at = data.get('finished_at') or now_utc()
+        if run.started_at and run.finished_at:
+            run.duration_ms = int((run.finished_at - run.started_at).total_seconds() * 1000)
+        run.freshness_status = data.get('freshness_status', AnalyticsDatasetRun.FRESHNESS_FAILED)
+        run.source_snapshot_json = data.get('source_snapshot_json') or run.source_snapshot_json or {}
+        run.freshness_evaluated_at = data.get('freshness_evaluated_at') or now_utc()
         run.error_code = data.get('error_code')
         run.error_message = data.get('error_message')
         run.error_detail_json = data.get('error_detail_json') or {}
         self._apply_actor_audit(run, actor, action='update')
         return self.repository.save(run)
+
+    def execute_run(self, dataset_id, dataset_version_id, data=None, actor=None):
+        """Menjalankan dataset run end-to-end agar UI bisa langsung menampilkan hasil analytics.
+
+        Method ini dipakai oleh layer web/API sebagai jembatan eksplisit antara
+        source data operasional (mis. form submission) dengan materialisasi dataset
+        analytics. Saat ini engine sinkron ini memprioritaskan source bertipe
+        submission fact/agregat sehingga setelah user kirim form, data dapat
+        dijalankan menjadi dataset run dan langsung dipakai detail report.
+
+        Args:
+            dataset_id (Any): Primary key internal dataset analytics target.
+            dataset_version_id (Any): Primary key internal dataset version target.
+            data (Any): Payload utama operasi service dalam bentuk dict/JSON-like.
+            actor (Any): User/actor runtime untuk audit trail dan otorisasi, bila tersedia.
+
+        Returns:
+            Any: Entity run dengan status succeeded atau failed.
+        """
+
+        run = self.start_run(dataset_id, dataset_version_id, data=data, actor=actor)
+
+        try:
+            materialized = self._materialize_run_payload(run)
+            return self.complete_run(run.id, materialized, actor=actor)
+        except Exception as error:
+            db.session.rollback()
+            return self.fail_run(
+                run.id,
+                {
+                    'error_code': 'DATASET_RUN_EXECUTION_FAILED',
+                    'error_message': str(error),
+                    'error_detail_json': {
+                        'dataset_id': dataset_id,
+                        'dataset_version_id': dataset_version_id,
+                    },
+                },
+                actor=actor,
+            )
+
+    def _materialize_run_payload(self, run):
+        """Membentuk payload hasil run sinkron berdasarkan kontrak dataset aktif."""
+
+        dataset = getattr(run, 'dataset', None) or self.dataset_repository.get_by_id(run.dataset_id)
+        dataset_version = getattr(run, 'dataset_version', None) or self.dataset_version_repository.get_by_id(run.dataset_version_id)
+
+        if not dataset:
+            raise ValueError('Analytics dataset tidak ditemukan saat eksekusi run.')
+        if not dataset_version:
+            raise ValueError('Analytics dataset version tidak ditemukan saat eksekusi run.')
+
+        if dataset.source_domain != AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION:
+            raise ValueError('Engine run sinkron saat ini baru mendukung dataset source_domain submission.')
+
+        rows, source_snapshot = self._load_submission_rows(dataset, dataset_version, run)
+        summary = self._build_submission_summary(rows, run, dataset, dataset_version, source_snapshot)
+        source_watermark = source_snapshot.get('latest_submitted_at')
+        freshness_status = AnalyticsDatasetRun.FRESHNESS_FRESH if rows else AnalyticsDatasetRun.FRESHNESS_STALE
+
+        return {
+            'freshness_status': freshness_status,
+            'source_watermark': source_watermark,
+            'source_snapshot_json': source_snapshot,
+            'freshness_evaluated_at': now_utc(),
+            'result_row_count': len(rows),
+            'result_schema_json': dataset_version.output_schema_json or self._infer_result_schema(rows),
+            'result_preview_json': rows[:10],
+            'materialization_ref': f'analytics://dataset-runs/{run.id}',
+            'summary_json': summary,
+        }
+
+    def _load_submission_rows(self, dataset, dataset_version, run):
+        """Mengambil row snapshot dari submission berdasarkan kontrak dataset."""
+
+        source_contract = getattr(dataset_version, 'source_contract_json', None) or {}
+        settings_json = getattr(dataset, 'settings_json', None) or {}
+        requested_filters = getattr(run, 'requested_filters_json', None) or {}
+        form_refs = self._resolve_dataset_form_refs(dataset, dataset_version)
+        forms = self._resolve_forms(form_refs)
+
+        if not forms:
+            raise ValueError('Dataset belum terhubung ke form submission secara eksplisit. Tambahkan form_code/form_slug/form_id pada source contract atau settings dataset.')
+
+        form_ids = [form.id for form in forms]
+        requested_reporting_year = run.requested_reporting_year or requested_filters.get('reporting_year') or source_contract.get('reporting_year')
+
+        query = Submission.query.filter(
+            Submission.deleted_at.is_(None),
+            Submission.form_id.in_(form_ids),
+            Submission.status == 'submitted',
+        )
+
+        if requested_reporting_year:
+            query = query.filter(Submission.reporting_year == requested_reporting_year)
+
+        source_type = requested_filters.get('source_type') or source_contract.get('source_type') or settings_json.get('source_type')
+        if source_type:
+            query = query.filter(Submission.source_type == source_type)
+
+        submissions = query.order_by(Submission.submitted_at.asc(), Submission.id.asc()).all()
+        rows = [
+            self._build_submission_row_snapshot(submission, dataset_version)
+            for submission in submissions
+        ]
+
+        source_snapshot = {
+            'form_ids': form_ids,
+            'form_codes': [getattr(form, 'code', None) for form in forms],
+            'form_slugs': [getattr(form, 'slug', None) for form in forms],
+            'requested_reporting_year': requested_reporting_year,
+            'requested_filters_json': requested_filters,
+            'submission_count': len(submissions),
+            'latest_submitted_at': submissions[-1].submitted_at.isoformat() if submissions and submissions[-1].submitted_at else None,
+        }
+
+        return rows, source_snapshot
+
+    def _resolve_dataset_form_refs(self, dataset, dataset_version):
+        """Menggabungkan referensi form eksplisit dari dataset/settings/source contract."""
+
+        refs = []
+        for payload in (
+            getattr(dataset, 'settings_json', None) or {},
+            getattr(dataset_version, 'source_contract_json', None) or {},
+        ):
+            refs.extend(self._coerce_list(payload.get('form_ids')))
+            refs.extend(self._coerce_list(payload.get('form_codes')))
+            refs.extend(self._coerce_list(payload.get('form_slugs')))
+            refs.extend(self._coerce_list(payload.get('form_refs')))
+            for key in ('form_id', 'form_code', 'form_slug'):
+                value = payload.get(key)
+                if value not in (None, ''):
+                    refs.append(value)
+
+        primary_ref = getattr(dataset, 'primary_source_ref', None)
+        if primary_ref not in (None, ''):
+            refs.append(primary_ref)
+
+        unique_refs = []
+        seen = set()
+        for ref in refs:
+            normalized = str(ref).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            unique_refs.append(ref)
+        return unique_refs
+
+    def _resolve_forms(self, refs):
+        """Mengubah daftar ref menjadi entity Form unik."""
+
+        forms = []
+        seen_ids = set()
+        for ref in refs:
+            form = None
+            if isinstance(ref, int) or (isinstance(ref, str) and str(ref).isdigit()):
+                form = Form.query.filter(Form.deleted_at.is_(None), Form.id == int(ref)).first()
+            if not form:
+                text_ref = str(ref).strip()
+                form = Form.query.filter(
+                    Form.deleted_at.is_(None),
+                    db.or_(Form.code == text_ref, Form.slug == text_ref, Form.uuid == text_ref),
+                ).first()
+            if form and form.id not in seen_ids:
+                seen_ids.add(form.id)
+                forms.append(form)
+        return forms
+
+    def _build_submission_row_snapshot(self, submission, dataset_version):
+        """Membentuk row snapshot analytics dari satu submission."""
+
+        payload = dict(getattr(submission, 'payload', None) or {})
+        date_field = self._resolve_date_field(payload, dataset_version)
+        normalized_date = self._normalize_date_value(payload.get(date_field)) if date_field else None
+        reporting_year = normalized_date.year if normalized_date else submission.reporting_year
+        quarter_number = ((normalized_date.month - 1) // 3 + 1) if normalized_date else 1
+        semester_number = 1 if (not normalized_date or normalized_date.month <= 6) else 2
+
+        row = {
+            'submission_id': submission.id,
+            'submission_uuid': submission.uuid,
+            'submission_number': submission.submission_number,
+            'form_id': submission.form_id,
+            'form_version_id': submission.form_version_id,
+            'reporting_year': reporting_year,
+            'reporting_period_id': submission.reporting_period_id,
+            'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+            'owner_scope_code': submission.owner_scope_code,
+            'owner_scope_name': submission.owner_scope_name,
+            'subject_ref_code': submission.subject_ref_code,
+            'subject_ref_name': submission.subject_ref_name,
+            **payload,
+        }
+
+        row['tanggal'] = normalized_date.isoformat() if normalized_date else payload.get(date_field or 'tanggal')
+        row['quarter_number'] = quarter_number
+        row['quarter_label'] = f'{reporting_year}-Q{quarter_number}'
+        row['semester_number'] = semester_number
+        row['semester_label'] = f'{reporting_year}-S{semester_number}'
+        row['year_label'] = str(reporting_year)
+        row['hasil'] = row.get('hasil') or row.get('status_label') or row.get('status') or 'Tanpa Status'
+        row['jenis'] = row.get('jenis') or row.get('category') or row.get('kategori') or 'Tanpa Jenis'
+        row['daerah'] = row.get('daerah') or row.get('wilayah') or row.get('owner_scope_name') or 'Tanpa Daerah'
+        return row
+
+    def _build_submission_summary(self, rows, run, dataset, dataset_version, source_snapshot):
+        """Menyusun summary human-friendly untuk detail report analytics."""
+
+        hasil_counter = Counter()
+        jenis_counter = Counter()
+        daerah_counter = Counter()
+        yearly_periods = defaultdict(lambda: {'label': None, 'period_type': 'yearly', 'period_number': 1, 'reporting_year': None, 'total': 0, 'selesai': 0, 'dikembalikan': 0})
+        semester_periods = defaultdict(lambda: {'label': None, 'period_type': 'semesterly', 'period_number': None, 'reporting_year': None, 'total': 0, 'selesai': 0, 'dikembalikan': 0})
+        quarterly_periods = defaultdict(lambda: {'label': None, 'period_type': 'quarterly', 'period_number': None, 'reporting_year': None, 'total': 0, 'selesai': 0, 'dikembalikan': 0})
+
+        for row in rows:
+            hasil = row.get('hasil') or 'Tanpa Status'
+            jenis = row.get('jenis') or 'Tanpa Jenis'
+            daerah = row.get('daerah') or 'Tanpa Daerah'
+            hasil_counter[hasil] += 1
+            jenis_counter[jenis] += 1
+            daerah_counter[daerah] += 1
+
+            reporting_year = row.get('reporting_year')
+            semester_label = row.get('semester_label') or f'{reporting_year}-S1'
+            quarter_label = row.get('quarter_label') or f'{reporting_year}-Q1'
+            semester_number = row.get('semester_number') or 1
+            quarter_number = row.get('quarter_number') or 1
+            year_label = row.get('year_label') or str(reporting_year)
+
+            for bucket, label, period_type, period_number in (
+                (yearly_periods[year_label], year_label, 'yearly', 1),
+                (semester_periods[semester_label], semester_label, 'semesterly', semester_number),
+                (quarterly_periods[quarter_label], quarter_label, 'quarterly', quarter_number),
+            ):
+                bucket['label'] = label
+                bucket['period_type'] = period_type
+                bucket['period_number'] = period_number
+                bucket['reporting_year'] = reporting_year
+                bucket['total'] += 1
+                if str(hasil).lower() == 'selesai':
+                    bucket['selesai'] += 1
+                if str(hasil).lower() == 'dikembalikan':
+                    bucket['dikembalikan'] += 1
+
+        selesai_count = sum(1 for row in rows if str(row.get('hasil') or '').lower() == 'selesai')
+        dikembalikan_count = sum(1 for row in rows if str(row.get('hasil') or '').lower() == 'dikembalikan')
+        row_dates = [row.get('tanggal') for row in rows if row.get('tanggal')]
+
+        return {
+            'dataset_key': dataset.dataset_key,
+            'dataset_version_number': getattr(dataset_version, 'version_number', None),
+            'requested_reporting_year': run.requested_reporting_year,
+            'row_count': len(rows),
+            'date_min': min(row_dates) if row_dates else None,
+            'date_max': max(row_dates) if row_dates else None,
+            'hasil_counts': dict(hasil_counter),
+            'jenis_counts': dict(jenis_counter),
+            'top_daerah': [
+                {'label': label, 'count': count}
+                for label, count in daerah_counter.most_common(10)
+            ],
+            'completion': {
+                'selesai': selesai_count,
+                'dikembalikan': dikembalikan_count,
+                'achievement_percentage': round((selesai_count / len(rows)) * 100, 2) if rows else 0,
+            },
+            'filter_dimensions': {
+                'reporting_years': sorted({row.get('reporting_year') for row in rows if row.get('reporting_year') is not None}),
+                'hasil_options': sorted({row.get('hasil') for row in rows if row.get('hasil')}),
+                'jenis_options': sorted({row.get('jenis') for row in rows if row.get('jenis')}),
+            },
+            'period_metrics': {
+                'yearly': self._serialize_period_metrics(yearly_periods),
+                'semesterly': self._serialize_period_metrics(semester_periods),
+                'quarterly': self._serialize_period_metrics(quarterly_periods),
+            },
+            'row_snapshots': rows,
+            'source_snapshot': source_snapshot,
+        }
+
+    def _serialize_period_metrics(self, periods):
+        """Menormalisasi bucket periode agar siap dipakai chart/report."""
+
+        serialized = []
+        for item in periods.values():
+            total = item['total']
+            serialized.append({
+                **item,
+                'achievement_percentage': round((item['selesai'] / total) * 100, 2) if total else 0,
+            })
+        return sorted(serialized, key=lambda item: (item['reporting_year'] or 0, item['period_number'] or 0, item['label'] or ''))
+
+    def _infer_result_schema(self, rows):
+        """Membuat schema preview sederhana bila output schema belum didefinisikan."""
+
+        if not rows:
+            return []
+        first_row = rows[0]
+        schema = []
+        for key, value in first_row.items():
+            value_type = 'string'
+            if isinstance(value, bool):
+                value_type = 'boolean'
+            elif isinstance(value, int):
+                value_type = 'integer'
+            elif isinstance(value, float):
+                value_type = 'number'
+            schema.append({'key': key, 'type': value_type})
+        return schema
+
+    def _resolve_date_field(self, payload, dataset_version):
+        """Menentukan field tanggal dari payload berdasarkan kontrak atau nama umum."""
+
+        source_contract = getattr(dataset_version, 'source_contract_json', None) or {}
+        transform_spec = getattr(dataset_version, 'transform_spec_json', None) or {}
+        candidates = [
+            source_contract.get('date_field'),
+            transform_spec.get('date_field'),
+            'tanggal',
+            'submitted_at',
+            'date',
+            'datetime',
+        ]
+        for candidate in candidates:
+            if candidate and candidate in payload:
+                return candidate
+        return None
+
+    def _normalize_date_value(self, value):
+        """Mengubah berbagai bentuk nilai tanggal menjadi object date bila memungkinkan."""
+
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if hasattr(value, 'year') and hasattr(value, 'month') and hasattr(value, 'day'):
+            return value
+
+        text_value = str(value).strip()
+        if not text_value:
+            return None
+        normalized = text_value.replace('Z', '+00:00')
+        try:
+            if 'T' in normalized:
+                return datetime.fromisoformat(normalized).date()
+            return datetime.fromisoformat(normalized).date()
+        except ValueError:
+            try:
+                return datetime.strptime(normalized[:10], '%Y-%m-%d').date()
+            except ValueError:
+                return None
+
+    def _coerce_list(self, value):
+        """Mengubah scalar/list menjadi list untuk memudahkan normalisasi input kontrak."""
+
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return list(value)
+        return [value]
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
         """Helper internal untuk apply actor audit.

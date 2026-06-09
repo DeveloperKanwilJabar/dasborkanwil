@@ -1,0 +1,278 @@
+{% extends "partials/base.html" %}
+{% block title %}Detail Report Analytics{% endblock title %}
+
+{% block extra_css %}
+<link href="{{ url_for('static', filename='libs/leaflet/dist/leaflet.css') }}" rel="stylesheet" />
+<style>
+    .analytics-chart-box {
+        min-height: 360px;
+    }
+    .analytics-chart-box .js-plotly-plot,
+    .analytics-chart-box .plot-container {
+        width: 100%;
+    }
+    .analytics-map-box {
+        min-height: 360px;
+        border-radius: 0.75rem;
+        overflow: hidden;
+        border: 1px solid var(--vz-border-color, #d9dee3);
+    }
+    .analytics-preset-toolbar .btn[data-selected="true"] {
+        box-shadow: 0 0 0 0.2rem rgba(64, 81, 137, 0.18);
+    }
+    .analytics-metric-card .display-6 {
+        line-height: 1;
+    }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Detail Report Analytics</h4>
+                            <p class="text-muted mb-0">Preset waktu, kartu angka, chart, dan peta sekarang dikumpulkan dalam satu alur interaksi supaya user tidak perlu bolak-balik scroll jauh.</p>
+                        </div>
+                        <div class="page-title-right d-flex gap-2 flex-wrap justify-content-end">
+                            <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-soft-secondary btn-sm">Daftar Analytics</a>
+                            {% if registry %}
+                            <a href="{{ url_for('analytics_web.analytics_report_metadata', registry_id=registry.id) }}" class="btn btn-soft-primary btn-sm">Metadata Registry</a>
+                            <a href="#detailReportChartSection" class="btn btn-primary btn-sm">Ke Chart</a>
+                            <a href="#detailReportMapSection" class="btn btn-info btn-sm">Ke Peta</a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if error_message %}
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-warning mb-4">{{ error_message }}</div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="row g-4 mb-4">
+                <div class="col-md-6 col-xl-3">
+                    <div class="card analytics-metric-card h-100">
+                        <div class="card-body">
+                            <p class="text-muted mb-2">Registry</p>
+                            <div class="fw-semibold fs-5">{{ registry.name if registry else '-' }}</div>
+                            <small class="text-muted">{{ registry.registry_slug if registry else '-' }}</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-xl-3">
+                    <div class="card analytics-metric-card h-100">
+                        <div class="card-body">
+                            <p class="text-muted mb-2">Versi Publish Registry</p>
+                            <div class="display-6">{% if published_version %}v{{ published_version.version_number }}{% else %}-{% endif %}</div>
+                            <small class="text-muted">Sumber metadata dipisah ke halaman sendiri.</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-xl-3">
+                    <div class="card analytics-metric-card h-100">
+                        <div class="card-body">
+                            <p class="text-muted mb-2">Dataset Terkait</p>
+                            <div class="display-6">{{ related_dataset_count }}</div>
+                            <small class="text-muted">Dataset yang memang direlasikan eksplisit ke registry ini.</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-xl-3">
+                    <div class="card analytics-metric-card h-100 bg-primary-subtle border-primary-subtle">
+                        <div class="card-body">
+                            <p class="text-muted mb-2">Default Dataset</p>
+                            <div class="fw-semibold">{{ primary_dataset.name if primary_dataset else 'Belum ada dataset terkait' }}</div>
+                            <small class="text-muted">Bisa diganti dari selector dataset di bawah.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4">
+                <div class="col-12 col-xxl-9">
+                    <div class="card h-100" id="detailReportInsightSection">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Insight Report</h5>
+                            <p class="text-muted mb-0">Filter, preset, angka, dan chart didekatkan dalam satu ruang kerja agar terasa lebih natural saat eksplorasi.</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-4">
+                                    <label class="form-label small text-muted" for="analyticsDetailDatasetSelect">Dataset Terkait</label>
+                                    <select class="form-select form-select-sm" id="analyticsDetailDatasetSelect">
+                                        {% if related_dataset_items %}
+                                            {% for item in related_dataset_items %}
+                                            {% set dataset = item.dataset %}
+                                            <option value="{{ dataset.id }}" {% if primary_dataset and dataset.id == primary_dataset.id %}selected{% endif %}>{{ dataset.name }}</option>
+                                            {% endfor %}
+                                        {% else %}
+                                            <option value="">Belum ada dataset terkait</option>
+                                        {% endif %}
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterReportingYear">Tahun</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetFilterReportingYear">
+                                        <option value="">Semua Tahun</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterStatus">Status/Hasil</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetFilterStatus">
+                                        <option value="">Semua Status</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterJenis">Jenis</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetFilterJenis">
+                                        <option value="">Semua Jenis</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small text-muted" for="analyticsDatasetMetricPeriodMode">Timeseries</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetMetricPeriodMode">
+                                        <option value="daily">Harian</option>
+                                        <option value="weekly">Mingguan</option>
+                                        <option value="monthly">Bulanan</option>
+                                        <option value="quarterly" selected>Triwulan</option>
+                                        <option value="four_monthly">Caturwulan</option>
+                                        <option value="semesterly">Semester</option>
+                                        <option value="yearly">Tahunan</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterDateStart">Tanggal Mulai</label>
+                                    <input class="form-control form-control-sm" id="analyticsDatasetFilterDateStart" type="date" />
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small text-muted" for="analyticsDatasetFilterDateEnd">Tanggal Selesai</label>
+                                    <input class="form-control form-control-sm" id="analyticsDatasetFilterDateEnd" type="date" />
+                                </div>
+                                <div class="col-md-6 d-flex align-items-end">
+                                    <div class="d-flex flex-wrap gap-2 analytics-preset-toolbar" id="analyticsDatasetQuickRanges">
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="last_7_days">7 Hari Terakhir</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_week">Minggu Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="last_30_days">30 Hari Terakhir</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="last_90_days">90 Hari Terakhir</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_month">Bulan Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_quarter">Triwulan Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_semester">Semester Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="current_year">Tahun Ini</button>
+                                        <button class="btn btn-sm btn-soft-secondary" type="button" data-quick-range="full_range">Semua Range</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row g-3 mb-3" id="analyticsDatasetMetricCards">
+                                <div class="col-md-3"><div class="card border h-100"><div class="card-body"><div class="text-muted small">Total</div><div class="display-6">0</div></div></div></div>
+                            </div>
+
+                            <div class="row g-3 align-items-stretch">
+                                <div class="col-12 col-xl-8">
+                                    <div class="card border h-100" id="detailReportChartSection">
+                                        <div class="card-header border-0">
+                                            <h6 class="card-title mb-1">Chart Timeseries</h6>
+                                            <p class="text-muted mb-0">Chart akan ikut berubah sesuai preset dan filter aktif tanpa perlu scroll mencari panel lain.</p>
+                                        </div>
+                                        <div class="card-body">
+                                            <div id="analyticsDatasetChart" class="analytics-chart-box"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-12 col-xl-4">
+                                    <div class="card border h-100">
+                                        <div class="card-header border-0">
+                                            <h6 class="card-title mb-1">Ringkasan Dataset</h6>
+                                            <p class="text-muted mb-0">Konteks singkat dataset aktif tanpa menjejalkan metadata panjang.</p>
+                                        </div>
+                                        <div class="card-body" id="analyticsDatasetDetailSummary">
+                                            <div class="text-muted">Pilih dataset untuk melihat ringkasan.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 col-xxl-3 d-flex flex-column gap-4">
+                    <div class="card border-primary shadow-sm">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Jembatan Submission ke Analytics</h5>
+                            <p class="text-muted mb-0">Alur eksplisit: submission/form masuk ke dataset run dulu, baru dipakai kartu angka, chart, dan peta.</p>
+                        </div>
+                        <div class="card-body d-flex flex-column gap-3">
+                            <div id="analyticsDatasetExecutionStatus" class="alert alert-light border mb-0">Pilih dataset, lalu jalankan run untuk menyegarkan insight.</div>
+                            <div class="border rounded p-3 bg-light-subtle" id="analyticsDatasetExecutionSource">
+                                <div class="text-muted">Menyiapkan ringkasan sumber data...</div>
+                            </div>
+                            <div class="d-grid gap-2">
+                                <button type="button" class="btn btn-primary" id="analyticsDatasetRunButton">Jalankan Dataset Sekarang</button>
+                                <button type="button" class="btn btn-soft-secondary" id="analyticsDatasetRunsRefreshButton">Refresh Riwayat Run</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card h-100">
+                        <div class="card-header">
+                            <h5 class="card-title mb-1">Riwayat Run Dataset</h5>
+                            <p class="text-muted mb-0">Observability ringan agar user paham data chart berasal dari run mana.</p>
+                        </div>
+                        <div class="card-body">
+                            <div id="analyticsDatasetRunsList" class="list-group list-group-flush">
+                                <div class="text-muted">Memuat dataset runs...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mt-1">
+                <div class="col-12">
+                    <div class="card h-100" id="detailReportMapSection">
+                        <div class="card-header d-flex justify-content-between align-items-start flex-wrap gap-2">
+                            <div>
+                                <h5 class="card-title mb-1">Peta & Sebaran Data</h5>
+                                <p class="text-muted mb-0">Tombol peta di header akan membawa user langsung ke area ini.</p>
+                            </div>
+                            <a href="#detailReportInsightSection" class="btn btn-soft-secondary btn-sm">Kembali ke Insight</a>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-12 col-xl-8">
+                                    <div id="analyticsDatasetMap" class="analytics-map-box"></div>
+                                </div>
+                                <div class="col-12 col-xl-4">
+                                    <div class="border rounded p-3 h-100" id="analyticsDatasetMapSummary">
+                                        <div class="text-muted">Peta akan menampilkan ringkasan titik bila dataset memiliki koordinat.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+    window.analyticsWorkspaceConfig = {{ workspace_config | tojson }};
+</script>
+<script src="{{ url_for('static', filename='libs/plotly.js-dist-min/plotly.min.js') }}"></script>
+<script src="{{ url_for('static', filename='libs/leaflet/dist/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/analytics-workspace.js', v='20260609-humanized-detail-report') }}"></script>
+{% endblock extra_js %}

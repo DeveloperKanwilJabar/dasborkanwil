@@ -66,6 +66,32 @@
                             </div>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link menu-link" href="#sidebarDataRegistry" data-bs-toggle="collapse" role="button"
+                                aria-expanded="false" aria-controls="sidebarDataRegistry">
+                                <i class="ri-database-2-line"></i> <span data-key="t-data-registries">Data Registries</span>
+                            </a>
+                            <div class="collapse menu-dropdown" id="sidebarDataRegistry">
+                                <ul class="nav nav-sm flex-column">
+                                    <li class="nav-item">
+                                        <a href="{{ url_for('data_registry_web.registry_index') }}" class="nav-link" data-key="t-data-registry-list">Daftar Data Registry</a>
+                                    </li>
+                                </ul>
+                            </div>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link menu-link" href="#sidebarAnalytics" data-bs-toggle="collapse" role="button"
+                                aria-expanded="false" aria-controls="sidebarAnalytics">
+                                <i class="ri-line-chart-line"></i> <span data-key="t-analytics">Analytics</span>
+                            </a>
+                            <div class="collapse menu-dropdown" id="sidebarAnalytics">
+                                <ul class="nav nav-sm flex-column">
+                                    <li class="nav-item">
+                                        <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="nav-link" data-key="t-analytics-list">Daftar Analytics</a>
+                                    </li>
+                                </ul>
+                            </div>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link menu-link" href="#sidebarMasterData" data-bs-toggle="collapse" role="button"
                                 aria-expanded="false" aria-controls="sidebarMasterData">
                                 <i class="ri-function-fill"></i> <span data-key="t-masters">Master Data</span>

@@ -600,17 +600,27 @@ def get_dataset_run_detail(run_id):
 @api_analytics_bp.route('/datasets/<int:dataset_id>/versions/<int:dataset_version_id>/runs', methods=['POST'])
 @swag_from(CREATE_DATASET_RUN_DOC)
 def create_dataset_run(dataset_id, dataset_version_id):
+    """Menjalankan dataset run sinkron agar hasil analytics langsung tersedia untuk UI detail report.
+
+    Endpoint ini menjadi jembatan eksplisit dari source operasional (terutama
+    form submissions) menuju materialisasi dataset analytics. Response selalu
+    mengembalikan entity run terbaru beserta status akhirnya (`succeeded`/`failed`)
+    sehingga halaman analytics bisa menampilkan histori run, kartu angka, chart,
+    dan peta tanpa menunggu proses backend terpisah.
+    """
+
     data = request.get_json(silent=True) or {}
     try:
-        run = AnalyticsDatasetRunService().start_run(
+        run = AnalyticsDatasetRunService().execute_run(
             dataset_id=dataset_id,
             dataset_version_id=dataset_version_id,
             data=data,
             actor=current_actor(),
         )
+        message = 'Analytics dataset run berhasil dieksekusi.' if getattr(run, 'status', None) == 'succeeded' else 'Analytics dataset run selesai dengan status failed.'
         return json_response(
             True,
-            'Analytics dataset run berhasil dimulai.',
+            message,
             {'run': serialize_dataset_run(run)},
             status=201,
         )

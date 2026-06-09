@@ -346,3 +346,98 @@ def test_start_run_rejects_unpublished_dataset_version():
             assert 'published' in str(exc)
         else:
             raise AssertionError('Expected ValueError for unpublished dataset version.')
+
+
+
+def test_execute_run_materializes_submission_rows_into_summary():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsDatasetRunService
+
+        actor = SimpleNamespace(id=9, uuid='actor-uuid')
+        dataset = AnalyticsDataset(
+            id=11,
+            uuid='dataset-uuid',
+            dataset_key='analytics-harmonisasi-test',
+            name='Analytics Harmonisasi Test',
+            source_domain=AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION,
+            source_type=AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT,
+            primary_source_ref='FORM-HARMONISASI-TEST',
+            status=AnalyticsDataset.STATUS_ACTIVE,
+        )
+        published_version = AnalyticsDatasetVersion(
+            id=22,
+            uuid='dataset-version-2',
+            dataset_id=11,
+            version_number=2,
+            status=AnalyticsDatasetVersion.STATUS_PUBLISHED,
+            is_current_draft=False,
+            is_current_published=True,
+            source_contract_json={'form_code': 'FORM-HARMONISASI-TEST', 'source_type': 'harmonisasi_manual', 'reporting_year': 2026},
+            transform_spec_json={'date_field': 'tanggal'},
+            grain_key=AnalyticsDatasetVersion.GRAIN_PER_SUBMISSION,
+            output_schema_json=[{'key': 'tanggal', 'type': 'date'}],
+            freshness_source_type=AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT,
+            freshness_strategy=AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP,
+        )
+
+        service = AnalyticsDatasetRunService(
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([published_version]),
+            dataset_run_repository=StubDatasetRunRepository(),
+        )
+
+        def _fake_materialize_payload(run):
+            rows = [{
+                'tanggal': '2026-03-14',
+                'reporting_year': 2026,
+                'quarter_number': 1,
+                'quarter_label': '2026-Q1',
+                'semester_number': 1,
+                'semester_label': '2026-S1',
+                'year_label': '2026',
+                'daerah': 'Kota Bandung',
+                'jenis': 'Raperda',
+                'hasil': 'Selesai',
+                'tim_kerja': 'Tim A',
+            }]
+            summary = service._build_submission_summary(
+                rows,
+                run,
+                dataset,
+                published_version,
+                {'form_codes': ['FORM-HARMONISASI-TEST'], 'latest_submitted_at': '2026-03-14T09:00:00+00:00'},
+            )
+            return {
+                'freshness_status': AnalyticsDatasetRun.FRESHNESS_FRESH,
+                'source_watermark': '2026-03-14T09:00:00+00:00',
+                'source_snapshot_json': {'form_codes': ['FORM-HARMONISASI-TEST']},
+                'result_row_count': 1,
+                'result_schema_json': [{'key': 'tanggal', 'type': 'date'}],
+                'result_preview_json': rows,
+                'materialization_ref': 'analytics://dataset-runs/1',
+                'summary_json': summary,
+            }
+
+        service._materialize_run_payload = _fake_materialize_payload
+
+        run = service.execute_run(
+            dataset.id,
+            published_version.id,
+            {
+                'trigger_type': AnalyticsDatasetRun.TRIGGER_MANUAL,
+                'requested_reporting_year': 2026,
+                'requested_filters_json': {'source_type': 'harmonisasi_manual'},
+            },
+            actor=actor,
+        )
+
+        assert run.status == AnalyticsDatasetRun.STATUS_SUCCEEDED
+        assert run.result_row_count == 1
+        assert run.freshness_status == AnalyticsDatasetRun.FRESHNESS_FRESH
+        assert run.summary_json['completion']['selesai'] == 1
+        assert run.summary_json['filter_dimensions']['reporting_years'] == [2026]
+        assert run.summary_json['row_snapshots'][0]['quarter_label'] == '2026-Q1'
+        assert run.summary_json['row_snapshots'][0]['semester_label'] == '2026-S1'
+        assert run.source_snapshot_json['form_codes'] == ['FORM-HARMONISASI-TEST']
