@@ -6,12 +6,19 @@
 {% set narrative = active_version.narrative_guidance_json if active_version and active_version.narrative_guidance_json else {} %}
 {% set period_config = structure.get('period_preset_config', {}) or {} %}
 {% set blocks = structure.get('blocks', []) or [] %}
+{% set dataset_contract = structure.get('dataset_contract', {}) or {} %}
+{% set curated_fields = dataset_contract.get('curated_fields', []) or [] %}
+{% set run_binding = dataset_contract.get('run_binding', {}) or {} %}
 {% set filter_schema = structure.get('filter_schema', {}) or {} %}
 {% set layout_config = structure.get('layout', {}) or {} %}
+{% set report_settings = report.settings_json if report and report.settings_json else {} %}
+{% set report_family_options = builder_options.get('report_family_options', []) %}
 {% set report_type_options = builder_options.get('report_type_options', []) %}
+{% set report_type_aliases = builder_options.get('report_type_aliases', {}) %}
 {% set period_mode_options = builder_options.get('period_mode_options', []) %}
 {% set quick_preset_options = builder_options.get('quick_preset_options', []) %}
 {% set block_type_options = builder_options.get('block_type_options', []) %}
+{% set builder_dataset_catalog = builder_dataset_catalog or [] %}
 
 {% block content %}
 <div class="main-content">
@@ -114,6 +121,15 @@
             </div>
 
             <div class="col-lg-4">
+              <label class="form-label">Template / Family Report</label>
+              <select class="form-select" name="report_family">
+                {% for value, label in report_family_options %}
+                <option value="{{ value }}" {% if (report_settings.get('report_family') or 'custom') == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">PK, IK, dan judul bisnis lain diperlakukan sebagai family/template report semi-CMS, bukan bounded context tabel terpisah.</div>
+            </div>
+            <div class="col-lg-4">
               <label class="form-label">Report Key</label>
               <input class="form-control" name="report_key" value="{{ report.report_key if report else '' }}" placeholder="pk-kanwil-summary" required>
             </div>
@@ -123,18 +139,19 @@
             </div>
             <div class="col-lg-4">
               <label class="form-label">Kategori</label>
-              <input class="form-control" name="category_key" value="{{ report.category_key if report else '' }}" placeholder="pk / renaksi / geo / custom">
+              <input class="form-control" name="category_key" value="{{ report.category_key if report else '' }}" placeholder="pk / ik / renaksi / custom">
             </div>
 
-            <div class="col-lg-6">
-              <label class="form-label">Tipe Report</label>
+            <div class="col-lg-4">
+              <label class="form-label">Tipe Engine Report</label>
               <select class="form-select" name="report_type">
+                {% set active_report_type = report_type_aliases.get(report.report_type if report else 'custom', report.report_type if report else 'custom') %}
                 {% for value, label in report_type_options %}
-                <option value="{{ value }}" {% if (report.report_type if report else 'custom_report') == value %}selected{% endif %}>{{ label }}</option>
+                <option value="{{ value }}" {% if active_report_type == value %}selected{% endif %}>{{ label }}</option>
                 {% endfor %}
               </select>
             </div>
-            <div class="col-lg-6">
+            <div class="col-lg-4">
               <label class="form-label">Judul Version</label>
               <input class="form-control" name="title" value="{{ active_version.title if active_version else '' }}" placeholder="PK Kanwil 2026">
             </div>
@@ -160,11 +177,23 @@
             </div>
             <div class="col-lg-4">
               <label class="form-label">Supported Period Modes</label>
-              <input class="form-control" name="supported_period_modes_csv" value="{{ (period_config.get('supported_period_modes', []) or []) | join(', ') }}" placeholder="quarterly, semester, yearly">
+              {% set selected_supported_period_modes = period_config.get('supported_period_modes', []) or [] %}
+              <select class="form-select" name="supported_period_modes" multiple size="6">
+                {% for value, label in period_mode_options %}
+                <option value="{{ value }}" {% if value in selected_supported_period_modes %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Pilih 1+ mode yang boleh dipakai user di viewer.</div>
             </div>
             <div class="col-lg-4">
               <label class="form-label">Quick Presets</label>
-              <input class="form-control" name="quick_presets_csv" value="{{ (period_config.get('quick_presets', []) or []) | join(', ') }}" placeholder="current_quarter, current_semester, current_year">
+              {% set selected_quick_presets = period_config.get('quick_presets', []) or [] %}
+              <select class="form-select" name="quick_presets" multiple size="6">
+                {% for value, label in quick_preset_options %}
+                <option value="{{ value }}" {% if value in selected_quick_presets %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Pilih preset tanggal cepat yang tampil di toolbar viewer.</div>
             </div>
 
             <div class="col-lg-6">
@@ -178,13 +207,46 @@
 
             <div class="col-12"><hr class="text-muted"></div>
 
-            <div class="col-lg-6">
-              <label class="form-label">Blocks (JSON Array)</label>
-              <textarea class="form-control font-monospace" rows="10" name="blocks_json">{{ blocks | tojson(indent=2) }}</textarea>
-              <div class="form-text">Gunakan type seperti metric_cards, plotly_timeseries, detail_table, geo_map, narrative.</div>
+            <div class="col-lg-8 d-flex flex-column gap-3">
+              <div class="card border h-100">
+                <div class="card-header d-flex flex-wrap justify-content-between align-items-start gap-2">
+                  <div>
+                    <h6 class="mb-1">Block Editor Manusiawi</h6>
+                    <p class="text-muted mb-0">Susun urutan block, ubah judul, dan pilih field terkurasi tanpa harus edit JSON mentah terus.</p>
+                  </div>
+                  <div class="d-flex gap-2 flex-wrap">
+                    <button type="button" class="btn btn-soft-secondary btn-sm" id="apply-report-family-template-button">Terapkan Template Family</button>
+                    {% for value, label in block_type_options %}
+                    <button type="button" class="btn btn-soft-primary btn-sm js-add-report-block" data-block-type="{{ value }}">+ {{ label }}</button>
+                    {% endfor %}
+                  </div>
+                </div>
+                <div class="card-body d-flex flex-column gap-3">
+                  <div id="report-block-editor" class="d-flex flex-column gap-3"></div>
+                  <div class="alert alert-light border mb-0" id="report-block-empty-state">
+                    Belum ada block. Klik tombol + di atas untuk mulai menyusun report semi-CMS.
+                  </div>
+                </div>
+              </div>
+
+              <div class="card border">
+                <div class="card-header d-flex justify-content-between align-items-center gap-2">
+                  <div>
+                    <h6 class="mb-1">Advanced JSON</h6>
+                    <p class="text-muted mb-0">Tetap tersedia untuk debug/manual tweak. Nilai ini selalu sinkron dari editor visual.</p>
+                  </div>
+                  <button type="button" class="btn btn-light btn-sm" id="toggle-advanced-json-button">Tampilkan JSON</button>
+                </div>
+                <div class="card-body d-none" id="advanced-json-panel">
+                  <label class="form-label">Blocks (JSON Array)</label>
+                  <textarea class="form-control font-monospace" rows="10" name="blocks_json">{{ blocks | tojson(indent=2) }}</textarea>
+                  <div class="form-text">Gunakan type seperti metric_cards, plotly_timeseries, detail_table, geo_map, narrative.</div>
+                </div>
+              </div>
             </div>
-            <div class="col-lg-6">
-              <div class="alert alert-light border mb-0 h-100">
+
+            <div class="col-lg-4 d-flex flex-column gap-3">
+              <div class="alert alert-light border mb-0">
                 <h6 class="mb-2">Contoh block type</h6>
                 <div class="d-flex flex-wrap gap-2 mb-3">
                   {% for value, label in block_type_options %}
@@ -193,11 +255,53 @@
                 </div>
                 <p class="text-muted mb-1">Struktur block umum:</p>
 <pre class="small mb-0">[
-  {"type":"metric_cards","title":"Ringkasan KPI","config":{"metric_keys":["total","growth"]}},
-  {"type":"plotly_timeseries","title":"Tren Tahunan","config":{"x":"period_label","y":"total"}},
-  {"type":"geo_map","title":"Sebaran Wilayah","config":{"geo_field":"region_code"}},
-  {"type":"narrative","title":"Resume","config":{"source":"ai_or_manual"}}
+  {"type":"metric_cards","title":"Ringkasan KPI","config":{"metric_keys":["capaian_total","achievement_pct"]}},
+  {"type":"plotly_timeseries","title":"Tren Tahunan","config":{"x_key":"tanggal","series":[{"key":"capaian_total","aggregation":"sum"}]}},
+  {"type":"detail_table","title":"Tabel PK","config":{"column_keys":["tanggal","nama_indikator","capaian_total"]}},
+  {"type":"geo_map","title":"Sebaran Wilayah","config":{"latitude_field":"latitude","longitude_field":"longitude","label_field":"nama_indikator"}},
+  {"type":"narrative","title":"Resume","config":{"focus_field_keys":["achievement_pct","capaian_total"]}}
 ]</pre>
+              </div>
+              <div class="card border h-100">
+                <div class="card-header">
+                  <h6 class="mb-1">Field Terkurasi Dataset</h6>
+                  <p class="text-muted mb-0">Builder report memilih field terkurasi dari dataset version/run yang terhubung.</p>
+                </div>
+                <div class="card-body d-flex flex-column gap-3">
+                  <div>
+                    <div class="text-muted small">PK -> Dataset Run Binding</div>
+                    <div class="fw-semibold" id="builder-run-binding-mode">{{ run_binding.get('selection_mode') or 'latest_succeeded_run' }}</div>
+                    <div class="text-muted fs-12" id="builder-run-binding-summary">Dataset version {{ run_binding.get('dataset_version_number') or '-' }} · {{ run_binding.get('report_title') or (report.name if report else '-') }}</div>
+                  </div>
+                  <div>
+                    <div class="text-muted small mb-2">Dataset Version Aktif</div>
+                    <div class="fw-semibold" id="builder-active-version-title">Belum dipilih</div>
+                    <div class="text-muted fs-12" id="builder-active-version-meta">Pilih dataset + version agar selector field aktif.</div>
+                  </div>
+                  <div class="d-flex flex-wrap gap-2" id="builder-curated-fields-list">
+                    {% if curated_fields %}
+                      {% for field in curated_fields %}
+                      <span class="badge bg-soft-info text-info">{{ field.get('label') }} · {{ field.get('key') }}</span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="text-muted">Curated field akan muncul setelah report terhubung ke dataset version yang sudah punya contract output.</span>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+              <div class="card border">
+                <div class="card-header">
+                  <h6 class="mb-1">Ringkasan Item Report Dinamis</h6>
+                  <p class="text-muted mb-0">Jumlah item pada report tidak fixed. Family seperti PK, IK, atau Renaksi bisa punya jumlah indikator berbeda sesuai pilihan field/metric dari curated dataset run.</p>
+                </div>
+                <div class="card-body d-flex flex-column gap-2">
+                  <div class="d-flex justify-content-between">
+                    <span class="text-muted" id="report-selection-label">Total item unik</span>
+                    <span class="fw-semibold" id="report-selection-count">0</span>
+                  </div>
+                  <div class="text-muted fs-12" id="report-selection-helper">Pilih metric/field di block untuk menyusun item report dinamis.</div>
+                  <div class="d-flex flex-wrap gap-2" id="report-selection-list"></div>
+                </div>
               </div>
             </div>
 
@@ -249,10 +353,91 @@
   const resultOutput = document.getElementById('report-result-output');
   const pageMode = {{ page_mode | tojson }};
   const reportId = {{ report.id if report else 'null' }};
+  const builderDatasetCatalog = {{ builder_dataset_catalog | tojson }};
+  const blockTypeLabels = Object.fromEntries({{ block_type_options | tojson }});
+  const reportFamilyPresets = {
+    custom: {
+      reportType: 'custom',
+      categoryKey: 'custom',
+      defaultName: 'Report Custom Dataset',
+      defaultTitle: 'Report Custom Tahun Aktif',
+      supportedPeriodModes: ['quarterly', 'semester', 'yearly'],
+      quickPresets: ['current_quarter', 'current_semester', 'current_year'],
+      blocks: ['metric_cards', 'plotly_timeseries', 'detail_table', 'narrative'],
+      layout: { viewer_variant: 'semi_cms' },
+    },
+    pk: {
+      reportType: 'pk',
+      categoryKey: 'pk',
+      defaultName: 'Perjanjian Kinerja',
+      defaultTitle: 'Perjanjian Kinerja Tahun Aktif',
+      supportedPeriodModes: ['quarterly', 'semester', 'yearly'],
+      quickPresets: ['current_quarter', 'current_semester', 'current_year'],
+      blocks: ['metric_cards', 'detail_table', 'plotly_timeseries', 'narrative'],
+      layout: { viewer_variant: 'pk_summary' },
+    },
+    ik: {
+      reportType: 'scorecard',
+      categoryKey: 'ik',
+      defaultName: 'Indikator Kinerja',
+      defaultTitle: 'Indikator Kinerja Tahun Aktif',
+      supportedPeriodModes: ['monthly', 'quarterly', 'yearly'],
+      quickPresets: ['current_month', 'current_quarter', 'current_year'],
+      blocks: ['metric_cards', 'detail_table', 'narrative'],
+      layout: { viewer_variant: 'ik_summary' },
+    },
+    renaksi: {
+      reportType: 'renaksi',
+      categoryKey: 'renaksi',
+      defaultName: 'Renaksi / Action Plan',
+      defaultTitle: 'Renaksi Tahun Aktif',
+      supportedPeriodModes: ['monthly', 'quarterly', 'yearly'],
+      quickPresets: ['current_month', 'current_quarter', 'current_year'],
+      blocks: ['metric_cards', 'detail_table', 'narrative'],
+      layout: { viewer_variant: 'renaksi_progress' },
+    },
+    'dashboard-eksekutif': {
+      reportType: 'monitoring',
+      categoryKey: 'dashboard-eksekutif',
+      defaultName: 'Dashboard Eksekutif',
+      defaultTitle: 'Dashboard Eksekutif Tahun Aktif',
+      supportedPeriodModes: ['monthly', 'quarterly', 'semester', 'yearly'],
+      quickPresets: ['current_month', 'current_quarter', 'current_semester', 'current_year'],
+      blocks: ['metric_cards', 'plotly_timeseries', 'geo_map', 'detail_table', 'narrative'],
+      layout: { viewer_variant: 'executive_dashboard' },
+    },
+  };
   let draftVersionId = {{ active_version.id if active_version else 'null' }};
+  let blockState = [];
 
-  function csvToArray(value) {
-    return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+  const blockEditor = document.getElementById('report-block-editor');
+  const emptyState = document.getElementById('report-block-empty-state');
+  const advancedJsonPanel = document.getElementById('advanced-json-panel');
+  const toggleAdvancedJsonButton = document.getElementById('toggle-advanced-json-button');
+  const curatedFieldsList = document.getElementById('builder-curated-fields-list');
+  const activeVersionTitle = document.getElementById('builder-active-version-title');
+  const activeVersionMeta = document.getElementById('builder-active-version-meta');
+  const runBindingMode = document.getElementById('builder-run-binding-mode');
+  const runBindingSummary = document.getElementById('builder-run-binding-summary');
+  const reportSelectionLabel = document.getElementById('report-selection-label');
+  const reportSelectionCount = document.getElementById('report-selection-count');
+  const reportSelectionHelper = document.getElementById('report-selection-helper');
+  const reportSelectionList = document.getElementById('report-selection-list');
+  const applyReportFamilyTemplateButton = document.getElementById('apply-report-family-template-button');
+
+  function getActiveReportFamilyMeta() {
+    const familyKey = form.elements.report_family.value || 'custom';
+    const preset = reportFamilyPresets[familyKey] || reportFamilyPresets.custom || {};
+    return {
+      familyKey,
+      familyLabel: form.elements.report_family.selectedOptions?.[0]?.textContent?.trim() || familyKey,
+      itemLabel: ['pk', 'ik', 'renaksi'].includes(familyKey) ? 'indikator' : 'item report',
+      preset,
+    };
+  }
+
+  function getSelectedValues(fieldName) {
+    return Array.from(form.elements[fieldName]?.selectedOptions || []).map((option) => option.value).filter(Boolean);
   }
 
   function parseJsonField(name, fallback) {
@@ -261,7 +446,452 @@
     return JSON.parse(raw);
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  function normalizeTitle(type) {
+    return String(type || 'block').replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  function slugify(value) {
+    return String(value || 'block').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'block';
+  }
+
+  function getDatasetById(datasetId) {
+    return builderDatasetCatalog.find((item) => String(item.id) === String(datasetId)) || null;
+  }
+
+  function getSelectedDataset() {
+    return getDatasetById(form.elements.dataset_id.value);
+  }
+
+  function getSelectedDatasetVersion() {
+    const dataset = getSelectedDataset();
+    if (!dataset) return null;
+    const explicitVersionId = form.elements.dataset_version_id.value;
+    if (explicitVersionId) {
+      return dataset.versions.find((version) => String(version.id) === String(explicitVersionId)) || null;
+    }
+    return dataset.versions.find((version) => version.variant === 'draft') || dataset.versions.find((version) => version.variant === 'published') || null;
+  }
+
+  function getCuratedFieldsForBuilder() {
+    const version = getSelectedDatasetVersion();
+    return Array.isArray(version?.curated_fields) ? version.curated_fields : [];
+  }
+
+  function getFieldLabelMap() {
+    return getCuratedFieldsForBuilder().reduce((acc, field) => {
+      if (field?.key) acc[field.key] = field.label || field.key;
+      return acc;
+    }, {});
+  }
+
+  function getFieldsByRole(role) {
+    return getCuratedFieldsForBuilder().filter((field) => field.role === role);
+  }
+
+  function getAllowedKeys(role) {
+    if (role === 'all') return getCuratedFieldsForBuilder().map((field) => field.key);
+    return getFieldsByRole(role).map((field) => field.key);
+  }
+
+  function getDefaultConfig(type) {
+    const allFields = getCuratedFieldsForBuilder();
+    const metricKeys = getAllowedKeys('metric');
+    const dimensionKeys = getAllowedKeys('dimension');
+    const dateKeys = getAllowedKeys('date');
+    const latitudeField = getFieldsByRole('geo_latitude')[0]?.key || '';
+    const longitudeField = getFieldsByRole('geo_longitude')[0]?.key || '';
+    const labelField = dimensionKeys[0] || metricKeys[0] || '';
+    if (type === 'metric_cards') {
+      return { metric_keys: metricKeys.slice(0, 4) };
+    }
+    if (type === 'plotly_timeseries') {
+      return {
+        x_key: dateKeys[0] || dimensionKeys[0] || metricKeys[0] || '',
+        series: metricKeys.slice(0, 3).map((key) => ({ key, label: getFieldLabelMap()[key] || key, aggregation: 'sum' })),
+      };
+    }
+    if (type === 'detail_table') {
+      return { column_keys: [...dateKeys.slice(0, 1), ...dimensionKeys.slice(0, 1), ...metricKeys.slice(0, 2), ...allFields.map((field) => field.key)].filter(Boolean).filter((key, index, arr) => arr.indexOf(key) === index).slice(0, 5) };
+    }
+    if (type === 'geo_map') {
+      return { latitude_field: latitudeField, longitude_field: longitudeField, label_field: labelField };
+    }
+    if (type === 'narrative') {
+      return { focus_field_keys: metricKeys.slice(0, 2), source_mode: 'auto_summary' };
+    }
+    return {};
+  }
+
+  function ensureBlockConfig(block) {
+    const config = typeof block.config === 'object' && block.config ? block.config : {};
+    const defaults = getDefaultConfig(block.type);
+    if (block.type === 'metric_cards') {
+      config.metric_keys = Array.isArray(config.metric_keys) ? config.metric_keys : defaults.metric_keys || [];
+    } else if (block.type === 'plotly_timeseries') {
+      config.x_key = config.x_key || defaults.x_key || '';
+      config.series = Array.isArray(config.series) ? config.series : defaults.series || [];
+    } else if (block.type === 'detail_table') {
+      config.column_keys = Array.isArray(config.column_keys) ? config.column_keys : defaults.column_keys || [];
+    } else if (block.type === 'geo_map') {
+      config.latitude_field = config.latitude_field || defaults.latitude_field || '';
+      config.longitude_field = config.longitude_field || defaults.longitude_field || '';
+      config.label_field = config.label_field || defaults.label_field || '';
+    } else if (block.type === 'narrative') {
+      config.focus_field_keys = Array.isArray(config.focus_field_keys) ? config.focus_field_keys : defaults.focus_field_keys || [];
+      config.source_mode = config.source_mode || defaults.source_mode || 'auto_summary';
+    }
+    return { ...block, config };
+  }
+
+  function normalizeBlock(block, index) {
+    const type = block?.type || block?.block_type || 'metric_cards';
+    return ensureBlockConfig({
+      id: block?.id || `block-${Date.now()}-${index}-${slugify(type)}`,
+      type,
+      title: block?.title || block?.label || normalizeTitle(type),
+      order: Number(block?.order || index + 1),
+      config: typeof block?.config === 'object' && block.config ? JSON.parse(JSON.stringify(block.config)) : {},
+    });
+  }
+
+  function syncOrders() {
+    blockState = blockState.map((block, index) => ({ ...block, order: index + 1 }));
+  }
+
+  function parseBlocksFromTextarea() {
+    try {
+      const parsed = parseJsonField('blocks_json', []);
+      blockState = Array.isArray(parsed) ? parsed.map((block, index) => normalizeBlock(block, index)) : [];
+    } catch (error) {
+      blockState = [];
+    }
+    syncOrders();
+  }
+
+  function renderFieldBadge(field) {
+    const roleLabel = field.role ? ` · ${field.role}` : '';
+    return `<span class="badge bg-soft-info text-info">${escapeHtml(field.label || field.key)} · ${escapeHtml(field.key)}${escapeHtml(roleLabel)}</span>`;
+  }
+
+  function updateCuratedFieldsPanel() {
+    const dataset = getSelectedDataset();
+    const version = getSelectedDatasetVersion();
+    const curatedFields = getCuratedFieldsForBuilder();
+    activeVersionTitle.textContent = version?.label || 'Belum dipilih';
+    activeVersionMeta.textContent = dataset
+      ? `${dataset.name} · ${dataset.dataset_key || '-'} · ${curatedFields.length} curated field`
+      : 'Pilih dataset + version agar selector field aktif.';
+    runBindingMode.textContent = 'latest_succeeded_run';
+    runBindingSummary.textContent = version
+      ? `Dataset version ${version.version_number || '-'} · ${form.elements.name.value.trim() || form.elements.title.value.trim() || 'Draft Report'}`
+      : `Dataset version - · ${form.elements.name.value.trim() || form.elements.title.value.trim() || 'Draft Report'}`;
+    curatedFieldsList.innerHTML = curatedFields.length
+      ? curatedFields.map(renderFieldBadge).join('')
+      : '<span class="text-muted">Curated field akan muncul setelah report terhubung ke dataset version yang sudah punya contract output.</span>';
+  }
+
+  function updateVersionOptions() {
+    const dataset = getSelectedDataset();
+    const selectedVersion = form.elements.dataset_version_id.value;
+    const options = ['<option value="">Auto pakai draft/published aktif</option>'];
+    (dataset?.versions || []).forEach((version) => {
+      const selectedAttr = String(selectedVersion) === String(version.id) ? ' selected' : '';
+      options.push(`<option value="${escapeHtml(version.id)}"${selectedAttr}>${escapeHtml(version.label)}</option>`);
+    });
+    form.elements.dataset_version_id.innerHTML = options.join('');
+    if (selectedVersion && !(dataset?.versions || []).some((version) => String(version.id) === String(selectedVersion))) {
+      form.elements.dataset_version_id.value = '';
+    }
+  }
+
+  function createMultiSelect(name, selectedKeys, allowedFields) {
+    const selected = new Set(Array.isArray(selectedKeys) ? selectedKeys : []);
+    return `
+      <select class="form-select form-select-sm js-block-multiselect" data-config-key="${escapeHtml(name)}" multiple size="${Math.min(Math.max(allowedFields.length || 3, 3), 8)}">
+        ${allowedFields.map((field) => `<option value="${escapeHtml(field.key)}"${selected.has(field.key) ? ' selected' : ''}>${escapeHtml(field.label || field.key)} · ${escapeHtml(field.key)}</option>`).join('')}
+      </select>
+    `;
+  }
+
+  function renderSeriesEditor(block, metricFields) {
+    const config = block.config || {};
+    const series = Array.isArray(config.series) ? config.series : [];
+    if (!metricFields.length) {
+      return '<div class="text-muted small">Belum ada field metric terkurasi untuk dataset version ini.</div>';
+    }
+    return `
+      <div class="d-flex flex-column gap-2">
+        ${series.map((item, index) => `
+          <div class="border rounded p-2 d-flex flex-column gap-2">
+            <div class="d-flex justify-content-between align-items-center gap-2">
+              <strong class="small">Series ${index + 1}</strong>
+              <button type="button" class="btn btn-soft-danger btn-sm js-remove-series" data-block-id="${escapeHtml(block.id)}" data-series-index="${index}">Hapus</button>
+            </div>
+            <div class="row g-2">
+              <div class="col-md-5">
+                <label class="form-label small mb-1">Field Metric</label>
+                <select class="form-select form-select-sm js-series-key" data-block-id="${escapeHtml(block.id)}" data-series-index="${index}">
+                  ${metricFields.map((field) => `<option value="${escapeHtml(field.key)}"${field.key === item.key ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small mb-1">Label</label>
+                <input class="form-control form-control-sm js-series-label" data-block-id="${escapeHtml(block.id)}" data-series-index="${index}" value="${escapeHtml(item.label || '')}" placeholder="Label series">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small mb-1">Agregasi</label>
+                <select class="form-select form-select-sm js-series-aggregation" data-block-id="${escapeHtml(block.id)}" data-series-index="${index}">
+                  ${['sum', 'avg', 'min', 'max', 'count'].map((aggregation) => `<option value="${aggregation}"${aggregation === (item.aggregation || 'sum') ? ' selected' : ''}>${aggregation}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+        <button type="button" class="btn btn-soft-primary btn-sm align-self-start js-add-series" data-block-id="${escapeHtml(block.id)}">+ Tambah Series</button>
+      </div>
+    `;
+  }
+
+  function renderBlockConfigEditor(block) {
+    const allFields = getCuratedFieldsForBuilder();
+    const metricFields = getFieldsByRole('metric');
+    const dateFields = getFieldsByRole('date');
+    const dimensionFields = getFieldsByRole('dimension');
+    if (block.type === 'metric_cards') {
+      return `
+        <div>
+          <label class="form-label small">Field Metric</label>
+          ${createMultiSelect('metric_keys', block.config.metric_keys || [], metricFields)}
+          <div class="form-text">Pilih indikator yang akan muncul sebagai KPI cards.</div>
+        </div>
+      `;
+    }
+    if (block.type === 'plotly_timeseries') {
+      return `
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label small">Field Sumbu X</label>
+            <select class="form-select form-select-sm js-block-config-input" data-config-key="x_key">
+              ${[...dateFields, ...dimensionFields].map((field) => `<option value="${escapeHtml(field.key)}"${field.key === block.config.x_key ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label small d-block">Series Metric</label>
+            ${renderSeriesEditor(block, metricFields)}
+          </div>
+        </div>
+      `;
+    }
+    if (block.type === 'detail_table') {
+      return `
+        <div>
+          <label class="form-label small">Kolom Tabel</label>
+          ${createMultiSelect('column_keys', block.config.column_keys || [], allFields)}
+          <div class="form-text">Tabel detail membaca curated field dari dataset run aktif.</div>
+        </div>
+      `;
+    }
+    if (block.type === 'geo_map') {
+      return `
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label small">Latitude</label>
+            <select class="form-select form-select-sm js-block-config-input" data-config-key="latitude_field">
+              <option value="">Pilih field</option>
+              ${getFieldsByRole('geo_latitude').map((field) => `<option value="${escapeHtml(field.key)}"${field.key === block.config.latitude_field ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small">Longitude</label>
+            <select class="form-select form-select-sm js-block-config-input" data-config-key="longitude_field">
+              <option value="">Pilih field</option>
+              ${getFieldsByRole('geo_longitude').map((field) => `<option value="${escapeHtml(field.key)}"${field.key === block.config.longitude_field ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small">Label Titik</label>
+            <select class="form-select form-select-sm js-block-config-input" data-config-key="label_field">
+              <option value="">Pilih field</option>
+              ${[...dimensionFields, ...metricFields].map((field) => `<option value="${escapeHtml(field.key)}"${field.key === block.config.label_field ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      `;
+    }
+    if (block.type === 'narrative') {
+      return `
+        <div class="row g-3">
+          <div class="col-md-8">
+            <label class="form-label small">Fokus Narasi</label>
+            ${createMultiSelect('focus_field_keys', block.config.focus_field_keys || [], allFields)}
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small">Source Mode</label>
+            <select class="form-select form-select-sm js-block-config-input" data-config-key="source_mode">
+              ${['auto_summary', 'manual_guidance', 'hybrid'].map((mode) => `<option value="${mode}"${mode === (block.config.source_mode || 'auto_summary') ? ' selected' : ''}>${mode}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      `;
+    }
+    return '<div class="text-muted small">Block type belum punya editor khusus.</div>';
+  }
+
+  function buildBlockCard(block, index) {
+    return `
+      <div class="card border js-report-block-card" data-block-id="${escapeHtml(block.id)}">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-start gap-2">
+          <div>
+            <div class="text-muted small">Order ${index + 1}</div>
+            <h6 class="mb-1">${escapeHtml(block.title || normalizeTitle(block.type))}</h6>
+            <div class="text-muted fs-12">${escapeHtml(blockTypeLabels[block.type] || block.type)}</div>
+          </div>
+          <div class="d-flex gap-2 flex-wrap">
+            <button type="button" class="btn btn-light btn-sm js-move-block-up" data-block-id="${escapeHtml(block.id)}">↑</button>
+            <button type="button" class="btn btn-light btn-sm js-move-block-down" data-block-id="${escapeHtml(block.id)}">↓</button>
+            <button type="button" class="btn btn-soft-danger btn-sm js-remove-block" data-block-id="${escapeHtml(block.id)}">Hapus</button>
+          </div>
+        </div>
+        <div class="card-body d-flex flex-column gap-3">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small">Tipe Block</label>
+              <select class="form-select form-select-sm js-block-type">
+                ${Object.entries(blockTypeLabels).map(([value, label]) => `<option value="${escapeHtml(value)}"${value === block.type ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label small">Judul Block</label>
+              <input class="form-control form-control-sm js-block-title" value="${escapeHtml(block.title || '')}" placeholder="Judul block">
+            </div>
+          </div>
+          ${renderBlockConfigEditor(block)}
+        </div>
+      </div>
+    `;
+  }
+
+  function syncBlocksTextarea() {
+    syncOrders();
+    form.elements.blocks_json.value = JSON.stringify(
+      blockState.map((block) => ({
+        type: block.type,
+        title: block.title,
+        order: block.order,
+        config: block.config,
+      })),
+      null,
+      2,
+    );
+  }
+
+  function updateReportSelectionSummary() {
+    const fieldLabels = getFieldLabelMap();
+    const { familyLabel, itemLabel } = getActiveReportFamilyMeta();
+    const indicatorKeys = new Set();
+    blockState.forEach((block) => {
+      const config = block.config || {};
+      (config.metric_keys || []).forEach((key) => indicatorKeys.add(key));
+      (config.focus_field_keys || []).forEach((key) => indicatorKeys.add(key));
+      (config.series || []).forEach((series) => series?.key && indicatorKeys.add(series.key));
+    });
+    const indicators = [...indicatorKeys];
+    reportSelectionLabel.textContent = `Total ${itemLabel} unik`;
+    reportSelectionCount.textContent = String(indicators.length);
+    reportSelectionHelper.textContent = indicators.length
+      ? `Family ${familyLabel} saat ini mengkurasi ${indicators.length} ${itemLabel} unik dari curated dataset run aktif.`
+      : `Pilih metric/field di block untuk menyusun ${itemLabel} pada family ${familyLabel}.`;
+    reportSelectionList.innerHTML = indicators.length
+      ? indicators.map((key) => `<span class="badge bg-soft-primary text-primary">${escapeHtml(fieldLabels[key] || key)} · ${escapeHtml(key)}</span>`).join('')
+      : '<span class="text-muted">Belum ada item yang dipilih.</span>';
+  }
+
+  function setMultiSelectValues(fieldName, values) {
+    const selected = new Set(Array.isArray(values) ? values : []);
+    Array.from(form.elements[fieldName]?.options || []).forEach((option) => {
+      option.selected = selected.has(option.value);
+    });
+  }
+
+  function buildPresetBlocks(blockTypes) {
+    return (Array.isArray(blockTypes) ? blockTypes : []).map((type, index) => normalizeBlock({
+      type,
+      title: normalizeTitle(type),
+      config: getDefaultConfig(type),
+      order: index + 1,
+    }, index));
+  }
+
+  function applyReportFamilyPreset() {
+    const familyKey = form.elements.report_family.value || 'custom';
+    const preset = reportFamilyPresets[familyKey] || reportFamilyPresets.custom;
+    if (!preset) return;
+
+    if (!form.elements.name.value.trim() || pageMode === 'create') {
+      form.elements.name.value = preset.defaultName || form.elements.name.value;
+    }
+    if (!form.elements.title.value.trim() || pageMode === 'create') {
+      form.elements.title.value = preset.defaultTitle || form.elements.title.value;
+    }
+    if (!form.elements.category_key.value.trim() || pageMode === 'create') {
+      form.elements.category_key.value = preset.categoryKey || form.elements.category_key.value;
+    }
+    form.elements.report_type.value = preset.reportType || form.elements.report_type.value;
+    form.elements.default_period_mode.value = preset.supportedPeriodModes?.[0] || form.elements.default_period_mode.value;
+    setMultiSelectValues('supported_period_modes', preset.supportedPeriodModes || []);
+    setMultiSelectValues('quick_presets', preset.quickPresets || []);
+
+    const currentLayout = parseJsonField('layout_json', {});
+    form.elements.layout_json.value = JSON.stringify({
+      ...currentLayout,
+      ...(preset.layout || {}),
+      report_family: familyKey,
+      block_order_strategy: 'explicit_order',
+    }, null, 2);
+
+    blockState = buildPresetBlocks(preset.blocks || []);
+    updateCuratedFieldsPanel();
+    renderBlockEditor();
+  }
+
+  function renderBlockEditor() {
+    syncOrders();
+    emptyState.classList.toggle('d-none', blockState.length > 0);
+    blockEditor.innerHTML = blockState.map((block, index) => buildBlockCard(block, index)).join('');
+    syncBlocksTextarea();
+    updateReportSelectionSummary();
+  }
+
+  function addBlock(type) {
+    blockState.push(normalizeBlock({ type, title: normalizeTitle(type), config: getDefaultConfig(type) }, blockState.length));
+    renderBlockEditor();
+  }
+
+  function updateBlock(blockId, updater) {
+    blockState = blockState.map((block) => {
+      if (block.id !== blockId) return block;
+      return ensureBlockConfig(updater({ ...block, config: JSON.parse(JSON.stringify(block.config || {})) }));
+    });
+    renderBlockEditor();
+  }
+
+  function refreshBlockConfigsForDatasetChange() {
+    blockState = blockState.map((block, index) => normalizeBlock(block, index));
+    updateCuratedFieldsPanel();
+    renderBlockEditor();
+  }
+
   function buildPayload() {
+    syncBlocksTextarea();
     return {
       report: {
         dataset_id: form.elements.dataset_id.value ? Number(form.elements.dataset_id.value) : null,
@@ -269,6 +899,8 @@
         name: form.elements.name.value.trim(),
         description: form.elements.description.value.trim(),
         report_type: form.elements.report_type.value,
+        report_family: form.elements.report_family.value,
+        report_template_key: form.elements.report_family.value,
         category_key: form.elements.category_key.value.trim() || null,
       },
       draft_version: {
@@ -276,8 +908,8 @@
         title: form.elements.title.value.trim(),
         meta_description: form.elements.meta_description.value.trim(),
         default_period_mode: form.elements.default_period_mode.value,
-        supported_period_modes: csvToArray(form.elements.supported_period_modes_csv.value),
-        quick_presets: csvToArray(form.elements.quick_presets_csv.value),
+        supported_period_modes: getSelectedValues('supported_period_modes'),
+        quick_presets: getSelectedValues('quick_presets'),
         filter_schema: parseJsonField('filter_schema_json', {}),
         layout: parseJsonField('layout_json', {}),
         blocks: parseJsonField('blocks_json', []),
@@ -287,6 +919,141 @@
       }
     };
   }
+
+  toggleAdvancedJsonButton?.addEventListener('click', () => {
+    advancedJsonPanel.classList.toggle('d-none');
+    toggleAdvancedJsonButton.textContent = advancedJsonPanel.classList.contains('d-none') ? 'Tampilkan JSON' : 'Sembunyikan JSON';
+  });
+
+  document.querySelectorAll('.js-add-report-block').forEach((button) => {
+    button.addEventListener('click', () => addBlock(button.dataset.blockType));
+  });
+
+  blockEditor.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('.js-remove-block');
+    if (removeButton) {
+      blockState = blockState.filter((block) => block.id !== removeButton.dataset.blockId);
+      renderBlockEditor();
+      return;
+    }
+    const upButton = event.target.closest('.js-move-block-up');
+    if (upButton) {
+      const index = blockState.findIndex((block) => block.id === upButton.dataset.blockId);
+      if (index > 0) {
+        [blockState[index - 1], blockState[index]] = [blockState[index], blockState[index - 1]];
+        renderBlockEditor();
+      }
+      return;
+    }
+    const downButton = event.target.closest('.js-move-block-down');
+    if (downButton) {
+      const index = blockState.findIndex((block) => block.id === downButton.dataset.blockId);
+      if (index >= 0 && index < blockState.length - 1) {
+        [blockState[index + 1], blockState[index]] = [blockState[index], blockState[index + 1]];
+        renderBlockEditor();
+      }
+      return;
+    }
+    const addSeriesButton = event.target.closest('.js-add-series');
+    if (addSeriesButton) {
+      const blockId = addSeriesButton.dataset.blockId;
+      const metricField = getFieldsByRole('metric')[0];
+      if (!metricField) return;
+      updateBlock(blockId, (block) => {
+        block.config.series = Array.isArray(block.config.series) ? block.config.series : [];
+        block.config.series.push({ key: metricField.key, label: metricField.label || metricField.key, aggregation: 'sum' });
+        return block;
+      });
+      return;
+    }
+    const removeSeriesButton = event.target.closest('.js-remove-series');
+    if (removeSeriesButton) {
+      const blockId = removeSeriesButton.dataset.blockId;
+      const seriesIndex = Number(removeSeriesButton.dataset.seriesIndex);
+      updateBlock(blockId, (block) => {
+        block.config.series = (block.config.series || []).filter((_, index) => index !== seriesIndex);
+        return block;
+      });
+    }
+  });
+
+  blockEditor.addEventListener('input', (event) => {
+    const card = event.target.closest('.js-report-block-card');
+    if (!card) return;
+    const blockId = card.dataset.blockId;
+    if (event.target.classList.contains('js-block-title')) {
+      updateBlock(blockId, (block) => ({ ...block, title: event.target.value }));
+      return;
+    }
+    if (event.target.classList.contains('js-series-label')) {
+      const seriesIndex = Number(event.target.dataset.seriesIndex);
+      updateBlock(blockId, (block) => {
+        block.config.series[seriesIndex].label = event.target.value;
+        return block;
+      });
+    }
+  });
+
+  blockEditor.addEventListener('change', (event) => {
+    const card = event.target.closest('.js-report-block-card');
+    if (!card) return;
+    const blockId = card.dataset.blockId;
+    if (event.target.classList.contains('js-block-type')) {
+      const nextType = event.target.value;
+      updateBlock(blockId, (block) => ({ ...block, type: nextType, title: block.title || normalizeTitle(nextType), config: getDefaultConfig(nextType) }));
+      return;
+    }
+    if (event.target.classList.contains('js-block-multiselect')) {
+      const selectedValues = Array.from(event.target.selectedOptions).map((option) => option.value);
+      updateBlock(blockId, (block) => {
+        block.config[event.target.dataset.configKey] = selectedValues;
+        return block;
+      });
+      return;
+    }
+    if (event.target.classList.contains('js-block-config-input')) {
+      updateBlock(blockId, (block) => {
+        block.config[event.target.dataset.configKey] = event.target.value;
+        return block;
+      });
+      return;
+    }
+    if (event.target.classList.contains('js-series-key') || event.target.classList.contains('js-series-label') || event.target.classList.contains('js-series-aggregation')) {
+      const seriesIndex = Number(event.target.dataset.seriesIndex);
+      updateBlock(blockId, (block) => {
+        block.config.series = Array.isArray(block.config.series) ? block.config.series : [];
+        block.config.series[seriesIndex] = block.config.series[seriesIndex] || { aggregation: 'sum' };
+        if (event.target.classList.contains('js-series-key')) {
+          const selectedField = getCuratedFieldsForBuilder().find((field) => field.key === event.target.value);
+          block.config.series[seriesIndex].key = event.target.value;
+          if (!block.config.series[seriesIndex].label) {
+            block.config.series[seriesIndex].label = selectedField?.label || event.target.value;
+          }
+        } else if (event.target.classList.contains('js-series-aggregation')) {
+          block.config.series[seriesIndex].aggregation = event.target.value;
+        }
+        return block;
+      });
+    }
+  });
+
+  form.elements.dataset_id.addEventListener('change', () => {
+    updateVersionOptions();
+    refreshBlockConfigsForDatasetChange();
+  });
+
+  form.elements.dataset_version_id.addEventListener('change', refreshBlockConfigsForDatasetChange);
+  form.elements.name.addEventListener('input', updateCuratedFieldsPanel);
+  form.elements.title.addEventListener('input', updateCuratedFieldsPanel);
+  form.elements.report_family.addEventListener('change', () => {
+    if (!form.elements.category_key.value.trim() || pageMode === 'create') {
+      form.elements.category_key.value = form.elements.report_family.value;
+    }
+  });
+  form.elements.report_type.addEventListener('change', updateReportSelectionSummary);
+  form.elements.category_key.addEventListener('input', updateReportSelectionSummary);
+  form.elements.report_family.addEventListener('change', updateReportSelectionSummary);
+  applyReportFamilyTemplateButton?.addEventListener('click', applyReportFamilyPreset);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -350,6 +1117,14 @@
       publishButton.textContent = 'Publish Draft';
     }
   });
+
+  parseBlocksFromTextarea();
+  updateVersionOptions();
+  updateCuratedFieldsPanel();
+  if (pageMode === 'create' && blockState.length === 0) {
+    applyReportFamilyPreset();
+  }
+  renderBlockEditor();
 })();
 </script>
 {% endblock %}

@@ -372,6 +372,111 @@ def test_create_publish_indicator_and_report_flow_archives_previous_versions():
 
 
 
+def test_create_report_version_normalizes_block_configs_and_curated_dataset_contract():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsReportService
+
+        report_definition = AnalyticsReportDefinition(
+            id=21,
+            uuid='report-def-uuid',
+            report_key='pk-kanwil',
+            dataset_id=7,
+            name='PK Kanwil',
+            category_key='pk',
+            status=AnalyticsReportDefinition.STATUS_DRAFT,
+        )
+        dataset = SimpleNamespace(id=7, dataset_key='dataset-pk', name='Dataset PK', settings_json={})
+        dataset_version = SimpleNamespace(
+            id=701,
+            dataset_id=7,
+            version_number=5,
+            is_current_published=True,
+            is_current_draft=False,
+            grain_key='per_scope_per_year',
+            output_schema_json=[
+                {'key': 'tanggal', 'label': 'Tanggal', 'type': 'date'},
+                {'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'},
+                {'key': 'capaian_total', 'label': 'Capaian Total', 'type': 'integer'},
+                {'key': 'achievement_pct', 'label': 'Achievement %', 'type': 'number'},
+                {'key': 'latitude', 'label': 'Latitude', 'type': 'number'},
+                {'key': 'longitude', 'label': 'Longitude', 'type': 'number'},
+            ],
+            dimension_definitions_json=[
+                {'key': 'nama_bidang', 'label': 'Nama Bidang', 'type': 'string'},
+            ],
+            metric_definitions_json=[
+                {'key': 'capaian_total', 'label': 'Capaian Total', 'type': 'integer'},
+                {'key': 'achievement_pct', 'label': 'Achievement %', 'type': 'number'},
+            ],
+        )
+        report_definition_repository = StubReportDefinitionRepository([report_definition])
+        report_version_repository = StubReportVersionRepository()
+        dataset_repository = StubDatasetRepository([dataset])
+        dataset_version_repository = StubDatasetVersionRepository([dataset_version])
+        report_service = AnalyticsReportService(
+            report_definition_repository=report_definition_repository,
+            report_version_repository=report_version_repository,
+            dataset_repository=dataset_repository,
+            dataset_version_repository=dataset_version_repository,
+        )
+
+        created_version = report_service.create_report_version(
+            21,
+            {
+                'dataset_version_id': 701,
+                'title': 'PK Kanwil 2026',
+                'blocks': [
+                    {'type': 'metric_cards', 'title': 'Ringkasan KPI'},
+                    {'type': 'plotly_timeseries', 'title': 'Tren PK'},
+                    {'type': 'detail_table', 'title': 'Tabel PK'},
+                    {'type': 'geo_map', 'title': 'Sebaran PK'},
+                    {'type': 'narrative', 'title': 'Narasi PK', 'config': {'focus_field_keys': ['achievement_pct']}},
+                ],
+            },
+        )
+
+        dataset_contract = created_version.structure_json['dataset_contract']
+        curated_fields = dataset_contract['curated_fields']
+        curated_field_keys = [field['key'] for field in curated_fields]
+        run_binding = dataset_contract['run_binding']
+        blocks = created_version.structure_json['blocks']
+        metric_block = next(block for block in blocks if block['type'] == 'metric_cards')
+        chart_block = next(block for block in blocks if block['type'] == 'plotly_timeseries')
+        table_block = next(block for block in blocks if block['type'] == 'detail_table')
+        map_block = next(block for block in blocks if block['type'] == 'geo_map')
+        narrative_block = next(block for block in blocks if block['type'] == 'narrative')
+
+        assert dataset_contract['dataset_id'] == 7
+        assert dataset_contract['dataset_version_id'] == 701
+        assert dataset_contract['dataset_version_number'] == 5
+        assert dataset_contract['grain_key'] == 'per_scope_per_year'
+        assert 'tanggal' in curated_field_keys
+        assert 'nama_indikator' in curated_field_keys
+        assert 'capaian_total' in curated_field_keys
+        assert 'achievement_pct' in curated_field_keys
+        assert 'latitude' in curated_field_keys
+        assert 'longitude' in curated_field_keys
+        assert run_binding == {
+            'dataset_id': 7,
+            'dataset_key': 'dataset-pk',
+            'dataset_version_id': 701,
+            'dataset_version_number': 5,
+            'report_title': 'PK Kanwil',
+            'report_category_key': 'pk',
+            'selection_mode': 'latest_succeeded_run',
+        }
+        assert metric_block['config']['metric_keys'] == ['capaian_total', 'achievement_pct']
+        assert chart_block['config']['x_key'] == 'tanggal'
+        assert chart_block['config']['series'][0]['key'] == 'capaian_total'
+        assert table_block['config']['column_keys'] == ['tanggal', 'nama_indikator', 'capaian_total', 'achievement_pct', 'nama_bidang']
+        assert map_block['config']['latitude_field'] == 'latitude'
+        assert map_block['config']['longitude_field'] == 'longitude'
+        assert narrative_block['config']['focus_field_keys'] == ['achievement_pct']
+
+
+
 def test_record_progress_entry_with_items_and_sync_result_updates_narrative_without_losing_dataset_trace():
     app = create_app('testing')
 
@@ -594,3 +699,73 @@ def test_record_result_for_dataset_driven_indicator_builds_default_source_trace(
             'dataset_run_id': 900,
             'indicator_version_id': 88,
         }
+
+
+def test_report_service_normalizes_legacy_report_type_alias_and_family_defaults():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsReportService
+
+        dataset = SimpleNamespace(
+            id=7,
+            dataset_key='dataset-pk',
+            name='Dataset PK',
+            settings_json={},
+        )
+        dataset_version = SimpleNamespace(
+            id=701,
+            dataset_id=7,
+            version_number=5,
+            is_current_published=True,
+            is_current_draft=False,
+            grain_key='per_scope_per_year',
+            output_schema_json=[
+                {'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'},
+                {'key': 'tanggal', 'label': 'Tanggal', 'type': 'date'},
+            ],
+            dimension_definitions_json=[],
+            metric_definitions_json=[
+                {'key': 'capaian_total', 'label': 'Capaian Total', 'type': 'number'},
+                {'key': 'achievement_pct', 'label': 'Persentase Capaian', 'type': 'number'},
+            ],
+        )
+        report_definition_repository = StubReportDefinitionRepository()
+        report_version_repository = StubReportVersionRepository()
+        dataset_repository = StubDatasetRepository([dataset])
+        dataset_version_repository = StubDatasetVersionRepository([dataset_version])
+        service = AnalyticsReportService(
+            report_definition_repository=report_definition_repository,
+            report_version_repository=report_version_repository,
+            dataset_repository=dataset_repository,
+            dataset_version_repository=dataset_version_repository,
+        )
+
+        bundle = service.create_report_bundle(
+            {
+                'report': {
+                    'report_key': 'pk-kanwil',
+                    'dataset_id': 7,
+                    'name': 'PK Kanwil',
+                    'report_type': 'performance_report',
+                    'report_family': 'pk',
+                    'category_key': 'pk',
+                },
+                'draft_version': {
+                    'dataset_version_id': 701,
+                    'title': 'PK Kanwil 2026',
+                },
+            }
+        )
+
+        assert bundle['report'].report_type == AnalyticsReportDefinition.TYPE_SCORECARD
+        assert bundle['report'].settings_json['report_family'] == 'pk'
+        assert bundle['draft_version'].structure_json['layout']['report_family'] == 'pk'
+        assert bundle['draft_version'].structure_json['layout']['block_order_strategy'] == 'explicit_order'
+        assert bundle['draft_version'].structure_json['period_preset_config']['supported_period_modes'] == ['quarterly', 'semester', 'yearly']
+        assert [block['type'] for block in bundle['draft_version'].structure_json['blocks']] == [
+            'metric_cards',
+            'detail_table',
+            'plotly_timeseries',
+            'narrative',
+        ]

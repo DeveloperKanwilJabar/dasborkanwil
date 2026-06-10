@@ -215,22 +215,144 @@
         `;
     }
 
+    function getOrderedReportBlocks() {
+        return Array.isArray(reportConfig.blocks)
+            ? reportConfig.blocks.slice().sort(function (left, right) {
+                return Number((left && left.order) || 9999) - Number((right && right.order) || 9999);
+            })
+            : [];
+    }
+
+    function getBlockConfig(blockType) {
+        const block = getOrderedReportBlocks().find(function (item) {
+            return item && item.type === blockType;
+        });
+        return (block && block.config) || {};
+    }
+
+    function getCuratedFields() {
+        const datasetContract = reportConfig.dataset_contract || {};
+        return Array.isArray(datasetContract.curated_fields) ? datasetContract.curated_fields : [];
+    }
+
+    function getFieldLabelMap() {
+        return getCuratedFields().reduce(function (acc, field) {
+            if (field && field.key) {
+                acc[field.key] = field.label || field.key;
+            }
+            return acc;
+        }, {});
+    }
+
+    function resolveConfiguredFieldKeys(requestedKeys, fallbackKeys) {
+        const curatedFieldKeys = getCuratedFields().map(function (field) {
+            return field.key;
+        }).filter(Boolean);
+        const allowlist = curatedFieldKeys.length ? new Set(curatedFieldKeys) : null;
+        const requested = Array.isArray(requestedKeys) ? requestedKeys.filter(Boolean) : [];
+        const selected = requested.filter(function (key) {
+            return !allowlist || allowlist.has(key);
+        });
+        if (selected.length) {
+            return selected;
+        }
+        return (Array.isArray(fallbackKeys) ? fallbackKeys : []).filter(function (key) {
+            return !allowlist || allowlist.has(key);
+        });
+    }
+
+    function resolveConfiguredSeries(fallbackKeys) {
+        const config = getBlockConfig('plotly_timeseries');
+        const requestedSeries = Array.isArray(config.series) ? config.series : [];
+        const curatedFieldKeys = new Set(getCuratedFields().map(function (field) {
+            return field.key;
+        }).filter(Boolean));
+        const normalized = requestedSeries.filter(function (series) {
+            return series && series.key && (!curatedFieldKeys.size || curatedFieldKeys.has(series.key));
+        }).map(function (series) {
+            return {
+                key: series.key,
+                label: series.label || series.key,
+                aggregation: series.aggregation || 'sum',
+            };
+        });
+        if (normalized.length) {
+            return normalized;
+        }
+        return (fallbackKeys || []).map(function (key) {
+            return { key, label: key, aggregation: 'sum' };
+        });
+    }
+
+    function summarizeFieldMetric(rows, key) {
+        if (key === 'total') {
+            return rows.length;
+        }
+        const numericValues = rows.map(function (row) {
+            return Number(row && row[key]);
+        }).filter(function (value) {
+            return !Number.isNaN(value);
+        });
+        if (!numericValues.length) {
+            return null;
+        }
+        const normalizedKey = String(key || '').toLowerCase();
+        if (normalizedKey.includes('pct') || normalizedKey.includes('percent') || normalizedKey.includes('achievement')) {
+            return numericValues.reduce(function (acc, value) { return acc + value; }, 0) / numericValues.length;
+        }
+        return numericValues.reduce(function (acc, value) { return acc + value; }, 0);
+    }
+
+    function formatMetricValue(key, value) {
+        if (value === null || value === undefined) {
+            return '-';
+        }
+        const normalizedKey = String(key || '').toLowerCase();
+        if (normalizedKey.includes('pct') || normalizedKey.includes('percent') || normalizedKey.includes('achievement')) {
+            return formatPercent(value);
+        }
+        return formatNumber(value);
+    }
+
+    function resolveRowDisplayValue(row, key) {
+        const value = row && row[key];
+        if (value === null || value === undefined || value === '') {
+            return '-';
+        }
+        return value;
+    }
+
     function renderMetricCards(rows, summaryJson) {
         if (!datasetMetricCards) {
             return;
         }
-        const total = rows.length;
-        const selesai = rows.filter((row) => String(row.hasil || '').toLowerCase() === 'selesai').length;
-        const dikembalikan = rows.filter((row) => String(row.hasil || '').toLowerCase() === 'dikembalikan').length;
-        const achievement = total ? (selesai / total) * 100 : 0;
         const yearSummary = state.filters.reportingYear || ((summaryJson && summaryJson.filter_dimensions && summaryJson.filter_dimensions.reporting_years || []).join(', ') || 'Semua tahun');
+        const configuredMetricKeys = resolveConfiguredFieldKeys(
+            getBlockConfig('metric_cards').metric_keys,
+            ['total', 'selesai', 'dikembalikan', 'achievement_pct']
+        );
+        const fieldLabels = getFieldLabelMap();
+        const metricCards = configuredMetricKeys.map(function (key) {
+            if (key === 'selesai') {
+                const value = rows.filter((row) => String(row.hasil || '').toLowerCase() === 'selesai').length;
+                return buildMetricCard(fieldLabels[key] || 'Selesai', formatNumber(value), 'Jumlah status selesai setelah filter diterapkan.', 'text-success');
+            }
+            if (key === 'dikembalikan') {
+                const value = rows.filter((row) => String(row.hasil || '').toLowerCase() === 'dikembalikan').length;
+                return buildMetricCard(fieldLabels[key] || 'Dikembalikan', formatNumber(value), 'Jumlah status dikembalikan setelah filter diterapkan.', 'text-danger');
+            }
+            if (key === 'achievement_pct') {
+                const metricValue = summarizeFieldMetric(rows, key);
+                const fallbackValue = rows.length ? (rows.filter((row) => String(row.hasil || '').toLowerCase() === 'selesai').length / rows.length) * 100 : 0;
+                return buildMetricCard(fieldLabels[key] || 'Achievement', formatMetricValue(key, metricValue === null ? fallbackValue : metricValue), `Snapshot aktif untuk ${yearSummary}.`, 'text-primary');
+            }
+            const metricValue = summarizeFieldMetric(rows, key);
+            return buildMetricCard(fieldLabels[key] || key, formatMetricValue(key, metricValue), `Snapshot aktif untuk ${yearSummary}.`, '');
+        });
 
-        datasetMetricCards.innerHTML = [
-            buildMetricCard('Total Data', formatNumber(total), `Snapshot aktif untuk ${yearSummary}.`, ''),
-            buildMetricCard('Selesai', formatNumber(selesai), 'Jumlah status selesai setelah filter diterapkan.', 'text-success'),
-            buildMetricCard('Dikembalikan', formatNumber(dikembalikan), 'Jumlah status dikembalikan setelah filter diterapkan.', 'text-danger'),
-            buildMetricCard('Achievement', formatPercent(achievement), 'Persentase selesai dari total data aktif.', 'text-primary'),
-        ].join('');
+        datasetMetricCards.innerHTML = metricCards.length
+            ? metricCards.join('')
+            : '<div class="col-12"><div class="alert alert-light border mb-0">Belum ada metric terkonfigurasi pada block metric_cards.</div></div>';
     }
 
     function renderDatasetSummary(dataset, activeVersion, latestRun, filteredRows) {
@@ -241,6 +363,8 @@
             datasetDetailSummary.innerHTML = '<div class="text-muted">Pilih dataset untuk melihat ringkasan.</div>';
             return;
         }
+        const reportFamilyLabel = (((config.reportViewerOptions || {}).report_family_labels || {})[reportConfig.report_family]) || reportConfig.report_family || 'Custom / Fleksibel';
+        const selectedIndicatorCount = Number(reportConfig.selected_indicator_count || 0);
         datasetDetailSummary.innerHTML = `
             <div class="d-flex flex-column gap-3">
                 <div>
@@ -254,6 +378,8 @@
                             <tr><th class="text-muted">Ref</th><td>${escapeHtml(dataset.primary_source_ref || '-')}</td></tr>
                             <tr><th class="text-muted">Versi Aktif</th><td>${activeVersion ? `v${escapeHtml(activeVersion.version_number)}` : '-'}</td></tr>
                             <tr><th class="text-muted">Run Terbaru</th><td>${latestRun ? escapeHtml(runStatusLabel(latestRun.status || '-')) : '-'}</td></tr>
+                            <tr><th class="text-muted">Family Report</th><td>${escapeHtml(reportFamilyLabel)}</td></tr>
+                            <tr><th class="text-muted">Item Dinamis</th><td>${escapeHtml(formatNumber(selectedIndicatorCount))} item indikator/field terpilih</td></tr>
                             <tr><th class="text-muted">Updated</th><td>${latestRun ? escapeHtml(formatDateTime(latestRun.updated_at)) : '-'}</td></tr>
                             <tr><th class="text-muted">Baris Aktif</th><td>${escapeHtml(formatNumber(filteredRows.length))}</td></tr>
                         </tbody>
@@ -273,27 +399,28 @@
             return;
         }
 
+        const configuredColumns = resolveConfiguredFieldKeys(
+            getBlockConfig('detail_table').column_keys,
+            ['tanggal', 'daerah', 'jenis', 'hasil', 'reporting_year']
+        );
+        const fieldLabels = getFieldLabelMap();
         const previewRows = rows.slice(0, 8);
         detailTableContainer.innerHTML = `
             <table class="table table-sm align-middle mb-0">
                 <thead>
                     <tr>
-                        <th>Tanggal</th>
-                        <th>Daerah</th>
-                        <th>Jenis</th>
-                        <th>Status</th>
-                        <th>Tahun</th>
+                        ${configuredColumns.map(function (columnKey) {
+                            return `<th>${escapeHtml(fieldLabels[columnKey] || columnKey)}</th>`;
+                        }).join('')}
                     </tr>
                 </thead>
                 <tbody>
                     ${previewRows.map(function (row) {
                         return `
                             <tr>
-                                <td>${escapeHtml(row.tanggal || '-')}</td>
-                                <td>${escapeHtml(row.daerah || row.label || row.record_label || '-')}</td>
-                                <td>${escapeHtml(row.jenis || '-')}</td>
-                                <td>${escapeHtml(row.hasil || '-')}</td>
-                                <td>${escapeHtml(row.reporting_year || '-')}</td>
+                                ${configuredColumns.map(function (columnKey) {
+                                    return `<td>${escapeHtml(resolveRowDisplayValue(row, columnKey))}</td>`;
+                                }).join('')}
                             </tr>
                         `;
                     }).join('')}
@@ -317,12 +444,27 @@
         const rangeText = state.filters.dateStart || state.filters.dateEnd
             ? `${state.filters.dateStart || 'awal data'} s.d. ${state.filters.dateEnd || 'akhir data'}`
             : 'seluruh rentang data aktif';
+        const narrativeConfig = getBlockConfig('narrative');
+        const focusFieldKeys = resolveConfiguredFieldKeys(narrativeConfig.focus_field_keys, ['achievement_pct', 'total']);
+        const fieldLabels = getFieldLabelMap();
+        const focusSummary = focusFieldKeys.map(function (key) {
+            const resolvedValue = key === 'achievement_pct'
+                ? achievement
+                : key === 'total'
+                    ? total
+                    : summarizeFieldMetric(rows, key);
+            return `<li><strong>${escapeHtml(fieldLabels[key] || key)}</strong>: ${escapeHtml(formatMetricValue(key, resolvedValue))}</li>`;
+        }).join('');
 
         narrativeContainer.innerHTML = `
             <div class="alert alert-warning-subtle border border-warning-subtle mb-0">${escapeHtml(intro)}</div>
             <div>
                 <div class="fw-semibold mb-1">Ringkasan Otomatis Viewer</div>
                 <p class="mb-0 text-muted">Pada mode ${escapeHtml(activeMode)}, viewer membaca ${escapeHtml(formatNumber(total))} baris untuk ${escapeHtml(activeYear)} dengan ${escapeHtml(formatNumber(selesai))} status selesai dan ${escapeHtml(formatNumber(dikembalikan))} status dikembalikan. Achievement saat ini berada di ${escapeHtml(formatPercent(achievement))} untuk rentang ${escapeHtml(rangeText)}.</p>
+            </div>
+            <div>
+                <div class="fw-semibold mb-1">Fokus Field Builder</div>
+                <ul class="mb-0 text-muted ps-3">${focusSummary || '<li>Tidak ada field fokus terkonfigurasi.</li>'}</ul>
             </div>
         `;
     }
@@ -418,41 +560,52 @@
         }).join('');
     }
 
-    function aggregateRows(rows, periodMode) {
+    function aggregateRows(rows, periodMode, xKey, seriesConfig) {
         const bucketMap = new Map();
         rows.forEach(function (row) {
             const date = resolveRowDate(row);
-            if (!date) {
+            const rawXValue = xKey ? row[xKey] : null;
+            if (!rawXValue && !date) {
                 return;
             }
-            let label = row.tanggal || '-';
-            if (periodMode === 'weekly') {
-                const weekStart = new Date(date);
-                const day = weekStart.getDay();
-                const diffToMonday = day === 0 ? -6 : 1 - day;
-                weekStart.setDate(weekStart.getDate() + diffToMonday);
-                label = `Minggu ${formatDateInputValue(weekStart)}`;
-            } else if (periodMode === 'monthly') {
-                label = `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}`;
-            } else if (periodMode === 'quarterly') {
-                label = row.quarter_label || `${date.getFullYear()}-Q${Math.floor(date.getMonth() / 3) + 1}`;
-            } else if (periodMode === 'four_monthly') {
-                label = `${date.getFullYear()}-C${Math.floor(date.getMonth() / 4) + 1}`;
-            } else if (periodMode === 'semesterly') {
-                label = row.semester_label || `${date.getFullYear()}-S${date.getMonth() < 6 ? 1 : 2}`;
-            } else if (periodMode === 'yearly') {
-                label = String(date.getFullYear());
+            let label = rawXValue || row.tanggal || '-';
+            if (!rawXValue && date) {
+                if (periodMode === 'weekly') {
+                    const weekStart = new Date(date);
+                    const day = weekStart.getDay();
+                    const diffToMonday = day === 0 ? -6 : 1 - day;
+                    weekStart.setDate(weekStart.getDate() + diffToMonday);
+                    label = `Minggu ${formatDateInputValue(weekStart)}`;
+                } else if (periodMode === 'monthly') {
+                    label = `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}`;
+                } else if (periodMode === 'quarterly') {
+                    label = row.quarter_label || `${date.getFullYear()}-Q${Math.floor(date.getMonth() / 3) + 1}`;
+                } else if (periodMode === 'four_monthly') {
+                    label = `${date.getFullYear()}-C${Math.floor(date.getMonth() / 4) + 1}`;
+                } else if (periodMode === 'semesterly') {
+                    label = row.semester_label || `${date.getFullYear()}-S${date.getMonth() < 6 ? 1 : 2}`;
+                } else if (periodMode === 'yearly') {
+                    label = String(date.getFullYear());
+                }
             }
 
-            const current = bucketMap.get(label) || { label, total: 0, selesai: 0, dikembalikan: 0, sortValue: date.getTime() };
-            current.total += 1;
-            if (String(row.hasil || '').toLowerCase() === 'selesai') {
-                current.selesai += 1;
-            }
-            if (String(row.hasil || '').toLowerCase() === 'dikembalikan') {
-                current.dikembalikan += 1;
-            }
-            current.sortValue = Math.min(current.sortValue, date.getTime());
+            const current = bucketMap.get(label) || { label, sortValue: date ? date.getTime() : bucketMap.size, values: {} };
+            (seriesConfig || []).forEach(function (seriesItem) {
+                const key = seriesItem.key;
+                let value = 0;
+                if (key === 'total') {
+                    value = 1;
+                } else if (key === 'selesai') {
+                    value = String(row.hasil || '').toLowerCase() === 'selesai' ? 1 : 0;
+                } else if (key === 'dikembalikan') {
+                    value = String(row.hasil || '').toLowerCase() === 'dikembalikan' ? 1 : 0;
+                } else {
+                    const numeric = Number(row && row[key]);
+                    value = Number.isNaN(numeric) ? 0 : numeric;
+                }
+                current.values[key] = (current.values[key] || 0) + value;
+            });
+            current.sortValue = Math.min(current.sortValue, date ? date.getTime() : current.sortValue);
             bucketMap.set(label, current);
         });
 
@@ -465,7 +618,11 @@
         if (!chartContainer || !Plotly) {
             return;
         }
-        const series = aggregateRows(rows, state.filters.metricPeriodMode || 'quarterly');
+        const chartConfig = getBlockConfig('plotly_timeseries');
+        const fallbackSeriesKeys = ['total', 'selesai', 'dikembalikan'];
+        const configuredSeries = resolveConfiguredSeries(fallbackSeriesKeys);
+        const xKey = chartConfig.x_key || 'tanggal';
+        const series = aggregateRows(rows, state.filters.metricPeriodMode || 'quarterly', xKey, configuredSeries);
         if (!series.length) {
             Plotly.react(chartContainer, [], {
                 title: 'Belum ada data pada filter aktif',
@@ -475,38 +632,27 @@
             return;
         }
 
-        Plotly.react(chartContainer, [
-            {
+        const palette = ['#405189', '#0ab39c', '#f06548', '#f7b84b'];
+        const traces = configuredSeries.map(function (seriesItem, index) {
+            return {
                 x: series.map((item) => item.label),
-                y: series.map((item) => item.total),
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: 'Total',
-                line: { color: '#405189', width: 3 },
-                marker: { size: 8 },
-            },
-            {
-                x: series.map((item) => item.label),
-                y: series.map((item) => item.selesai),
-                type: 'bar',
-                name: 'Selesai',
-                marker: { color: '#0ab39c', opacity: 0.75 },
-            },
-            {
-                x: series.map((item) => item.label),
-                y: series.map((item) => item.dikembalikan),
-                type: 'bar',
-                name: 'Dikembalikan',
-                marker: { color: '#f06548', opacity: 0.75 },
-            },
-        ], {
+                y: series.map((item) => item.values[seriesItem.key] || 0),
+                type: index === 0 ? 'scatter' : 'bar',
+                mode: index === 0 ? 'lines+markers' : undefined,
+                name: seriesItem.label || seriesItem.key,
+                line: index === 0 ? { color: palette[index % palette.length], width: 3 } : undefined,
+                marker: { color: palette[index % palette.length], opacity: index === 0 ? 1 : 0.75, size: index === 0 ? 8 : undefined },
+            };
+        });
+
+        Plotly.react(chartContainer, traces, {
             barmode: 'group',
             margin: { l: 48, r: 20, t: 20, b: 48 },
             legend: { orientation: 'h' },
             paper_bgcolor: 'transparent',
             plot_bgcolor: 'transparent',
-            xaxis: { title: 'Periode' },
-            yaxis: { title: 'Jumlah' },
+            xaxis: { title: xKey || 'Periode' },
+            yaxis: { title: 'Nilai' },
         }, {
             responsive: true,
             displayModeBar: false,
@@ -525,16 +671,20 @@
     }
 
     function extractMapPoints(rows) {
+        const mapConfig = getBlockConfig('geo_map');
+        const latitudeField = mapConfig.latitude_field || 'latitude';
+        const longitudeField = mapConfig.longitude_field || 'longitude';
+        const labelField = mapConfig.label_field || 'daerah';
         return rows.map(function (row) {
-            const lat = resolveCoordinate(row, ['latitude', 'lat', 'Latitude']);
-            const lng = resolveCoordinate(row, ['longitude', 'lng', 'lon', 'Longitude']);
+            const lat = resolveCoordinate(row, [latitudeField, 'latitude', 'lat', 'Latitude']);
+            const lng = resolveCoordinate(row, [longitudeField, 'longitude', 'lng', 'lon', 'Longitude']);
             if (lat === null || lng === null) {
                 return null;
             }
             return {
                 lat,
                 lng,
-                label: row.daerah || row.label || row.record_label || row.record_key || 'Titik data',
+                label: row[labelField] || row.daerah || row.label || row.record_label || row.record_key || 'Titik data',
                 hasil: row.hasil || '-',
                 jenis: row.jenis || '-',
                 tanggal: row.tanggal || '-',

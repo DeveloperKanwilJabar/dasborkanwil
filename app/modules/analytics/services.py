@@ -1115,6 +1115,51 @@ class AnalyticsReportService(BaseService):
         'current_semester',
         'current_year',
     ]
+    REPORT_TYPE_ALIASES = {
+        'custom_report': AnalyticsReportDefinition.TYPE_CUSTOM,
+        'performance_report': AnalyticsReportDefinition.TYPE_SCORECARD,
+        'narrative_report': AnalyticsReportDefinition.TYPE_MONITORING,
+        'geo_report': AnalyticsReportDefinition.TYPE_MONITORING,
+    }
+    ALLOWED_REPORT_TYPES = {
+        AnalyticsReportDefinition.TYPE_PK,
+        AnalyticsReportDefinition.TYPE_RENAKSI,
+        AnalyticsReportDefinition.TYPE_SCORECARD,
+        AnalyticsReportDefinition.TYPE_MONITORING,
+        AnalyticsReportDefinition.TYPE_CUSTOM,
+    }
+    REPORT_FAMILY_DEFAULTS = {
+        'custom': {
+            'blocks': ['metric_cards', 'plotly_timeseries', 'detail_table', 'narrative'],
+            'supported_period_modes': ['quarterly', 'semester', 'yearly'],
+            'quick_presets': ['current_quarter', 'current_semester', 'current_year'],
+            'layout': {'viewer_variant': 'semi_cms'},
+        },
+        'pk': {
+            'blocks': ['metric_cards', 'detail_table', 'plotly_timeseries', 'narrative'],
+            'supported_period_modes': ['quarterly', 'semester', 'yearly'],
+            'quick_presets': ['current_quarter', 'current_semester', 'current_year'],
+            'layout': {'viewer_variant': 'pk_summary'},
+        },
+        'ik': {
+            'blocks': ['metric_cards', 'detail_table', 'narrative'],
+            'supported_period_modes': ['monthly', 'quarterly', 'yearly'],
+            'quick_presets': ['current_month', 'current_quarter', 'current_year'],
+            'layout': {'viewer_variant': 'ik_summary'},
+        },
+        'renaksi': {
+            'blocks': ['metric_cards', 'detail_table', 'narrative'],
+            'supported_period_modes': ['monthly', 'quarterly', 'yearly'],
+            'quick_presets': ['current_month', 'current_quarter', 'current_year'],
+            'layout': {'viewer_variant': 'renaksi_progress'},
+        },
+        'dashboard-eksekutif': {
+            'blocks': ['metric_cards', 'plotly_timeseries', 'geo_map', 'detail_table', 'narrative'],
+            'supported_period_modes': ['monthly', 'quarterly', 'semester', 'yearly'],
+            'quick_presets': ['current_month', 'current_quarter', 'current_semester', 'current_year'],
+            'layout': {'viewer_variant': 'executive_dashboard'},
+        },
+    }
 
     def __init__(self, report_definition_repository=None, report_version_repository=None, dataset_repository=None, dataset_version_repository=None):
         """Inisialisasi dependency service report dan dataset."""
@@ -1278,6 +1323,7 @@ class AnalyticsReportService(BaseService):
         data = data or {}
         settings_json = self._coerce_dict(data.get('settings_json'), getattr(existing, 'settings_json', None) or {})
         tags_json = self._coerce_list(data.get('tags_json', getattr(existing, 'tags_json', None) or []))
+        report_family = data.get('report_family', settings_json.get('report_family') or 'custom')
         dataset_id = data.get('dataset_id', getattr(existing, 'dataset_id', None))
         if dataset_id in ('', None):
             dataset_id = None
@@ -1296,12 +1342,23 @@ class AnalyticsReportService(BaseService):
         if not report_key:
             raise ValueError('report_key wajib diisi.')
 
+        report_type = data.get('report_type', getattr(existing, 'report_type', None) or AnalyticsReportDefinition.TYPE_CUSTOM)
+        report_type = self.REPORT_TYPE_ALIASES.get(report_type, report_type)
+        if report_type not in self.ALLOWED_REPORT_TYPES:
+            raise ValueError('report_type analytics report tidak valid.')
+
+        settings_json = {
+            **settings_json,
+            'report_family': report_family,
+            'report_template_key': data.get('report_template_key', settings_json.get('report_template_key') or report_family),
+        }
+
         return {
             'report_key': report_key,
             'dataset_id': dataset_id,
             'name': data.get('name') or getattr(existing, 'name', None) or report_key,
             'description': data.get('description', getattr(existing, 'description', None)),
-            'report_type': data.get('report_type', getattr(existing, 'report_type', None) or AnalyticsReportDefinition.TYPE_CUSTOM),
+            'report_type': report_type,
             'category_key': data.get('category_key', getattr(existing, 'category_key', None)),
             'status': data.get('status', getattr(existing, 'status', None) or AnalyticsReportDefinition.STATUS_DRAFT),
             'is_active': data.get('is_active', getattr(existing, 'is_active', None) if existing is not None else True),
@@ -1350,17 +1407,28 @@ class AnalyticsReportService(BaseService):
         }
 
     def _normalize_report_structure(self, report, dataset_version, structure_json, data):
+        report_settings = getattr(report, 'settings_json', None) or {}
+        report_family = data.get('report_family') or report_settings.get('report_family') or 'custom'
+        family_defaults = self.REPORT_FAMILY_DEFAULTS.get(report_family, self.REPORT_FAMILY_DEFAULTS['custom'])
         blocks = self._coerce_list(data.get('blocks') or structure_json.get('blocks') or structure_json.get('block_definitions'))
         if not blocks:
             dataset = getattr(report, 'dataset', None)
             dataset_settings = getattr(dataset, 'settings_json', None) or {}
             suggested_blocks = self._coerce_list(dataset_settings.get('suggested_report_blocks'))
-            blocks = [{'type': item, 'title': str(item).replace('_', ' ').title()} for item in (suggested_blocks or self.DEFAULT_REPORT_BLOCKS)]
+            blocks = [
+                {
+                    'type': item,
+                    'title': str(item).replace('_', ' ').title(),
+                    'order': index,
+                    'config': {},
+                }
+                for index, item in enumerate((suggested_blocks or family_defaults.get('blocks') or self.DEFAULT_REPORT_BLOCKS), start=1)
+            ]
         else:
             normalized_blocks = []
             for index, block in enumerate(blocks, start=1):
                 if isinstance(block, str):
-                    normalized_blocks.append({'type': block, 'title': block.replace('_', ' ').title(), 'order': index})
+                    normalized_blocks.append({'type': block, 'title': block.replace('_', ' ').title(), 'order': index, 'config': {}})
                 elif isinstance(block, dict):
                     normalized_blocks.append({
                         'type': block.get('type') or block.get('block_type') or f'block_{index}',
@@ -1378,14 +1446,22 @@ class AnalyticsReportService(BaseService):
         if not supported_period_modes:
             dataset = getattr(report, 'dataset', None)
             dataset_settings = getattr(dataset, 'settings_json', None) or {}
-            supported_period_modes = self._coerce_list(dataset_settings.get('supported_period_modes')) or ['quarterly', 'semester', 'yearly']
+            supported_period_modes = self._coerce_list(dataset_settings.get('supported_period_modes')) or family_defaults.get('supported_period_modes') or ['quarterly', 'semester', 'yearly']
         if not quick_presets:
-            quick_presets = self.DEFAULT_PERIOD_PRESETS
+            quick_presets = family_defaults.get('quick_presets') or self.DEFAULT_PERIOD_PRESETS
 
         filter_schema = self._coerce_dict(data.get('filter_schema'), structure_json.get('filter_schema') or {})
         layout = self._coerce_dict(data.get('layout'), structure_json.get('layout') or {})
+        layout = {
+            **self._coerce_dict(family_defaults.get('layout'), {}),
+            **layout,
+            'report_family': report_family,
+            'block_order_strategy': 'explicit_order',
+        }
         dataset_contract = self._coerce_dict(structure_json.get('dataset_contract'), {})
+        curated_fields = self._coerce_list(dataset_contract.get('curated_fields'))
         if dataset_version:
+            curated_fields = self._build_curated_dataset_fields(dataset_version)
             dataset_contract = {
                 **dataset_contract,
                 'dataset_id': getattr(report, 'dataset_id', None),
@@ -1395,7 +1471,10 @@ class AnalyticsReportService(BaseService):
                 'output_schema_json': getattr(dataset_version, 'output_schema_json', None) or [],
                 'dimension_definitions_json': getattr(dataset_version, 'dimension_definitions_json', None) or [],
                 'metric_definitions_json': getattr(dataset_version, 'metric_definitions_json', None) or [],
+                'curated_fields': curated_fields,
+                'run_binding': self._build_report_run_binding(report, dataset_version),
             }
+        normalized_blocks = [self._normalize_report_block_config(block, curated_fields) for block in blocks]
 
         return {
             **structure_json,
@@ -1408,8 +1487,145 @@ class AnalyticsReportService(BaseService):
             },
             'filter_schema': filter_schema,
             'layout': layout,
-            'blocks': blocks,
+            'blocks': normalized_blocks,
         }
+
+    def _build_curated_dataset_fields(self, dataset_version):
+        curated_fields = []
+        seen_keys = set()
+        field_groups = [
+            ('output_schema', getattr(dataset_version, 'output_schema_json', None) or []),
+            ('dimension', getattr(dataset_version, 'dimension_definitions_json', None) or []),
+            ('metric', getattr(dataset_version, 'metric_definitions_json', None) or []),
+        ]
+        for source_name, field_defs in field_groups:
+            for field in self._coerce_list(field_defs):
+                field_payload = field if isinstance(field, dict) else {'key': field}
+                key = field_payload.get('key') or field_payload.get('field_key') or field_payload.get('name')
+                if not key or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                field_type = field_payload.get('type') or field_payload.get('data_type') or 'string'
+                curated_fields.append(
+                    {
+                        'key': key,
+                        'label': field_payload.get('label') or field_payload.get('title') or key.replace('_', ' ').title(),
+                        'type': field_type,
+                        'source': source_name,
+                        'role': self._infer_curated_field_role(key, field_type, source_name),
+                    }
+                )
+        return curated_fields
+
+    def _infer_curated_field_role(self, key, field_type, source_name):
+        normalized_key = str(key or '').strip().lower()
+        normalized_type = str(field_type or '').strip().lower()
+        if normalized_key in {'tanggal', 'date', 'submitted_at', 'period_date'} or normalized_type in {'date', 'datetime'}:
+            return 'date'
+        if normalized_key in {'latitude', 'lat'} or 'latitude' in normalized_key:
+            return 'geo_latitude'
+        if normalized_key in {'longitude', 'lng', 'lon'} or 'longitude' in normalized_key:
+            return 'geo_longitude'
+        if source_name == 'metric':
+            return 'metric'
+        if source_name == 'dimension':
+            return 'dimension'
+        if normalized_type in {'integer', 'number', 'numeric', 'float', 'decimal'} and any(token in normalized_key for token in ['total', 'jumlah', 'count', 'pct', 'percent', 'achievement', 'score']):
+            return 'metric'
+        return 'dimension'
+
+    def _build_report_run_binding(self, report, dataset_version):
+        dataset = getattr(report, 'dataset', None)
+        if dataset is None and getattr(report, 'dataset_id', None):
+            dataset = self.dataset_repository.get_by_id(report.dataset_id)
+        return {
+            'dataset_id': getattr(report, 'dataset_id', None),
+            'dataset_key': getattr(dataset, 'dataset_key', None),
+            'dataset_version_id': getattr(dataset_version, 'id', None),
+            'dataset_version_number': getattr(dataset_version, 'version_number', None),
+            'report_title': getattr(report, 'name', None),
+            'report_category_key': getattr(report, 'category_key', None),
+            'selection_mode': 'latest_succeeded_run',
+        }
+
+    def _normalize_report_block_config(self, block, curated_fields):
+        block_type = block.get('type')
+        config = self._coerce_dict(block.get('config'), {})
+        metric_field_keys = [field['key'] for field in curated_fields if field.get('role') == 'metric']
+        dimension_field_keys = [field['key'] for field in curated_fields if field.get('role') == 'dimension']
+        date_field_keys = [field['key'] for field in curated_fields if field.get('role') == 'date']
+        latitude_field = next((field['key'] for field in curated_fields if field.get('role') == 'geo_latitude'), None)
+        longitude_field = next((field['key'] for field in curated_fields if field.get('role') == 'geo_longitude'), None)
+
+        normalized_config = {**config}
+        if block_type == 'metric_cards':
+            normalized_config['metric_keys'] = self._pick_allowed_field_keys(
+                config.get('metric_keys') or config.get('selected_field_keys'),
+                metric_field_keys,
+                fallback=metric_field_keys[:4],
+            )
+        elif block_type == 'plotly_timeseries':
+            x_key = config.get('x_key') or next(iter(date_field_keys or dimension_field_keys or metric_field_keys), None)
+            normalized_series = []
+            for series in self._coerce_list(config.get('series')):
+                if not isinstance(series, dict):
+                    continue
+                key = series.get('key')
+                if key and key in metric_field_keys:
+                    normalized_series.append(
+                        {
+                            'key': key,
+                            'label': series.get('label') or key.replace('_', ' ').title(),
+                            'aggregation': series.get('aggregation') or 'sum',
+                        }
+                    )
+            if not normalized_series:
+                normalized_series = [
+                    {
+                        'key': key,
+                        'label': key.replace('_', ' ').title(),
+                        'aggregation': 'sum',
+                    }
+                    for key in metric_field_keys[:3]
+                ]
+            normalized_config['x_key'] = x_key
+            normalized_config['series'] = normalized_series
+        elif block_type == 'detail_table':
+            fallback_columns = (
+                date_field_keys[:1]
+                + dimension_field_keys[:1]
+                + metric_field_keys[:2]
+                + dimension_field_keys[1:3]
+            )[:5]
+            normalized_config['column_keys'] = self._pick_allowed_field_keys(
+                config.get('column_keys') or config.get('selected_field_keys'),
+                [field['key'] for field in curated_fields],
+                fallback=fallback_columns,
+            )
+        elif block_type == 'geo_map':
+            label_field = config.get('label_field') or next(iter(dimension_field_keys or metric_field_keys), None)
+            normalized_config['latitude_field'] = config.get('latitude_field') if config.get('latitude_field') in [field['key'] for field in curated_fields] else latitude_field
+            normalized_config['longitude_field'] = config.get('longitude_field') if config.get('longitude_field') in [field['key'] for field in curated_fields] else longitude_field
+            normalized_config['label_field'] = label_field
+        elif block_type == 'narrative':
+            normalized_config['focus_field_keys'] = self._pick_allowed_field_keys(
+                config.get('focus_field_keys') or config.get('selected_field_keys'),
+                [field['key'] for field in curated_fields],
+                fallback=metric_field_keys[:2],
+            )
+            normalized_config['source_mode'] = config.get('source_mode') or 'auto_summary'
+
+        return {
+            **block,
+            'config': normalized_config,
+        }
+
+    def _pick_allowed_field_keys(self, requested_keys, allowed_keys, fallback=None):
+        allowed_set = set(self._coerce_list(allowed_keys))
+        selected = [key for key in self._coerce_list(requested_keys) if key in allowed_set]
+        if selected:
+            return selected
+        return [key for key in self._coerce_list(fallback) if key in allowed_set]
 
     def _coerce_dict(self, value, default=None):
         if isinstance(value, dict):

@@ -20,9 +20,9 @@ depends_on = None
 def upgrade():
     with op.batch_alter_table('analytics_report_definitions', schema=None) as batch_op:
         batch_op.add_column(sa.Column('dataset_id', sa.Integer(), nullable=True))
-        batch_op.create_index(batch_op.f('ix_analytics_report_definitions_dataset_id'), ['dataset_id'], unique=False)
+        batch_op.create_index('ix_ar_def_dataset_id', ['dataset_id'], unique=False)
         batch_op.create_foreign_key(
-            'fk_analytics_report_definitions_dataset_id_analytics_datasets',
+            'fk_analytics_report_defs_dataset_id',
             'analytics_datasets',
             ['dataset_id'],
             ['id'],
@@ -30,9 +30,9 @@ def upgrade():
 
     with op.batch_alter_table('analytics_report_versions', schema=None) as batch_op:
         batch_op.add_column(sa.Column('dataset_version_id', sa.Integer(), nullable=True))
-        batch_op.create_index(batch_op.f('ix_analytics_report_versions_dataset_version_id'), ['dataset_version_id'], unique=False)
+        batch_op.create_index('ix_ar_ver_dataset_version_id', ['dataset_version_id'], unique=False)
         batch_op.create_foreign_key(
-            'fk_analytics_report_versions_dataset_version_id_analytics_dataset_versions',
+            'fk_analytics_report_vers_dataset_ver_id',
             'analytics_dataset_versions',
             ['dataset_version_id'],
             ['id'],
@@ -41,11 +41,11 @@ def upgrade():
 
 def downgrade():
     with op.batch_alter_table('analytics_report_versions', schema=None) as batch_op:
-        batch_op.drop_constraint('fk_analytics_report_versions_dataset_version_id_analytics_dataset_versions', type_='foreignkey')
-        batch_op.drop_index(batch_op.f('ix_analytics_report_versions_dataset_version_id'))
+        batch_op.drop_constraint('fk_analytics_report_vers_dataset_ver_id', type_='foreignkey')
+        batch_op.drop_index('ix_ar_ver_dataset_version_id')
         batch_op.drop_column('dataset_version_id')
 
     with op.batch_alter_table('analytics_report_definitions', schema=None) as batch_op:
-        batch_op.drop_constraint('fk_analytics_report_definitions_dataset_id_analytics_datasets', type_='foreignkey')
-        batch_op.drop_index(batch_op.f('ix_analytics_report_definitions_dataset_id'))
+        batch_op.drop_constraint('fk_analytics_report_defs_dataset_id', type_='foreignkey')
+        batch_op.drop_index('ix_ar_def_dataset_id')
         batch_op.drop_column('dataset_id')

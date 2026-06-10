@@ -160,11 +160,19 @@ def _build_dataset_catalog_items(dataset_items, registry_items, report_items=Non
 
 def _build_report_builder_options():
     return {
+        'report_family_options': [
+            ('custom', 'Custom / Fleksibel'),
+            ('pk', 'Perjanjian Kinerja (PK)'),
+            ('ik', 'Indikator Kinerja (IK)'),
+            ('renaksi', 'Renaksi / Action Plan'),
+            ('dashboard-eksekutif', 'Dashboard Eksekutif'),
+        ],
         'report_type_options': [
-            ('custom_report', 'Custom Report'),
-            ('performance_report', 'Performance Report'),
-            ('narrative_report', 'Narrative Report'),
-            ('geo_report', 'Geo Report'),
+            ('custom', 'Custom / Flexible Report'),
+            ('scorecard', 'Scorecard / KPI'),
+            ('monitoring', 'Monitoring'),
+            ('pk', 'PK Structured Report'),
+            ('renaksi', 'Renaksi Structured Report'),
         ],
         'period_mode_options': [
             ('weekly', 'Weekly'),
@@ -188,7 +196,100 @@ def _build_report_builder_options():
             ('geo_map', 'Geo Map'),
             ('narrative', 'Narrative'),
         ],
+        'report_type_aliases': {
+            'custom_report': 'custom',
+            'performance_report': 'scorecard',
+            'narrative_report': 'monitoring',
+            'geo_report': 'monitoring',
+        },
     }
+
+
+def _infer_builder_curated_field_role(key, field_type, source_name):
+    normalized_key = str(key or '').strip().lower()
+    normalized_type = str(field_type or '').strip().lower()
+    if normalized_key in {'tanggal', 'date', 'submitted_at', 'period_date'} or normalized_type in {'date', 'datetime'}:
+        return 'date'
+    if normalized_key in {'latitude', 'lat'} or 'latitude' in normalized_key:
+        return 'geo_latitude'
+    if normalized_key in {'longitude', 'lng', 'lon'} or 'longitude' in normalized_key:
+        return 'geo_longitude'
+    if source_name == 'metric':
+        return 'metric'
+    if source_name == 'dimension':
+        return 'dimension'
+    if normalized_type in {'integer', 'number', 'numeric', 'float', 'decimal'} and any(
+        token in normalized_key for token in ['total', 'jumlah', 'count', 'pct', 'percent', 'achievement', 'score']
+    ):
+        return 'metric'
+    return 'dimension'
+
+
+def _build_builder_curated_fields(dataset_version):
+    curated_fields = []
+    seen_keys = set()
+    field_groups = [
+        ('output_schema', getattr(dataset_version, 'output_schema_json', None) or []),
+        ('dimension', getattr(dataset_version, 'dimension_definitions_json', None) or []),
+        ('metric', getattr(dataset_version, 'metric_definitions_json', None) or []),
+    ]
+    for source_name, field_defs in field_groups:
+        for field in field_defs:
+            field_payload = field if isinstance(field, dict) else {'key': field}
+            key = field_payload.get('key') or field_payload.get('field_key') or field_payload.get('name')
+            if not key or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            field_type = field_payload.get('type') or field_payload.get('data_type') or 'string'
+            curated_fields.append(
+                {
+                    'key': key,
+                    'label': field_payload.get('label') or field_payload.get('title') or key.replace('_', ' ').title(),
+                    'type': field_type,
+                    'source': source_name,
+                    'role': _infer_builder_curated_field_role(key, field_type, source_name),
+                }
+            )
+    return curated_fields
+
+
+def _serialize_dataset_version_for_report_builder(dataset, dataset_version, variant):
+    if not dataset_version:
+        return None
+    return {
+        'id': getattr(dataset_version, 'id', None),
+        'variant': variant,
+        'status': getattr(dataset_version, 'status', None),
+        'version_number': getattr(dataset_version, 'version_number', None),
+        'label': f"{getattr(dataset, 'name', 'Dataset')} — {'Draft' if variant == 'draft' else 'Publish'} v{getattr(dataset_version, 'version_number', '-')}",
+        'curated_fields': _build_builder_curated_fields(dataset_version),
+    }
+
+
+def _build_report_builder_dataset_catalog(dataset_items):
+    catalog = []
+    for item in dataset_items or []:
+        dataset = item.get('dataset')
+        if not dataset:
+            continue
+        versions = []
+        draft_version = _serialize_dataset_version_for_report_builder(dataset, item.get('draft_version'), 'draft')
+        published_version = _serialize_dataset_version_for_report_builder(dataset, item.get('published_version'), 'published')
+        if draft_version:
+            versions.append(draft_version)
+        if published_version:
+            versions.append(published_version)
+        catalog.append(
+            {
+                'id': getattr(dataset, 'id', None),
+                'dataset_key': getattr(dataset, 'dataset_key', None),
+                'name': getattr(dataset, 'name', None),
+                'source_domain': getattr(dataset, 'source_domain', None),
+                'source_type': getattr(dataset, 'source_type', None),
+                'versions': versions,
+            }
+        )
+    return catalog
 
 
 def _build_dataset_builder_options():
@@ -236,6 +337,13 @@ def _get_active_report_version(report_item):
 
 def _build_report_viewer_options():
     return {
+        'report_family_labels': {
+            'custom': 'Custom / Fleksibel',
+            'pk': 'Perjanjian Kinerja (PK)',
+            'ik': 'Indikator Kinerja (IK)',
+            'renaksi': 'Renaksi / Action Plan',
+            'dashboard-eksekutif': 'Dashboard Eksekutif',
+        },
         'period_mode_labels': {
             'daily': 'Harian',
             'weekly': 'Mingguan',
@@ -267,20 +375,50 @@ def _build_report_viewer_options():
     }
 
 
+def _collect_report_selected_indicator_keys(blocks):
+    selected_keys = set()
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            continue
+        config = block.get('config') or {}
+        for key in config.get('metric_keys') or []:
+            if key:
+                selected_keys.add(str(key))
+        for key in config.get('focus_field_keys') or []:
+            if key:
+                selected_keys.add(str(key))
+        for series in config.get('series') or []:
+            if isinstance(series, dict) and series.get('key'):
+                selected_keys.add(str(series['key']))
+    return sorted(selected_keys)
+
+
 def _serialize_report_viewer_config(report, active_version):
     structure = getattr(active_version, 'structure_json', None) or {}
     period_config = structure.get('period_preset_config', {}) or {}
-    blocks = structure.get('blocks') or structure.get('block_definitions') or []
+    raw_blocks = structure.get('blocks') or structure.get('block_definitions') or []
+    blocks = sorted(
+        list(raw_blocks),
+        key=lambda block: (block or {}).get('order', 9999) if isinstance(block, dict) else 9999,
+    )
+    report_settings = getattr(report, 'settings_json', None) or {}
+    report_family = report_settings.get('report_family') or 'custom'
+    selected_indicator_keys = _collect_report_selected_indicator_keys(blocks)
     return {
         'report_id': getattr(report, 'id', None),
         'report_key': getattr(report, 'report_key', None),
         'report_name': getattr(report, 'name', None),
+        'report_family': report_family,
         'report_version_id': getattr(active_version, 'id', None),
         'report_version_title': getattr(active_version, 'title', None),
         'meta_description': getattr(active_version, 'meta_description', None),
         'default_period_mode': period_config.get('default_mode', 'quarterly'),
         'supported_period_modes': period_config.get('supported_period_modes') or ['quarterly', 'semester', 'yearly'],
         'quick_presets': period_config.get('quick_presets') or ['current_quarter', 'current_semester', 'current_year'],
+        'dataset_contract': structure.get('dataset_contract') or {},
+        'narrative_guidance': getattr(active_version, 'narrative_guidance_json', None) or {},
+        'selected_indicator_keys': selected_indicator_keys,
+        'selected_indicator_count': len(selected_indicator_keys),
         'blocks': blocks,
     }
 
@@ -553,6 +691,7 @@ def analytics_report_create():
         report=None,
         active_version=None,
         dataset_items=dataset_items,
+        builder_dataset_catalog=_build_report_builder_dataset_catalog(dataset_items),
         preselected_dataset=preselected_dataset,
         builder_options=builder_options,
         error_message=None,
@@ -584,6 +723,7 @@ def analytics_report_edit(report_definition_id):
         report=(workspace or {}).get('report'),
         active_version=(workspace or {}).get('draft_version') or (workspace or {}).get('published_version'),
         dataset_items=dataset_items,
+        builder_dataset_catalog=_build_report_builder_dataset_catalog(dataset_items),
         preselected_dataset=None,
         builder_options=builder_options,
         error_message=error_message,

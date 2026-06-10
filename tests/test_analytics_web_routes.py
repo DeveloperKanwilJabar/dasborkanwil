@@ -64,6 +64,19 @@ def _make_dataset(dataset_id=7, primary_source_ref='WILAYAH-ADM'):
             join_registry_spec_json={},
             query_spec_json={},
             transform_spec_json={},
+            output_schema_json=[
+                {'key': 'tanggal', 'label': 'Tanggal', 'type': 'date'},
+                {'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'},
+                {'key': 'latitude', 'label': 'Latitude', 'type': 'number'},
+                {'key': 'longitude', 'label': 'Longitude', 'type': 'number'},
+            ],
+            dimension_definitions_json=[
+                {'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'},
+            ],
+            metric_definitions_json=[
+                {'key': 'capaian_total', 'label': 'Capaian Total', 'type': 'integer'},
+                {'key': 'achievement_pct', 'label': 'Achievement %', 'type': 'number'},
+            ],
         ),
         'latest_run': _make_dataset_run(),
     }
@@ -110,12 +123,35 @@ def _make_report_item(report_id=21, dataset_id=7):
                     'supported_period_modes': ['quarterly', 'yearly'],
                     'quick_presets': ['current_quarter', 'current_year'],
                 },
+                'dataset_contract': {
+                    'dataset_id': dataset_id,
+                    'dataset_version_id': 21,
+                    'dataset_version_number': 2,
+                    'grain_key': 'per_scope_per_year',
+                    'run_binding': {
+                        'dataset_id': dataset_id,
+                        'dataset_key': 'dataset-wilayah',
+                        'dataset_version_id': 21,
+                        'dataset_version_number': 2,
+                        'report_title': 'PK Kanwil',
+                        'report_category_key': 'pk',
+                        'selection_mode': 'latest_succeeded_run',
+                    },
+                    'curated_fields': [
+                        {'key': 'tanggal', 'label': 'Tanggal', 'role': 'date', 'type': 'date'},
+                        {'key': 'nama_indikator', 'label': 'Nama Indikator', 'role': 'dimension', 'type': 'string'},
+                        {'key': 'capaian_total', 'label': 'Capaian Total', 'role': 'metric', 'type': 'integer'},
+                        {'key': 'achievement_pct', 'label': 'Achievement %', 'role': 'metric', 'type': 'number'},
+                        {'key': 'latitude', 'label': 'Latitude', 'role': 'geo_latitude', 'type': 'number'},
+                        {'key': 'longitude', 'label': 'Longitude', 'role': 'geo_longitude', 'type': 'number'},
+                    ],
+                },
                 'blocks': [
-                    {'type': 'metric_cards', 'title': 'Ringkasan KPI'},
-                    {'type': 'plotly_timeseries', 'title': 'Tren Kinerja'},
-                    {'type': 'detail_table', 'title': 'Tabel Detail Kinerja'},
-                    {'type': 'geo_map', 'title': 'Sebaran Wilayah'},
-                    {'type': 'narrative', 'title': 'Narasi Eksekutif'},
+                    {'type': 'metric_cards', 'title': 'Ringkasan KPI', 'config': {'metric_keys': ['capaian_total', 'achievement_pct']}},
+                    {'type': 'plotly_timeseries', 'title': 'Tren Kinerja', 'config': {'x_key': 'tanggal', 'series': [{'key': 'capaian_total', 'label': 'Capaian Total'}]}},
+                    {'type': 'detail_table', 'title': 'Tabel Detail Kinerja', 'config': {'column_keys': ['tanggal', 'nama_indikator', 'capaian_total', 'achievement_pct']}},
+                    {'type': 'geo_map', 'title': 'Sebaran Wilayah', 'config': {'latitude_field': 'latitude', 'longitude_field': 'longitude', 'label_field': 'nama_indikator'}},
+                    {'type': 'narrative', 'title': 'Narasi Eksekutif', 'config': {'focus_field_keys': ['achievement_pct', 'capaian_total']}},
                 ],
             },
             narrative_guidance_json={'summary_prompt': 'Ringkas capaian.'},
@@ -348,6 +384,41 @@ def test_analytics_dataset_report_page_renders_humanized_focus_layout(monkeypatc
     assert 'supported_period_modes' in html
     assert 'quick_presets' in html
     assert 'Triwulan Ini' in html
+    assert 'latest_succeeded_run' in html
+    assert 'Cakupan Report' in html
+    assert 'Jumlahnya tidak fixed dan mengikuti konfigurasi block pada report ini.' in html
+    assert 'reportViewerOptions' in html
+    assert 'Kontrak Field Terkurasi' in html
+    assert 'Capaian Total' in html
+    assert 'Achievement %' in html
+    assert 'Metric: capaian_total, achievement_pct' in html
+    assert 'Kolom: tanggal, nama_indikator, capaian_total, achievement_pct' in html
+    assert 'Fokus narasi: achievement_pct, capaian_total' in html
+
+
+def test_analytics_dataset_report_page_follows_block_order_from_builder(monkeypatch):
+    app = create_app('testing')
+
+    custom_report_item = _make_report_item(dataset_id=7)
+    custom_report_item['draft_version'].structure_json['blocks'] = [
+        {'type': 'narrative', 'title': 'Narasi Pembuka', 'order': 1},
+        {'type': 'detail_table', 'title': 'Tabel Setelah Narasi', 'order': 2},
+        {'type': 'plotly_timeseries', 'title': 'Chart Penutup', 'order': 3},
+    ]
+
+    monkeypatch.setattr('app.modules.analytics.routes_web.DataRegistryService', StubDataRegistryService)
+    monkeypatch.setattr('app.modules.analytics.routes_web.DataRegistryVersionService', StubDataRegistryVersionService)
+    monkeypatch.setattr(
+        'app.modules.analytics.routes_web.AnalyticsQueryService',
+        lambda: StubAnalyticsQueryService(report_item=custom_report_item),
+    )
+
+    client = app.test_client()
+    response = client.get('/analytics/datasets/7/report')
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert html.index('Narasi Pembuka') < html.index('Tabel Setelah Narasi') < html.index('Chart Penutup')
 
 
 def test_analytics_report_index_page_renders_catalog(monkeypatch):
@@ -381,8 +452,17 @@ def test_analytics_report_create_page_renders_builder(monkeypatch):
     assert 'Buat Report Analytics' in html
     assert 'Builder Report Semi-CMS' in html
     assert 'Dataset Analytics' in html
+    assert 'Template / Family Report' in html
     assert 'Default Period Mode' in html
-    assert 'Blocks (JSON Array)' in html
+    assert 'name="supported_period_modes"' in html
+    assert 'name="quick_presets"' in html
+    assert 'Terapkan Template Family' in html
+    assert 'Block Editor Manusiawi' in html
+    assert 'Advanced JSON' in html
+    assert 'Ringkasan Item Report Dinamis' in html
+    assert 'Jumlah item pada report tidak fixed.' in html
+    assert 'builderDatasetCatalog' in html
+    assert 'js-add-report-block' in html
     assert 'Publish Draft' in html
 
 
@@ -398,9 +478,21 @@ def test_analytics_report_edit_page_renders_builder(monkeypatch):
     html = response.get_data(as_text=True)
     assert 'Edit Report Analytics' in html
     assert 'Builder Report Semi-CMS' in html
+    assert 'Template / Family Report' in html
     assert 'PK Kanwil' in html
     assert 'PK Kanwil 2026' in html
+    assert 'name="supported_period_modes"' in html
+    assert 'name="quick_presets"' in html
     assert 'Plotly Timeseries' in html or 'plotly_timeseries' in html
+    assert 'Field Terkurasi Dataset' in html
+    assert 'PK -> Dataset Run Binding' in html
+    assert 'latest_succeeded_run' in html
+    assert 'Block Editor Manusiawi' in html
+    assert 'builder-active-version-title' in html
+    assert 'report-selection-count' in html
+    assert 'toggle-advanced-json-button' in html
+    assert 'builderDatasetCatalog' in html
+    assert 'js-add-series' in html or 'Tambah Series' in html
 
 
 def test_analytics_metadata_page_separates_registry_metadata(monkeypatch):
@@ -457,6 +549,12 @@ def test_analytics_workspace_source_js_contains_expected_fetch_and_filter_contra
     assert 'renderDetailTable' in content
     assert 'renderNarrative' in content
     assert 'renderMap' in content
+    assert 'getOrderedReportBlocks' in content
+    assert 'resolveConfiguredFieldKeys' in content
+    assert 'metric_keys' in content
+    assert 'column_keys' in content
+    assert 'focus_field_keys' in content
+    assert 'latitude_field' in content
     assert 'loadDatasets' in content
     assert 'loadDatasetDetail' in content
     assert 'loadDatasetRuns' in content

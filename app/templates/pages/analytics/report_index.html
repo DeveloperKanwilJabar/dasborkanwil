@@ -49,10 +49,14 @@
                   {% set published_version = item.get('published_version') %}
                   {% set linked_dataset_name = (report.settings_json or {}).get('linked_dataset_name') if report else None %}
                   {% set linked_dataset_key = (report.settings_json or {}).get('linked_dataset_key') if report else None %}
+                  {% set report_family = (report.settings_json or {}).get('report_family') if report else None %}
                   <tr>
                     <td>
                       <div class="fw-semibold">{{ report.name if report else '-' }}</div>
                       <div class="text-muted small">{{ report.report_key if report else '' }} · {{ report.category_key if report and report.category_key else 'uncategorized' }}</div>
+                      {% if report_family %}
+                      <div class="mt-1"><span class="badge bg-soft-warning text-warning">Family: {{ report_family }}</span></div>
+                      {% endif %}
                     </td>
                     <td>
                       <div>{{ linked_dataset_name or 'Belum terhubung' }}</div>
