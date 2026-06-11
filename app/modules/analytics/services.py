@@ -1493,6 +1493,8 @@ class AnalyticsReportService(BaseService):
     def _build_curated_dataset_fields(self, dataset_version):
         curated_fields = []
         seen_keys = set()
+        metric_keys = self._extract_field_keys(getattr(dataset_version, 'metric_definitions_json', None) or [])
+        dimension_keys = self._extract_field_keys(getattr(dataset_version, 'dimension_definitions_json', None) or [])
         field_groups = [
             ('output_schema', getattr(dataset_version, 'output_schema_json', None) or []),
             ('dimension', getattr(dataset_version, 'dimension_definitions_json', None) or []),
@@ -1506,16 +1508,33 @@ class AnalyticsReportService(BaseService):
                     continue
                 seen_keys.add(key)
                 field_type = field_payload.get('type') or field_payload.get('data_type') or 'string'
+                role_source_name = self._resolve_curated_role_source(key, source_name, metric_keys, dimension_keys)
                 curated_fields.append(
                     {
                         'key': key,
                         'label': field_payload.get('label') or field_payload.get('title') or key.replace('_', ' ').title(),
                         'type': field_type,
                         'source': source_name,
-                        'role': self._infer_curated_field_role(key, field_type, source_name),
+                        'role': self._infer_curated_field_role(key, field_type, role_source_name),
                     }
                 )
         return curated_fields
+
+    def _extract_field_keys(self, field_defs):
+        keys = set()
+        for field in self._coerce_list(field_defs):
+            field_payload = field if isinstance(field, dict) else {'key': field}
+            key = field_payload.get('key') or field_payload.get('field_key') or field_payload.get('name')
+            if key:
+                keys.add(key)
+        return keys
+
+    def _resolve_curated_role_source(self, key, source_name, metric_keys, dimension_keys):
+        if key in metric_keys:
+            return 'metric'
+        if key in dimension_keys:
+            return 'dimension'
+        return source_name
 
     def _infer_curated_field_role(self, key, field_type, source_name):
         normalized_key = str(key or '').strip().lower()
@@ -1530,7 +1549,7 @@ class AnalyticsReportService(BaseService):
             return 'metric'
         if source_name == 'dimension':
             return 'dimension'
-        if normalized_type in {'integer', 'number', 'numeric', 'float', 'decimal'} and any(token in normalized_key for token in ['total', 'jumlah', 'count', 'pct', 'percent', 'achievement', 'score']):
+        if normalized_type in {'integer', 'number', 'numeric', 'float', 'decimal'} and any(token in normalized_key for token in ['total', 'jumlah', 'count', 'pct', 'percent', 'achievement', 'score', 'target', 'realisasi', 'capaian', 'deviasi', 'progres', 'progress', 'nilai']):
             return 'metric'
         return 'dimension'
 

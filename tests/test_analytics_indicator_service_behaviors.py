@@ -477,6 +477,76 @@ def test_create_report_version_normalizes_block_configs_and_curated_dataset_cont
 
 
 
+def test_report_builder_keeps_metric_role_when_output_schema_declares_numeric_business_fields_first():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsReportService
+
+        report_definition = AnalyticsReportDefinition(
+            id=22,
+            uuid='report-def-uuid-business-metric',
+            report_key='ik-kanwil',
+            dataset_id=8,
+            name='IK Kanwil',
+            category_key='ik',
+            status=AnalyticsReportDefinition.STATUS_DRAFT,
+        )
+        dataset = SimpleNamespace(id=8, dataset_key='dataset-ik', name='Dataset IK', settings_json={})
+        dataset_version = SimpleNamespace(
+            id=702,
+            dataset_id=8,
+            version_number=1,
+            is_current_published=True,
+            is_current_draft=False,
+            grain_key='per_scope_per_year',
+            output_schema_json=[
+                {'key': 'tanggal', 'label': 'Tanggal', 'type': 'date'},
+                {'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'},
+                {'key': 'target_kinerja', 'label': 'Target Kinerja', 'type': 'number'},
+                {'key': 'nilai_realisasi', 'label': 'Nilai Realisasi', 'type': 'number'},
+            ],
+            dimension_definitions_json=[
+                {'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'},
+            ],
+            metric_definitions_json=[
+                {'key': 'target_kinerja', 'label': 'Target Kinerja', 'type': 'number'},
+                {'key': 'nilai_realisasi', 'label': 'Nilai Realisasi', 'type': 'number'},
+            ],
+        )
+        report_service = AnalyticsReportService(
+            report_definition_repository=StubReportDefinitionRepository([report_definition]),
+            report_version_repository=StubReportVersionRepository(),
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([dataset_version]),
+        )
+
+        created_version = report_service.create_report_version(
+            22,
+            {
+                'dataset_version_id': 702,
+                'title': 'IK Kanwil 2026',
+                'blocks': [
+                    {'type': 'metric_cards', 'title': 'Ringkasan IK'},
+                    {'type': 'plotly_timeseries', 'title': 'Tren IK'},
+                ],
+            },
+        )
+
+        curated_roles = {
+            field['key']: field['role']
+            for field in created_version.structure_json['dataset_contract']['curated_fields']
+        }
+        metric_block = next(block for block in created_version.structure_json['blocks'] if block['type'] == 'metric_cards')
+        chart_block = next(block for block in created_version.structure_json['blocks'] if block['type'] == 'plotly_timeseries')
+
+        assert curated_roles['target_kinerja'] == 'metric'
+        assert curated_roles['nilai_realisasi'] == 'metric'
+        assert metric_block['config']['metric_keys'] == ['target_kinerja', 'nilai_realisasi']
+        assert [series['key'] for series in chart_block['config']['series']] == ['target_kinerja', 'nilai_realisasi']
+
+
+
 def test_record_progress_entry_with_items_and_sync_result_updates_narrative_without_losing_dataset_trace():
     app = create_app('testing')
 

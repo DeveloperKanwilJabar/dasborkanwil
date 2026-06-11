@@ -219,7 +219,7 @@ def _infer_builder_curated_field_role(key, field_type, source_name):
     if source_name == 'dimension':
         return 'dimension'
     if normalized_type in {'integer', 'number', 'numeric', 'float', 'decimal'} and any(
-        token in normalized_key for token in ['total', 'jumlah', 'count', 'pct', 'percent', 'achievement', 'score']
+        token in normalized_key for token in ['total', 'jumlah', 'count', 'pct', 'percent', 'achievement', 'score', 'target', 'realisasi', 'capaian', 'deviasi', 'progres', 'progress', 'nilai']
     ):
         return 'metric'
     return 'dimension'
@@ -228,6 +228,8 @@ def _infer_builder_curated_field_role(key, field_type, source_name):
 def _build_builder_curated_fields(dataset_version):
     curated_fields = []
     seen_keys = set()
+    metric_keys = _extract_builder_field_keys(getattr(dataset_version, 'metric_definitions_json', None) or [])
+    dimension_keys = _extract_builder_field_keys(getattr(dataset_version, 'dimension_definitions_json', None) or [])
     field_groups = [
         ('output_schema', getattr(dataset_version, 'output_schema_json', None) or []),
         ('dimension', getattr(dataset_version, 'dimension_definitions_json', None) or []),
@@ -241,16 +243,35 @@ def _build_builder_curated_fields(dataset_version):
                 continue
             seen_keys.add(key)
             field_type = field_payload.get('type') or field_payload.get('data_type') or 'string'
+            role_source_name = _resolve_builder_curated_role_source(key, source_name, metric_keys, dimension_keys)
             curated_fields.append(
                 {
                     'key': key,
                     'label': field_payload.get('label') or field_payload.get('title') or key.replace('_', ' ').title(),
                     'type': field_type,
                     'source': source_name,
-                    'role': _infer_builder_curated_field_role(key, field_type, source_name),
+                    'role': _infer_builder_curated_field_role(key, field_type, role_source_name),
                 }
             )
     return curated_fields
+
+
+def _extract_builder_field_keys(field_defs):
+    keys = set()
+    for field in field_defs:
+        field_payload = field if isinstance(field, dict) else {'key': field}
+        key = field_payload.get('key') or field_payload.get('field_key') or field_payload.get('name')
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _resolve_builder_curated_role_source(key, source_name, metric_keys, dimension_keys):
+    if key in metric_keys:
+        return 'metric'
+    if key in dimension_keys:
+        return 'dimension'
+    return source_name
 
 
 def _serialize_dataset_version_for_report_builder(dataset, dataset_version, variant):
