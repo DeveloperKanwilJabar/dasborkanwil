@@ -349,6 +349,37 @@ def test_start_run_rejects_unpublished_dataset_version():
 
 
 
+def test_dataset_run_submission_source_filter_ignores_dataset_source_type_aliases():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsDatasetRunService
+
+        service = AnalyticsDatasetRunService(dataset_run_repository=StubDatasetRunRepository())
+
+        assert service._resolve_submission_source_type_filter(
+            requested_filters={},
+            source_contract={'source_type': 'submission_fact'},
+            settings_json={'source_type': 'aggregated_submission_fact'},
+        ) is None
+
+
+def test_dataset_run_submission_source_filter_uses_explicit_ingestion_source_type():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsDatasetRunService
+
+        service = AnalyticsDatasetRunService(dataset_run_repository=StubDatasetRunRepository())
+
+        assert service._resolve_submission_source_type_filter(
+            requested_filters={'submission_source_type': 'web-preview'},
+            source_contract={'source_type': 'submission_fact'},
+            settings_json={},
+        ) == 'web-preview'
+
+
+
 def test_execute_run_materializes_submission_rows_into_summary():
     app = create_app('testing')
 

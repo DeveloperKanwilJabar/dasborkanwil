@@ -4,6 +4,7 @@ from flask import Blueprint, current_app, render_template, request, url_for
 
 from app.modules.analytics.services import AnalyticsQueryService
 from app.modules.data_registry.services import DataRegistryService, DataRegistryVersionService
+from app.modules.form.models import Form, FormVersion
 
 
 analytics_web_bp = Blueprint('analytics_web', __name__)
@@ -274,6 +275,36 @@ def _resolve_builder_curated_role_source(key, source_name, metric_keys, dimensio
     return source_name
 
 
+def _serialize_dataset_run_for_report_builder(run):
+    if not run:
+        return None
+    # AnalyticsDatasetRun stores materialized output in `summary_json` and
+    # `result_preview_json`. Older tests/stubs used `result_summary_json`, so
+    # keep that as a compatibility fallback. The item report builder needs real
+    # preview rows here to derive categorical value options such as
+    # status_realisasi -> belum_jalan/proses/selesai.
+    result_summary = (
+        getattr(run, 'summary_json', None)
+        or getattr(run, 'result_summary_json', None)
+        or {}
+    )
+    row_snapshots = (
+        result_summary.get('row_snapshots')
+        or getattr(run, 'result_preview_json', None)
+        or []
+    )
+    return {
+        'id': getattr(run, 'id', None),
+        'status': getattr(run, 'status', None),
+        'result_row_count': getattr(run, 'result_row_count', None),
+        'row_snapshots': row_snapshots[:50],
+        'summary': {
+            'row_count': result_summary.get('row_count'),
+            'completion': result_summary.get('completion') or {},
+        },
+    }
+
+
 def _serialize_dataset_version_for_report_builder(dataset, dataset_version, variant):
     if not dataset_version:
         return None
@@ -284,6 +315,7 @@ def _serialize_dataset_version_for_report_builder(dataset, dataset_version, vari
         'version_number': getattr(dataset_version, 'version_number', None),
         'label': f"{getattr(dataset, 'name', 'Dataset')} — {'Draft' if variant == 'draft' else 'Publish'} v{getattr(dataset_version, 'version_number', '-')}",
         'curated_fields': _build_builder_curated_fields(dataset_version),
+        'latest_run': _serialize_dataset_run_for_report_builder(getattr(dataset_version, 'latest_run', None)),
     }
 
 
@@ -296,9 +328,12 @@ def _build_report_builder_dataset_catalog(dataset_items):
         versions = []
         draft_version = _serialize_dataset_version_for_report_builder(dataset, item.get('draft_version'), 'draft')
         published_version = _serialize_dataset_version_for_report_builder(dataset, item.get('published_version'), 'published')
+        latest_run_payload = _serialize_dataset_run_for_report_builder(item.get('latest_run'))
         if draft_version:
+            draft_version['latest_run'] = draft_version.get('latest_run') or latest_run_payload
             versions.append(draft_version)
         if published_version:
+            published_version['latest_run'] = published_version.get('latest_run') or latest_run_payload
             versions.append(published_version)
         catalog.append(
             {
@@ -313,8 +348,100 @@ def _build_report_builder_dataset_catalog(dataset_items):
     return catalog
 
 
+def _extract_formio_fields(schema):
+    """Ambil field importable dari schema Form.io untuk wizard dataset manusiawi."""
+
+    fields = []
+
+    def walk(components):
+        for component in components or []:
+            if not isinstance(component, dict):
+                continue
+            nested = []
+            nested.extend(component.get('components') or [])
+            for column in component.get('columns') or []:
+                if isinstance(column, dict):
+                    nested.extend(column.get('components') or [])
+            nested.extend((component.get('rows') or []))
+            if nested:
+                # rows pada Form.io bisa list dua dimensi; flatten konservatif.
+                flat_nested = []
+                for item in nested:
+                    if isinstance(item, list):
+                        for subitem in item:
+                            if isinstance(subitem, list):
+                                flat_nested.extend(subitem)
+                            elif isinstance(subitem, dict):
+                                flat_nested.extend(subitem.get('components') or [subitem])
+                    elif isinstance(item, dict):
+                        flat_nested.extend(item.get('components') or [item])
+                walk(flat_nested)
+            key = component.get('key')
+            component_type = component.get('type')
+            if not key or component_type in {'button', 'htmlelement', 'content'}:
+                continue
+            fields.append(
+                {
+                    'key': key,
+                    'label': component.get('label') or key.replace('_', ' ').title(),
+                    'type': component_type or 'string',
+                }
+            )
+
+    walk((schema or {}).get('components') or [])
+    seen = set()
+    unique_fields = []
+    for field in fields:
+        if field['key'] in seen:
+            continue
+        seen.add(field['key'])
+        unique_fields.append(field)
+    return unique_fields
+
+
+def _build_source_form_options():
+    """Menyediakan katalog form published agar dataset builder tidak mulai dari JSON kosong."""
+
+    try:
+        rows = (
+            Form.query.join(FormVersion, FormVersion.form_id == Form.id)
+            .filter(Form.deleted_at == None, FormVersion.deleted_at == None, FormVersion.is_published == True)
+            .order_by(Form.name.asc(), FormVersion.version_number.desc())
+            .all()
+        )
+    except Exception as error:
+        current_app.logger.warning('Gagal memuat source form options untuk dataset builder: %s', str(error))
+        return []
+
+    options = []
+    seen_form_ids = set()
+    for form in rows:
+        if form.id in seen_form_ids:
+            continue
+        seen_form_ids.add(form.id)
+        published_versions = [
+            version for version in getattr(form, 'versions', []) or []
+            if getattr(version, 'is_published', False) and not getattr(version, 'deleted_at', None)
+        ]
+        if not published_versions:
+            continue
+        published_version = sorted(published_versions, key=lambda version: version.version_number, reverse=True)[0]
+        options.append(
+            {
+                'id': form.id,
+                'code': form.code,
+                'name': form.name,
+                'version_id': published_version.id,
+                'version_number': published_version.version_number,
+                'fields': _extract_formio_fields(published_version.schema or {}),
+            }
+        )
+    return options
+
+
 def _build_dataset_builder_options():
     return {
+        'source_form_options': _build_source_form_options(),
         'source_domain_options': [
             ('data_registry', 'Data Registry'),
             ('submission', 'Form Submission'),
@@ -437,10 +564,72 @@ def _serialize_report_viewer_config(report, active_version):
         'supported_period_modes': period_config.get('supported_period_modes') or ['quarterly', 'semester', 'yearly'],
         'quick_presets': period_config.get('quick_presets') or ['current_quarter', 'current_semester', 'current_year'],
         'dataset_contract': structure.get('dataset_contract') or {},
+        'data_sources': structure.get('data_sources') or [],
         'narrative_guidance': getattr(active_version, 'narrative_guidance_json', None) or {},
         'selected_indicator_keys': selected_indicator_keys,
         'selected_indicator_count': len(selected_indicator_keys),
         'blocks': blocks,
+    }
+
+
+def _serialize_dataset_statistics_config(dataset, active_version):
+    curated_fields = _build_builder_curated_fields(active_version) if active_version else []
+    metric_fields = [field for field in curated_fields if field.get('role') == 'metric']
+    dimension_fields = [field for field in curated_fields if field.get('role') == 'dimension']
+    date_fields = [field for field in curated_fields if field.get('role') == 'date']
+    all_field_keys = [field.get('key') for field in curated_fields if field.get('key')]
+    metric_keys = [field.get('key') for field in metric_fields if field.get('key')]
+    dimension_keys = [field.get('key') for field in dimension_fields if field.get('key')]
+    x_key = (date_fields[0].get('key') if date_fields else None) or (dimension_keys[0] if dimension_keys else None) or (all_field_keys[0] if all_field_keys else '')
+    series_keys = metric_keys[:3] or ['total']
+    table_columns = all_field_keys[:8]
+    return {
+        'report_id': None,
+        'report_key': 'dataset-statistics',
+        'report_name': 'Statistik Dataset',
+        'report_family': 'dataset_statistics',
+        'report_version_id': None,
+        'report_version_title': 'Statistik Dataset',
+        'meta_description': 'Statistik dataset menampilkan chart, tabel data hasil run, preset waktu, dan export tanpa bergantung pada report semi-CMS.',
+        'default_period_mode': 'quarterly',
+        'supported_period_modes': ['weekly', 'monthly', 'quarterly', 'semester', 'yearly'],
+        'quick_presets': ['current_week', 'current_month', 'current_quarter', 'current_semester', 'current_year', 'full_range'],
+        'dataset_contract': {
+            'dataset_id': getattr(dataset, 'id', None),
+            'dataset_key': getattr(dataset, 'dataset_key', None),
+            'dataset_version_id': getattr(active_version, 'id', None),
+            'dataset_version_number': getattr(active_version, 'version_number', None),
+            'curated_fields': curated_fields,
+            'run_binding': {
+                'dataset_id': getattr(dataset, 'id', None),
+                'dataset_key': getattr(dataset, 'dataset_key', None),
+                'dataset_version_id': getattr(active_version, 'id', None),
+                'dataset_version_number': getattr(active_version, 'version_number', None),
+                'selection_mode': 'latest_succeeded_run',
+            },
+        },
+        'data_sources': [
+            {
+                'alias': 'primary',
+                'label': getattr(dataset, 'name', None) or 'Dataset utama',
+                'dataset_id': getattr(dataset, 'id', None),
+                'dataset_key': getattr(dataset, 'dataset_key', None),
+                'dataset_name': getattr(dataset, 'name', None),
+                'dataset_version_id': getattr(active_version, 'id', None),
+                'dataset_version_number': getattr(active_version, 'version_number', None),
+                'selection_mode': 'latest_succeeded_run',
+                'curated_fields': curated_fields,
+            }
+        ] if dataset and active_version else [],
+        'narrative_guidance': {},
+        'selected_indicator_keys': sorted(set(metric_keys or all_field_keys)),
+        'selected_indicator_count': len(set(metric_keys or all_field_keys)),
+        'blocks': [
+            {'type': 'metric_cards', 'title': 'KPI Statistik Dataset', 'data_source_alias': 'primary', 'order': 1, 'config': {'metric_keys': metric_keys[:4] or ['total']}},
+            {'type': 'plotly_timeseries', 'title': 'Chart Dataset', 'data_source_alias': 'primary', 'order': 2, 'config': {'x_key': x_key, 'series': [{'key': key, 'label': key.replace('_', ' ').title(), 'aggregation': 'sum'} for key in series_keys]}},
+            {'type': 'detail_table', 'title': 'Tabel Data Hasil Run', 'data_source_alias': 'primary', 'order': 3, 'config': {'column_keys': table_columns}},
+            {'type': 'narrative', 'title': 'Narasi Statistik Otomatis', 'data_source_alias': 'primary', 'order': 4, 'config': {'focus_field_keys': metric_keys[:3] or ['total'], 'source_mode': 'auto_summary'}},
+        ],
     }
 
 
@@ -659,7 +848,7 @@ def analytics_dataset_workspace(dataset_id):
         versions=(workspace or {}).get('versions') or [],
         runs=(workspace or {}).get('runs') or [],
         latest_run=latest_run,
-        linked_report_item=linked_report_item,
+        linked_report_item=None,
         linked_registries=linked_registry_items,
         error_message=error_message,
     )
@@ -719,6 +908,64 @@ def analytics_report_create():
     )
 
 
+@analytics_web_bp.route('/analytics/datasets/<int:dataset_id>/report', methods=['GET'])
+def analytics_dataset_report_builder(dataset_id):
+    """Shortcut lama dari dataset menuju Builder Report multi dataset dengan source awal terpilih."""
+
+    builder_options = _build_report_builder_options()
+    dataset_items = []
+    preselected_dataset = None
+    workspace = None
+    error_message = None
+
+    try:
+        query_service = AnalyticsQueryService()
+        dataset_items = query_service.list_datasets()
+        preselected_dataset = next(
+            (item for item in dataset_items if getattr(item.get('dataset'), 'id', None) == dataset_id),
+            None,
+        )
+        linked_report_item = next(
+            (
+                item for item in query_service.list_reports()
+                if getattr(item.get('report'), 'dataset_id', None) == dataset_id
+            ),
+            None,
+        )
+        if linked_report_item and linked_report_item.get('report'):
+            workspace = query_service.get_report_workspace(linked_report_item['report'].id)
+    except ValueError as error:
+        error_message = str(error)
+    except Exception as error:
+        current_app.logger.error('Analytics dataset report builder shortcut error: %s', str(error))
+        error_message = 'Gagal memuat builder report dataset.'
+
+    if workspace:
+        return render_template(
+            'pages/analytics/report_form.html',
+            page_mode='edit',
+            report=workspace.get('report'),
+            active_version=workspace.get('draft_version') or workspace.get('published_version'),
+            dataset_items=dataset_items,
+            builder_dataset_catalog=_build_report_builder_dataset_catalog(dataset_items),
+            preselected_dataset=preselected_dataset,
+            builder_options=builder_options,
+            error_message=error_message,
+        )
+
+    return render_template(
+        'pages/analytics/report_form.html',
+        page_mode='create',
+        report=None,
+        active_version=None,
+        dataset_items=dataset_items,
+        builder_dataset_catalog=_build_report_builder_dataset_catalog(dataset_items),
+        preselected_dataset=preselected_dataset,
+        builder_options=builder_options,
+        error_message=error_message,
+    )
+
+
 @analytics_web_bp.route('/analytics/reports/<int:report_definition_id>/edit', methods=['GET'])
 def analytics_report_edit(report_definition_id):
     """Menampilkan builder edit report semi-CMS yang terhubung eksplisit ke dataset."""
@@ -751,9 +998,51 @@ def analytics_report_edit(report_definition_id):
     )
 
 
-@analytics_web_bp.route('/analytics/datasets/<int:dataset_id>/report', methods=['GET'])
-def analytics_dataset_report(dataset_id):
-    """Menampilkan report viewer manusiawi berbasis dataset analytics, bukan langsung dari registry."""
+@analytics_web_bp.route('/analytics/reports/<int:report_definition_id>/items/<int:item_id>/edit', methods=['GET'])
+def analytics_report_item_edit(report_definition_id, item_id):
+    """Menampilkan editor item/indikator report: dataset, metric capaian, target, chart, tabel, dan manual input."""
+
+    error_message = None
+    workspace = None
+    dataset_items = []
+    builder_options = _build_report_builder_options()
+
+    try:
+        query_service = AnalyticsQueryService()
+        workspace = query_service.get_report_workspace(report_definition_id)
+        dataset_items = query_service.list_datasets()
+    except ValueError as error:
+        error_message = str(error)
+    except Exception as error:
+        current_app.logger.error('Analytics report item edit page error: %s', str(error))
+        error_message = 'Gagal memuat editor item report analytics.'
+
+    active_version = (workspace or {}).get('draft_version') or (workspace or {}).get('published_version')
+    structure = getattr(active_version, 'structure_json', None) or {}
+    report_items = structure.get('report_items') or []
+    zero_based_index = max((item_id or 1) - 1, 0)
+    report_item = report_items[zero_based_index] if zero_based_index < len(report_items) else {
+        'name': f'Indikator {item_id}',
+        'item_key': f'indikator-{item_id}',
+        'datasets': [],
+    }
+
+    return render_template(
+        'pages/analytics/report_item_form.html',
+        report=(workspace or {}).get('report'),
+        active_version=active_version,
+        report_item=report_item,
+        item_index=zero_based_index,
+        dataset_items=dataset_items,
+        builder_dataset_catalog=_build_report_builder_dataset_catalog(dataset_items),
+        builder_options=builder_options,
+        error_message=error_message,
+    )
+
+
+@analytics_web_bp.route('/analytics/datasets/<int:dataset_id>/statistics', methods=['GET'])
+def analytics_dataset_statistics(dataset_id):
+    """Menampilkan statistik dataset: chart, tabel data, export, dan preset waktu."""
 
     error_message = None
     workspace = None
@@ -782,8 +1071,8 @@ def analytics_dataset_report(dataset_id):
     except ValueError as error:
         error_message = str(error)
     except Exception as error:
-        current_app.logger.error('Analytics dataset report error: %s', str(error))
-        error_message = 'Gagal memuat report dataset analytics.'
+        current_app.logger.error('Analytics dataset statistics error: %s', str(error))
+        error_message = 'Gagal memuat statistik dataset analytics.'
 
     dataset = (workspace or {}).get('dataset')
     draft_version = (workspace or {}).get('draft_version')
@@ -801,12 +1090,9 @@ def analytics_dataset_report(dataset_id):
             'latest_run': None,
         }
 
-    active_report_version = _get_active_report_version(linked_report_item)
+    active_report_version = None
     report_viewer_options = _build_report_viewer_options()
-    report_config = _serialize_report_viewer_config(
-        linked_report_item.get('report') if linked_report_item else None,
-        active_report_version,
-    ) if linked_report_item and active_report_version else None
+    report_config = _serialize_dataset_statistics_config(dataset, active_version)
 
     workspace_config = {
         'analyticsDatasetsUrl': url_for('api_analytics_v1.list_dataset_definitions'),
@@ -819,7 +1105,7 @@ def analytics_dataset_report(dataset_id):
     }
 
     return render_template(
-        'pages/analytics/detail_report.html',
+        'pages/analytics/dataset_statistics.html',
         dataset=dataset,
         active_version=active_version,
         linked_registries=linked_registry_items,
@@ -828,7 +1114,7 @@ def analytics_dataset_report(dataset_id):
         related_dataset_items=[dataset_item] if dataset_item else [],
         related_dataset_count=1 if dataset_item else 0,
         primary_dataset=dataset,
-        linked_report_item=linked_report_item,
+        linked_report_item=None,
         active_report_version=active_report_version,
         report_config=report_config,
         report_viewer_options=report_viewer_options,

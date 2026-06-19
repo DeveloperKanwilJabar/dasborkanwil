@@ -20,6 +20,7 @@
 {% set freshness_source_options = builder_options.get('freshness_source_options', []) %}
 {% set freshness_strategy_options = builder_options.get('freshness_strategy_options', []) %}
 {% set reporting_year_mode_options = builder_options.get('reporting_year_mode_options', []) %}
+{% set source_form_options = builder_options.get('source_form_options', []) %}
 
 {% block content %}
 <div class="main-content">
@@ -35,8 +36,8 @@
           <div class="page-title-right d-flex gap-2">
             <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-light">Kembali ke katalog</a>
             {% if dataset %}
-            <a href="{{ url_for('analytics_web.analytics_dataset_workspace', dataset_id=dataset.id) }}" class="btn btn-soft-primary">Workspace Dataset</a>
-            <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=dataset.id) }}" class="btn btn-primary">Buka Report</a>
+            <a href="{{ url_for('analytics_web.analytics_dataset_workspace', dataset_id=dataset.id) }}" class="btn btn-soft-primary">Detail Dataset</a>
+            <a href="{{ url_for('analytics_web.analytics_dataset_statistics', dataset_id=dataset.id) }}" class="btn btn-primary">Statistik Dataset</a>
             {% endif %}
           </div>
         </div>
@@ -46,6 +47,7 @@
     {% if error_message %}
     <div class="alert alert-danger">{{ error_message }}</div>
     {% endif %}
+    <div id="analyticsDatasetFormAlert" class="alert d-none" role="alert"></div>
 
     <div class="row g-3 mb-3">
       <div class="col-xl-3 col-md-6">
@@ -94,6 +96,17 @@
           </div>
           <div class="card-body">
             <form id="analyticsDatasetBuilderForm">
+              <div class="alert alert-primary border-0 bg-primary-subtle text-primary" id="datasetWizardIntro">
+                <div class="d-flex align-items-start gap-3">
+                  <div class="avatar-sm flex-shrink-0">
+                    <span class="avatar-title rounded-circle bg-primary text-white"><i class="ri-magic-line"></i></span>
+                  </div>
+                  <div>
+                    <h5 class="mb-1">Dataset Wizard Manusiawi</h5>
+                    <p class="mb-0 text-muted">Mulai dari pilih source form, centang field, tentukan Role Field, lalu klik <strong>Bangun Contract Otomatis</strong>. JSON teknis tetap tersedia di Advanced JSON Contract untuk debugging, bukan jalur utama kerja harian.</p>
+                  </div>
+                </div>
+              </div>
               <div class="row g-3">
                 <div class="col-lg-6">
                   <label class="form-label">Dataset Key</label>
@@ -149,6 +162,28 @@
                   <label class="form-label">Primary Source Ref</label>
                   <input class="form-control" name="primary_source_ref" value="{{ dataset.primary_source_ref if dataset else '' }}" placeholder="form_code / registry_code / hybrid_ref">
                 </div>
+                <div class="col-12">
+                  <div class="card border border-info-subtle bg-info-subtle mb-0">
+                    <div class="card-body">
+                      <div class="row g-3 align-items-end">
+                        <div class="col-lg-7">
+                          <label class="form-label fw-semibold">Pilih Source Form</label>
+                          <select class="form-select" id="analyticsSourceFormPicker">
+                            <option value="">Pilih form published untuk auto-field...</option>
+                            {% for form_option in source_form_options %}
+                            <option value="{{ form_option.code }}" data-form-name="{{ form_option.name }}" data-form-version-id="{{ form_option.version_id }}" data-fields='{{ form_option.fields | tojson }}'>{{ form_option.name }} · {{ form_option.code }} · v{{ form_option.version_number }}</option>
+                            {% endfor %}
+                          </select>
+                          <div class="form-text">Untuk kasus bro: pilih form seperti <code>MTRX-F3-DIVPH</code>, wizard akan mengisi source ref dan daftar field awal.</div>
+                        </div>
+                        <div class="col-lg-5">
+                          <label class="form-label fw-semibold">Quick Guide</label>
+                          <div class="small text-muted">Kalau katalog form belum muncul, isi <strong>Primary Source Ref</strong> dan <strong>Selected Fields</strong> manual dulu; Field Picker tetap bisa dipakai untuk role metric/dimension.</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 <div class="col-lg-6">
                   <label class="form-label">Submission Refs</label>
                   <textarea class="form-control" rows="2" name="submission_refs_csv" placeholder="Pisahkan dengan koma">{{ (source_contract.get('submission_refs', []) or []) | join(', ') }}</textarea>
@@ -161,6 +196,38 @@
                   <label class="form-label">Selected Fields</label>
                   <textarea class="form-control" rows="4" name="selected_fields_csv" placeholder="nama_indikator, tipe_perhitungan, target_capaian, nilai_realisasi, reporting_year">{{ (source_contract.get('selected_fields', []) or []) | join(', ') }}</textarea>
                   <div class="form-text">Field ini adalah field kurasi yang nanti masuk ke dataset contract, bukan seluruh field mentah dari submissions/registry.</div>
+                </div>
+                <div class="col-12">
+                  <div class="card border shadow-none mb-0" id="datasetFieldPickerCard">
+                    <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+                      <div>
+                        <h5 class="card-title mb-1">Field Picker</h5>
+                        <p class="text-muted mb-0 small">Pilih field yang mau masuk report, lalu tentukan <strong>Role Field</strong>: dimensi, metric, tanggal, geo, atau narasi.</p>
+                      </div>
+                      <button type="button" class="btn btn-soft-primary btn-sm" id="buildDatasetContractButton"><i class="ri-flashlight-line align-bottom me-1"></i> Bangun Contract Otomatis</button>
+                    </div>
+                    <div class="card-body">
+                      <div class="row g-2 mb-3">
+                        <div class="col-md-8">
+                          <input type="text" class="form-control" id="datasetFieldAddInput" placeholder="Tambah field manual, contoh: jumlah_dokumen">
+                        </div>
+                        <div class="col-md-4 d-grid">
+                          <button type="button" class="btn btn-light" id="datasetFieldAddButton">Tambah Field</button>
+                        </div>
+                      </div>
+                      <div id="datasetFieldPickerList" class="vstack gap-2"></div>
+                      <div class="alert alert-warning mt-3 mb-0 small" id="datasetMetricHint">Minimal satu field harus berperan sebagai metric agar draft dataset siap disimpan/publish.</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex align-items-center justify-content-between mt-2">
+                    <div>
+                      <h5 class="mb-1">Advanced JSON Contract</h5>
+                      <p class="text-muted small mb-0">Area ini otomatis diisi dari Field Picker. Edit manual hanya jika perlu debugging/override teknis.</p>
+                    </div>
+                    <span class="badge bg-light text-muted">Auto-sync dari wizard</span>
+                  </div>
                 </div>
                 <div class="col-12">
                   <label class="form-label">Source Field Map (JSON)</label>
@@ -261,7 +328,7 @@
                 <button type="submit" class="btn btn-primary" id="analyticsDatasetSaveButton">Simpan Draft Dataset</button>
                 <button type="button" class="btn btn-success" id="analyticsDatasetPublishButton" {% if not active_version %}disabled{% endif %}>Publish Draft</button>
                 {% if dataset %}
-                <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=dataset.id) }}" class="btn btn-soft-info">Lanjut ke Report</a>
+                <a href="{{ url_for('analytics_web.analytics_dataset_statistics', dataset_id=dataset.id) }}" class="btn btn-soft-info">Lanjut ke Statistik Dataset</a>
                 {% endif %}
               </div>
             </form>
@@ -332,7 +399,7 @@
 </div>
 {% endblock %}
 
-{% block script %}
+{% block extra_js %}
 <script>
 (function () {
   const form = document.getElementById('analyticsDatasetBuilderForm');
@@ -344,12 +411,45 @@
   const publishButton = document.getElementById('analyticsDatasetPublishButton');
   const resultCard = document.getElementById('analyticsDatasetBuilderResultCard');
   const resultNode = document.getElementById('analyticsDatasetBuilderResult');
+  const alertNode = document.getElementById('analyticsDatasetFormAlert');
   const pageMode = {{ page_mode | tojson }};
   const datasetId = {{ (dataset.id if dataset else None) | tojson }};
   const activeVersionId = {{ (active_version.id if active_version else None) | tojson }};
   const createUrl = {{ url_for('api_analytics_v1.create_dataset_definition') | tojson }};
   const updateUrl = datasetId ? `/api/v1/analytics/datasets/${datasetId}` : null;
   const publishUrl = activeVersionId ? `/api/v1/analytics/dataset-versions/${activeVersionId}/publish` : null;
+  const sourceFormPicker = document.getElementById('analyticsSourceFormPicker');
+  const fieldPickerList = document.getElementById('datasetFieldPickerList');
+  const fieldAddInput = document.getElementById('datasetFieldAddInput');
+  const fieldAddButton = document.getElementById('datasetFieldAddButton');
+  const buildContractButton = document.getElementById('buildDatasetContractButton');
+  const metricHint = document.getElementById('datasetMetricHint');
+  const fieldRoleOptions = [
+    ['dimension', 'Dimensi / Filter'],
+    ['metric', 'Metric / Angka KPI'],
+    ['date', 'Tanggal / Periode'],
+    ['geo_latitude', 'Geo Latitude'],
+    ['geo_longitude', 'Geo Longitude'],
+    ['narrative', 'Narasi / Catatan'],
+    ['skip', 'Jangan dipakai']
+  ];
+
+  function showFormMessage(message, type = 'danger') {
+    if (!alertNode) {
+      return;
+    }
+    alertNode.className = `alert alert-${type}`;
+    alertNode.textContent = message;
+    alertNode.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function clearFormMessage() {
+    if (!alertNode) {
+      return;
+    }
+    alertNode.className = 'alert d-none';
+    alertNode.textContent = '';
+  }
 
   function parseCsv(value) {
     return (value || '')
@@ -358,15 +458,173 @@
       .filter(Boolean);
   }
 
+  function getFieldLabel(name) {
+    const field = form.elements[name];
+    if (!field) {
+      return name;
+    }
+    const wrapper = field.closest('.col-12, .col-lg-6, .col-lg-4');
+    const label = wrapper ? wrapper.querySelector('.form-label') : null;
+    return label ? label.textContent.trim() : name;
+  }
+
   function parseJson(name, fallback) {
     const raw = form.elements[name].value.trim();
     if (!raw) {
       return fallback;
     }
-    return JSON.parse(raw);
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      const label = getFieldLabel(name);
+      throw new Error(`${label} belum valid JSON: ${error.message}`);
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function titleizeField(key) {
+    return String(key || '')
+      .replace(/[._-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  function inferFieldRole(field) {
+    const key = String(field?.key || '').toLowerCase();
+    const type = String(field?.type || '').toLowerCase();
+    if (key.includes('latitude') || key === 'lat') return 'geo_latitude';
+    if (key.includes('longitude') || key === 'lng' || key === 'lon') return 'geo_longitude';
+    if (key.includes('tanggal') || key.includes('date') || key.includes('periode') || type.includes('datetime')) return 'date';
+    if (key.includes('jumlah') || key.includes('total') || key.includes('nilai') || key.includes('target') || key.includes('realisasi') || key.includes('capaian') || key.includes('persen') || key.includes('pct') || ['number', 'currency'].includes(type)) return 'metric';
+    if (key.includes('catatan') || key.includes('keterangan') || key.includes('narasi') || type === 'textarea') return 'narrative';
+    return 'dimension';
+  }
+
+  function collectExistingFieldMeta() {
+    const meta = new Map();
+    const dimensions = parseJson('dimension_definitions_json', []);
+    const metrics = parseJson('metric_definitions_json', []);
+    const outputSchema = parseJson('output_schema_json', []);
+    outputSchema.forEach((item) => {
+      if (item && item.key) meta.set(item.key, { ...item, role: item.role || inferFieldRole(item) });
+    });
+    dimensions.forEach((item) => {
+      if (item && item.key) meta.set(item.key, { ...meta.get(item.key), ...item, role: item.role || 'dimension' });
+    });
+    metrics.forEach((item) => {
+      if (item && item.key) meta.set(item.key, { ...meta.get(item.key), ...item, role: item.role || 'metric' });
+    });
+    return meta;
+  }
+
+  function getFieldRowsFromCsv() {
+    const existingMeta = collectExistingFieldMeta();
+    return parseCsv(form.elements.selected_fields_csv.value).map((key) => {
+      const meta = existingMeta.get(key) || {};
+      return {
+        key,
+        label: meta.label || titleizeField(key),
+        type: meta.type || 'string',
+        role: meta.role || inferFieldRole({ key, type: meta.type })
+      };
+    });
+  }
+
+  function renderDatasetFieldCards(fields = null) {
+    if (!fieldPickerList) return;
+    const rows = fields || getFieldRowsFromCsv();
+    fieldPickerList.innerHTML = '';
+    if (!rows.length) {
+      fieldPickerList.innerHTML = '<div class="text-muted small border rounded p-3">Belum ada field. Pilih source form atau tambah field manual dulu bro.</div>';
+      if (metricHint) metricHint.classList.remove('d-none');
+      return;
+    }
+    rows.forEach((field) => {
+      const role = field.role || inferFieldRole(field);
+      const item = document.createElement('div');
+      item.className = 'border rounded p-3 js-dataset-field-card';
+      item.dataset.fieldKey = field.key;
+      item.dataset.fieldLabel = field.label || titleizeField(field.key);
+      item.dataset.fieldType = field.type || 'string';
+      const displayLabel = escapeHtml(item.dataset.fieldLabel);
+      const displayKey = escapeHtml(field.key);
+      const displayType = escapeHtml(item.dataset.fieldType);
+      item.innerHTML = `
+        <div class="row g-2 align-items-center">
+          <div class="col-lg-4">
+            <div class="fw-semibold">${displayLabel}</div>
+            <code class="small">${displayKey}</code>
+          </div>
+          <div class="col-lg-3">
+            <label class="form-label small mb-1">Tipe Data</label>
+            <input type="text" class="form-control form-control-sm js-dataset-field-type" value="${displayType}">
+          </div>
+          <div class="col-lg-4">
+            <label class="form-label small mb-1">Role Field</label>
+            <select class="form-select form-select-sm js-dataset-field-role">
+              ${fieldRoleOptions.map(([value, label]) => `<option value="${escapeHtml(value)}"${value === role ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-lg-1 d-grid">
+            <button type="button" class="btn btn-sm btn-light js-remove-dataset-field" title="Hapus field"><i class="ri-close-line"></i></button>
+          </div>
+        </div>`;
+      fieldPickerList.appendChild(item);
+    });
+    syncContractFromFieldCards({ silent: true });
+  }
+
+  function syncContractFromFieldCards(options = {}) {
+    if (!fieldPickerList) return;
+    const cards = Array.from(fieldPickerList.querySelectorAll('.js-dataset-field-card'));
+    const selectedFields = [];
+    const dimensions = [];
+    const metrics = [];
+    const outputSchema = [];
+    cards.forEach((card) => {
+      const key = card.dataset.fieldKey;
+      const label = card.dataset.fieldLabel || titleizeField(key);
+      const type = card.querySelector('.js-dataset-field-type')?.value?.trim() || card.dataset.fieldType || 'string';
+      const role = card.querySelector('.js-dataset-field-role')?.value || inferFieldRole({ key, type });
+      if (!key || role === 'skip') return;
+      selectedFields.push(key);
+      const field = { key, label, type, role };
+      outputSchema.push(field);
+      if (role === 'metric') metrics.push({ key, label, type });
+      if (['dimension', 'date', 'geo_latitude', 'geo_longitude', 'narrative'].includes(role)) dimensions.push({ key, label, type, role });
+    });
+    form.elements.selected_fields_csv.value = selectedFields.join(', ');
+    form.elements.dimension_definitions_json.value = JSON.stringify(dimensions, null, 2);
+    form.elements.metric_definitions_json.value = JSON.stringify(metrics, null, 2);
+    form.elements.output_schema_json.value = JSON.stringify(outputSchema, null, 2);
+    if (metricHint) metricHint.classList.toggle('d-none', metrics.length > 0);
+    if (!options.silent) showFormMessage('Dataset contract sudah dibangun dari Field Picker.', 'success');
+  }
+
+  function addDatasetField(field) {
+    const rows = getFieldRowsFromCsv();
+    if (!field?.key || rows.some((item) => item.key === field.key)) return;
+    rows.push({
+      key: field.key,
+      label: field.label || titleizeField(field.key),
+      type: field.type || 'string',
+      role: field.role || inferFieldRole(field)
+    });
+    form.elements.selected_fields_csv.value = rows.map((item) => item.key).join(', ');
+    renderDatasetFieldCards(rows);
   }
 
   function buildPayload() {
+    syncContractFromFieldCards({ silent: true });
     return {
       dataset: {
         dataset_key: form.elements.dataset_key.value.trim(),
@@ -420,7 +678,12 @@
       },
       body: JSON.stringify(payload)
     });
-    const result = await response.json();
+    let result = null;
+    try {
+      result = await response.json();
+    } catch (error) {
+      throw new Error(`Server mengembalikan response yang bukan JSON (HTTP ${response.status}). Cek log aplikasi.`);
+    }
     resultCard.classList.remove('d-none');
     resultNode.textContent = JSON.stringify(result, null, 2);
     if (!response.ok || result.success === false) {
@@ -429,21 +692,98 @@
     return result;
   }
 
+  function wireDatasetFieldPicker() {
+    renderDatasetFieldCards();
+
+    if (sourceFormPicker) {
+      sourceFormPicker.addEventListener('change', function () {
+        const selected = sourceFormPicker.selectedOptions[0];
+        if (!selected || !selected.value) return;
+        let fields = [];
+        try {
+          fields = JSON.parse(selected.dataset.fields || '[]');
+        } catch (error) {
+          showFormMessage('Daftar field source form tidak bisa dibaca. Cek schema form published.', 'danger');
+          return;
+        }
+        form.elements.source_domain.value = 'submission';
+        form.elements.source_type.value = 'submission_fact';
+        form.elements.primary_source_ref.value = selected.value;
+        form.elements.submission_refs_csv.value = selected.value;
+        const fieldRows = fields.map((field) => ({
+          key: field.key,
+          label: field.label || titleizeField(field.key),
+          type: field.type || 'string',
+          role: inferFieldRole(field)
+        }));
+        form.elements.selected_fields_csv.value = fieldRows.map((field) => field.key).join(', ');
+        form.elements.source_field_map_json.value = JSON.stringify(
+          fieldRows.reduce((mapping, field) => {
+            mapping[field.key] = field.key;
+            return mapping;
+          }, {}),
+          null,
+          2
+        );
+        renderDatasetFieldCards(fieldRows);
+        showFormMessage(`Source form ${selected.value} dipilih. Field sudah ditarik ke Field Picker.`, 'success');
+      });
+    }
+
+    if (fieldAddButton && fieldAddInput) {
+      fieldAddButton.addEventListener('click', function () {
+        const key = fieldAddInput.value.trim();
+        if (!key) return;
+        addDatasetField({ key, label: titleizeField(key), type: 'string' });
+        fieldAddInput.value = '';
+      });
+      fieldAddInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          fieldAddButton.click();
+        }
+      });
+    }
+
+    if (fieldPickerList) {
+      fieldPickerList.addEventListener('change', function (event) {
+        if (event.target.matches('.js-dataset-field-role, .js-dataset-field-type')) {
+          syncContractFromFieldCards({ silent: true });
+        }
+      });
+      fieldPickerList.addEventListener('click', function (event) {
+        const removeButton = event.target.closest('.js-remove-dataset-field');
+        if (!removeButton) return;
+        removeButton.closest('.js-dataset-field-card')?.remove();
+        syncContractFromFieldCards({ silent: true });
+      });
+    }
+
+    if (buildContractButton) {
+      buildContractButton.addEventListener('click', function () {
+        syncContractFromFieldCards({ silent: false });
+      });
+    }
+  }
+
+  wireDatasetFieldPicker();
+
   form.addEventListener('submit', async function (event) {
     event.preventDefault();
+    clearFormMessage();
     saveButton.disabled = true;
     saveButton.textContent = 'Menyimpan...';
     try {
       const result = await submitPayload(pageMode === 'create' ? createUrl : updateUrl, pageMode === 'create' ? 'POST' : 'PUT');
-      alert(result.message || 'Dataset berhasil disimpan.');
+      showFormMessage(result.message || 'Dataset berhasil disimpan.', 'success');
       const savedDatasetId = result?.data?.dataset?.id;
       if (pageMode === 'create' && savedDatasetId) {
         window.location.href = `/analytics/datasets/${savedDatasetId}/edit`;
         return;
       }
-      window.location.reload();
+      window.setTimeout(() => window.location.reload(), 700);
     } catch (error) {
-      alert(error.message || 'Gagal menyimpan dataset.');
+      showFormMessage(error.message || 'Gagal menyimpan dataset.', 'danger');
     } finally {
       saveButton.disabled = false;
       saveButton.textContent = 'Simpan Draft Dataset';
@@ -453,7 +793,7 @@
   if (publishButton) {
     publishButton.addEventListener('click', async function () {
       if (!publishUrl) {
-        alert('Draft version belum tersedia untuk dipublish. Simpan draft dulu bro.');
+        showFormMessage('Draft version belum tersedia untuk dipublish. Simpan draft dulu bro.', 'warning');
         return;
       }
       publishButton.disabled = true;
@@ -467,16 +807,21 @@
           },
           body: JSON.stringify({})
         });
-        const result = await response.json();
+        let result = null;
+        try {
+          result = await response.json();
+        } catch (error) {
+          throw new Error(`Server mengembalikan response publish yang bukan JSON (HTTP ${response.status}). Cek log aplikasi.`);
+        }
         resultCard.classList.remove('d-none');
         resultNode.textContent = JSON.stringify(result, null, 2);
         if (!response.ok || result.success === false) {
           throw new Error(result.message || 'Publish gagal diproses.');
         }
-        alert(result.message || 'Draft version berhasil dipublish.');
-        window.location.reload();
+        showFormMessage(result.message || 'Draft version berhasil dipublish.', 'success');
+        window.setTimeout(() => window.location.reload(), 700);
       } catch (error) {
-        alert(error.message || 'Gagal publish dataset version.');
+        showFormMessage(error.message || 'Gagal publish dataset version.', 'danger');
       } finally {
         publishButton.disabled = false;
         publishButton.textContent = 'Publish Draft';

@@ -5,6 +5,7 @@ Modul ini mengelola dataset analytics, run dataset, definisi report, indikator, 
 import uuid
 from collections import Counter, defaultdict
 from datetime import datetime
+from types import SimpleNamespace
 
 from app.core.extensions import db
 from app.core.services.base import BaseService
@@ -105,6 +106,15 @@ class AnalyticsDatasetService(BaseService):
 
         dataset_payload = self._extract_dataset_payload(data)
         version_payload = self._extract_version_payload(data, dataset_payload=dataset_payload)
+        normalized_dataset = self._normalize_dataset_payload(dataset_payload)
+        self._normalize_dataset_version_payload(
+            SimpleNamespace(
+                source_domain=normalized_dataset['source_domain'],
+                source_type=normalized_dataset['source_type'],
+                primary_source_ref=normalized_dataset['primary_source_ref'],
+            ),
+            version_payload,
+        )
         dataset = self.create_dataset(dataset_payload, actor=actor)
         draft_version = self.create_dataset_version(dataset.id, version_payload, actor=actor)
         return {
@@ -801,9 +811,16 @@ class AnalyticsDatasetRunService(BaseService):
         if requested_reporting_year:
             query = query.filter(Submission.reporting_year == requested_reporting_year)
 
-        source_type = requested_filters.get('source_type') or source_contract.get('source_type') or settings_json.get('source_type')
-        if source_type:
-            query = query.filter(Submission.source_type == source_type)
+        submission_source_type = self._resolve_submission_source_type_filter(
+            requested_filters=requested_filters,
+            source_contract=source_contract,
+            settings_json=settings_json,
+        )
+        if submission_source_type:
+            if isinstance(submission_source_type, (list, tuple, set)):
+                query = query.filter(Submission.source_type.in_(list(submission_source_type)))
+            else:
+                query = query.filter(Submission.source_type == submission_source_type)
 
         submissions = query.order_by(Submission.submitted_at.asc(), Submission.id.asc()).all()
         rows = [
@@ -822,6 +839,31 @@ class AnalyticsDatasetRunService(BaseService):
         }
 
         return rows, source_snapshot
+
+    def _resolve_submission_source_type_filter(self, requested_filters=None, source_contract=None, settings_json=None):
+        """Ambil filter ingestion source_type hanya dari key eksplisit.
+
+        `source_type` pada analytics dataset/source contract menjelaskan jenis dataset
+        seperti `submission_fact`, bukan nilai `submissions.source_type` seperti
+        `web-preview` atau `excel_import`. Jika dipakai langsung sebagai filter,
+        dataset run bisa sukses tetapi menghasilkan 0 row.
+        """
+
+        requested_filters = requested_filters or {}
+        source_contract = source_contract or {}
+        settings_json = settings_json or {}
+        candidates = []
+        for payload in (requested_filters, source_contract, settings_json):
+            for key in ('submission_source_type', 'submission_source_types', 'ingestion_source_type', 'ingestion_source_types'):
+                value = payload.get(key)
+                if value not in (None, '', []):
+                    candidates.append(value)
+        if not candidates:
+            return None
+        value = candidates[0]
+        if isinstance(value, str) and ',' in value:
+            return [item.strip() for item in value.split(',') if item.strip()]
+        return value
 
     def _resolve_dataset_form_refs(self, dataset, dataset_version):
         """Menggabungkan referensi form eksplisit dari dataset/settings/source contract."""
@@ -1290,8 +1332,8 @@ class AnalyticsReportService(BaseService):
         version = self.version_repository.get_by_id(version_id)
         if not version:
             raise ValueError('Analytics report version tidak ditemukan.')
-        if not getattr(version, 'dataset_version_id', None):
-            raise ValueError('Report version wajib terhubung ke dataset version sebelum dipublish.')
+        if not self._report_version_has_dataset_binding(version):
+            raise ValueError('Report version wajib memiliki minimal satu dataset source sebelum dipublish.')
 
         try:
             self.version_repository.archive_published_others(
@@ -1410,8 +1452,15 @@ class AnalyticsReportService(BaseService):
         report_settings = getattr(report, 'settings_json', None) or {}
         report_family = data.get('report_family') or report_settings.get('report_family') or 'custom'
         family_defaults = self.REPORT_FAMILY_DEFAULTS.get(report_family, self.REPORT_FAMILY_DEFAULTS['custom'])
-        blocks = self._coerce_list(data.get('blocks') or structure_json.get('blocks') or structure_json.get('block_definitions'))
-        if not blocks:
+        explicit_blocks_supplied = 'blocks' in data
+        if explicit_blocks_supplied:
+            blocks = self._coerce_list(data.get('blocks'))
+        elif 'blocks' in structure_json:
+            blocks = self._coerce_list(structure_json.get('blocks'))
+        else:
+            blocks = self._coerce_list(structure_json.get('block_definitions'))
+
+        if not blocks and not explicit_blocks_supplied:
             dataset = getattr(report, 'dataset', None)
             dataset_settings = getattr(dataset, 'settings_json', None) or {}
             suggested_blocks = self._coerce_list(dataset_settings.get('suggested_report_blocks'))
@@ -1430,16 +1479,16 @@ class AnalyticsReportService(BaseService):
                 if isinstance(block, str):
                     normalized_blocks.append({'type': block, 'title': block.replace('_', ' ').title(), 'order': index, 'config': {}})
                 elif isinstance(block, dict):
-                    normalized_blocks.append({
+                    block_payload = {
                         'type': block.get('type') or block.get('block_type') or f'block_{index}',
                         'title': block.get('title') or block.get('label') or f'Block {index}',
                         'order': block.get('order', index),
                         'config': self._coerce_dict(block.get('config'), {}),
-                    })
+                    }
+                    if block.get('data_source_alias') or block.get('source_alias'):
+                        block_payload['data_source_alias'] = block.get('data_source_alias') or block.get('source_alias')
+                    normalized_blocks.append(block_payload)
             blocks = normalized_blocks
-        if not blocks:
-            raise ValueError('Report builder wajib memiliki minimal satu block.')
-
         period_config = self._coerce_dict(data.get('period_preset_config'), structure_json.get('period_preset_config') or {})
         supported_period_modes = self._coerce_list(data.get('supported_period_modes') or period_config.get('supported_period_modes'))
         quick_presets = self._coerce_list(data.get('quick_presets') or period_config.get('quick_presets'))
@@ -1451,6 +1500,7 @@ class AnalyticsReportService(BaseService):
             quick_presets = family_defaults.get('quick_presets') or self.DEFAULT_PERIOD_PRESETS
 
         filter_schema = self._coerce_dict(data.get('filter_schema'), structure_json.get('filter_schema') or {})
+        report_items = self._coerce_list(data.get('report_items') if 'report_items' in data else structure_json.get('report_items'))
         layout = self._coerce_dict(data.get('layout'), structure_json.get('layout') or {})
         layout = {
             **self._coerce_dict(family_defaults.get('layout'), {}),
@@ -1474,11 +1524,26 @@ class AnalyticsReportService(BaseService):
                 'curated_fields': curated_fields,
                 'run_binding': self._build_report_run_binding(report, dataset_version),
             }
-        normalized_blocks = [self._normalize_report_block_config(block, curated_fields) for block in blocks]
+        data_sources = self._normalize_report_data_sources(report, dataset_version, structure_json, data, report_items=report_items)
+        if data_sources and not curated_fields:
+            curated_fields = data_sources[0].get('curated_fields') or []
+            dataset_contract = {
+                **dataset_contract,
+                'dataset_id': data_sources[0].get('dataset_id'),
+                'dataset_key': data_sources[0].get('dataset_key'),
+                'dataset_version_id': data_sources[0].get('dataset_version_id'),
+                'dataset_version_number': data_sources[0].get('dataset_version_number'),
+                'grain_key': data_sources[0].get('grain_key'),
+                'curated_fields': curated_fields,
+                'run_binding': data_sources[0].get('run_binding') or {'selection_mode': 'latest_succeeded_run'},
+            }
+        normalized_blocks = [self._normalize_report_block_config(block, curated_fields, data_sources=data_sources) for block in blocks]
 
         return {
             **structure_json,
             'dataset_contract': dataset_contract,
+            'data_sources': data_sources,
+            'report_items': report_items,
             'period_preset_config': {
                 **period_config,
                 'supported_period_modes': supported_period_modes,
@@ -1489,6 +1554,133 @@ class AnalyticsReportService(BaseService):
             'layout': layout,
             'blocks': normalized_blocks,
         }
+
+    def _report_version_has_dataset_binding(self, version):
+        if getattr(version, 'dataset_version_id', None):
+            return True
+        structure_json = self._coerce_dict(getattr(version, 'structure_json', None), {})
+        data_sources = self._coerce_list(structure_json.get('data_sources'))
+        if any(isinstance(source, dict) and source.get('dataset_version_id') for source in data_sources):
+            return True
+        report_items = self._coerce_list(structure_json.get('report_items'))
+        return any(
+            isinstance(source, dict) and source.get('dataset_version_id')
+            for source in self._extract_dataset_sources_from_report_items(report_items)
+        )
+
+    def _normalize_report_data_sources(self, report, primary_dataset_version, structure_json, data, report_items=None):
+        raw_sources = data.get('data_sources') if 'data_sources' in data else structure_json.get('data_sources')
+        sources = self._coerce_list(raw_sources)
+        if not sources:
+            sources = self._extract_dataset_sources_from_report_items(report_items or structure_json.get('report_items'))
+        if not sources and primary_dataset_version:
+            sources = [
+                {
+                    'alias': 'primary',
+                    'dataset_id': getattr(primary_dataset_version, 'dataset_id', None) or getattr(report, 'dataset_id', None),
+                    'dataset_version_id': getattr(primary_dataset_version, 'id', None),
+                    'label': 'Dataset utama',
+                }
+            ]
+
+        normalized_sources = []
+        used_aliases = set()
+        for index, source in enumerate(sources, start=1):
+            if not isinstance(source, dict):
+                continue
+            dataset_version_id = source.get('dataset_version_id') or source.get('version_id')
+            dataset_id = source.get('dataset_id')
+            dataset_version = None
+            if dataset_version_id not in ('', None):
+                dataset_version_id = int(dataset_version_id)
+                dataset_version = self.dataset_version_repository.get_by_id(dataset_version_id)
+                if not dataset_version:
+                    raise ValueError('Dataset version source report tidak ditemukan.')
+                dataset_id = dataset_id or getattr(dataset_version, 'dataset_id', None)
+            elif dataset_id not in ('', None):
+                dataset_id = int(dataset_id)
+                dataset_version = (
+                    self.dataset_version_repository.get_published_version(dataset_id)
+                    or self.dataset_version_repository.get_draft_version(dataset_id)
+                )
+                dataset_version_id = getattr(dataset_version, 'id', None)
+            if dataset_id in ('', None):
+                raise ValueError('Dataset source report wajib memiliki dataset_id.')
+            dataset_id = int(dataset_id)
+            dataset = self.dataset_repository.get_by_id(dataset_id)
+            if not dataset:
+                raise ValueError('Dataset source report tidak ditemukan.')
+
+            alias_base = source.get('alias') or source.get('key') or getattr(dataset, 'dataset_key', None) or f'dataset_{index}'
+            alias = self._slugify_alias(alias_base).replace('-', '_')
+            if not alias:
+                alias = f'dataset_{index}'
+            unique_alias = alias
+            suffix = 2
+            while unique_alias in used_aliases:
+                unique_alias = f'{alias}_{suffix}'
+                suffix += 1
+            used_aliases.add(unique_alias)
+
+            curated_fields = self._build_curated_dataset_fields(dataset_version) if dataset_version else []
+            run_binding = {
+                'dataset_id': dataset_id,
+                'dataset_key': getattr(dataset, 'dataset_key', None),
+                'dataset_version_id': dataset_version_id,
+                'dataset_version_number': getattr(dataset_version, 'version_number', None),
+                'selection_mode': source.get('run_binding') or source.get('selection_mode') or 'latest_succeeded_run',
+            }
+            normalized_sources.append(
+                {
+                    'alias': unique_alias,
+                    'label': source.get('label') or getattr(dataset, 'name', None) or unique_alias,
+                    'dataset_id': dataset_id,
+                    'dataset_key': getattr(dataset, 'dataset_key', None),
+                    'dataset_name': getattr(dataset, 'name', None),
+                    'dataset_version_id': dataset_version_id,
+                    'dataset_version_number': getattr(dataset_version, 'version_number', None),
+                    'grain_key': getattr(dataset_version, 'grain_key', None),
+                    'curated_fields': curated_fields,
+                    'run_binding': run_binding,
+                }
+            )
+        return normalized_sources
+
+    def _extract_dataset_sources_from_report_items(self, report_items):
+        """Membentuk data_sources dari item-centric report builder."""
+
+        sources = []
+        seen_keys = set()
+        for item_index, item in enumerate(self._coerce_list(report_items), start=1):
+            if not isinstance(item, dict):
+                continue
+            item_key = item.get('item_key') or item.get('id') or f'item_{item_index}'
+            for source_index, source in enumerate(self._coerce_list(item.get('datasets')), start=1):
+                if not isinstance(source, dict) or source.get('source_mode') == 'manual_input':
+                    continue
+                dataset_id = source.get('dataset_id')
+                dataset_version_id = source.get('dataset_version_id') or source.get('version_id')
+                if dataset_id in ('', None) and dataset_version_id in ('', None):
+                    continue
+                dedupe_key = (str(dataset_id or ''), str(dataset_version_id or ''))
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+                alias_base = source.get('alias') or f'{item_key}_{source_index}'
+                sources.append(
+                    {
+                        'alias': alias_base,
+                        'label': source.get('label') or item.get('name') or alias_base,
+                        'dataset_id': dataset_id,
+                        'dataset_version_id': dataset_version_id,
+                        'selection_mode': source.get('selection_mode') or 'latest_succeeded_run',
+                    }
+                )
+        return sources
+
+    def _slugify_alias(self, value):
+        normalized = ''.join(char.lower() if char.isalnum() else '_' for char in str(value or ''))
+        return '_'.join(part for part in normalized.split('_') if part)
 
     def _build_curated_dataset_fields(self, dataset_version):
         curated_fields = []
@@ -1567,14 +1759,21 @@ class AnalyticsReportService(BaseService):
             'selection_mode': 'latest_succeeded_run',
         }
 
-    def _normalize_report_block_config(self, block, curated_fields):
+    def _normalize_report_block_config(self, block, curated_fields, data_sources=None):
         block_type = block.get('type')
         config = self._coerce_dict(block.get('config'), {})
-        metric_field_keys = [field['key'] for field in curated_fields if field.get('role') == 'metric']
-        dimension_field_keys = [field['key'] for field in curated_fields if field.get('role') == 'dimension']
-        date_field_keys = [field['key'] for field in curated_fields if field.get('role') == 'date']
-        latitude_field = next((field['key'] for field in curated_fields if field.get('role') == 'geo_latitude'), None)
-        longitude_field = next((field['key'] for field in curated_fields if field.get('role') == 'geo_longitude'), None)
+        data_sources = self._coerce_list(data_sources)
+        source_alias = block.get('data_source_alias') or config.get('data_source_alias') or (data_sources[0].get('alias') if data_sources else None)
+        source_curated_fields = curated_fields
+        if source_alias:
+            matching_source = next((source for source in data_sources if isinstance(source, dict) and source.get('alias') == source_alias), None)
+            if matching_source and matching_source.get('curated_fields'):
+                source_curated_fields = matching_source.get('curated_fields') or []
+        metric_field_keys = [field['key'] for field in source_curated_fields if field.get('role') == 'metric']
+        dimension_field_keys = [field['key'] for field in source_curated_fields if field.get('role') == 'dimension']
+        date_field_keys = [field['key'] for field in source_curated_fields if field.get('role') == 'date']
+        latitude_field = next((field['key'] for field in source_curated_fields if field.get('role') == 'geo_latitude'), None)
+        longitude_field = next((field['key'] for field in source_curated_fields if field.get('role') == 'geo_longitude'), None)
 
         normalized_config = {**config}
         if block_type == 'metric_cards':
@@ -1618,26 +1817,27 @@ class AnalyticsReportService(BaseService):
             )[:5]
             normalized_config['column_keys'] = self._pick_allowed_field_keys(
                 config.get('column_keys') or config.get('selected_field_keys'),
-                [field['key'] for field in curated_fields],
+                [field['key'] for field in source_curated_fields],
                 fallback=fallback_columns,
             )
         elif block_type == 'geo_map':
             label_field = config.get('label_field') or next(iter(dimension_field_keys or metric_field_keys), None)
-            normalized_config['latitude_field'] = config.get('latitude_field') if config.get('latitude_field') in [field['key'] for field in curated_fields] else latitude_field
-            normalized_config['longitude_field'] = config.get('longitude_field') if config.get('longitude_field') in [field['key'] for field in curated_fields] else longitude_field
+            allowed_field_keys = [field['key'] for field in source_curated_fields]
+            normalized_config['latitude_field'] = config.get('latitude_field') if config.get('latitude_field') in allowed_field_keys else latitude_field
+            normalized_config['longitude_field'] = config.get('longitude_field') if config.get('longitude_field') in allowed_field_keys else longitude_field
             normalized_config['label_field'] = label_field
         elif block_type == 'narrative':
             normalized_config['focus_field_keys'] = self._pick_allowed_field_keys(
                 config.get('focus_field_keys') or config.get('selected_field_keys'),
-                [field['key'] for field in curated_fields],
+                [field['key'] for field in source_curated_fields],
                 fallback=metric_field_keys[:2],
             )
             normalized_config['source_mode'] = config.get('source_mode') or 'auto_summary'
 
-        return {
-            **block,
-            'config': normalized_config,
-        }
+        payload = {**block, 'config': normalized_config}
+        if source_alias:
+            payload['data_source_alias'] = source_alias
+        return payload
 
     def _pick_allowed_field_keys(self, requested_keys, allowed_keys, fallback=None):
         allowed_set = set(self._coerce_list(allowed_keys))

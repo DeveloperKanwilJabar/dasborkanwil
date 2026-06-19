@@ -1,24 +1,15 @@
 {% extends 'partials/base.html' %}
-{% block title %}{{ 'Buat Report Analytics' if page_mode == 'create' else 'Edit Report Analytics' }}{% endblock %}
+{% block title %}{{ 'Tambah Report' if page_mode == 'create' else 'Edit Report' }}{% endblock %}
 
-{% set active_dataset_id = report.dataset_id if report else (preselected_dataset.get('dataset').id if preselected_dataset and preselected_dataset.get('dataset') else None) %}
 {% set structure = active_version.structure_json if active_version and active_version.structure_json else {} %}
 {% set narrative = active_version.narrative_guidance_json if active_version and active_version.narrative_guidance_json else {} %}
-{% set period_config = structure.get('period_preset_config', {}) or {} %}
+{% set report_items = structure.get('report_items', []) or [] %}
+{% set data_sources = structure.get('data_sources', []) or [] %}
 {% set blocks = structure.get('blocks', []) or [] %}
-{% set dataset_contract = structure.get('dataset_contract', {}) or {} %}
-{% set curated_fields = dataset_contract.get('curated_fields', []) or [] %}
-{% set run_binding = dataset_contract.get('run_binding', {}) or {} %}
 {% set filter_schema = structure.get('filter_schema', {}) or {} %}
 {% set layout_config = structure.get('layout', {}) or {} %}
+{% set period_config = structure.get('period_preset_config', {}) or {} %}
 {% set report_settings = report.settings_json if report and report.settings_json else {} %}
-{% set report_family_options = builder_options.get('report_family_options', []) %}
-{% set report_type_options = builder_options.get('report_type_options', []) %}
-{% set report_type_aliases = builder_options.get('report_type_aliases', {}) %}
-{% set period_mode_options = builder_options.get('period_mode_options', []) %}
-{% set quick_preset_options = builder_options.get('quick_preset_options', []) %}
-{% set block_type_options = builder_options.get('block_type_options', []) %}
-{% set builder_dataset_catalog = builder_dataset_catalog or [] %}
 
 {% block content %}
 <div class="main-content">
@@ -28,1103 +19,275 @@
         <div class="col-12">
           <div class="page-title-box d-sm-flex align-items-center justify-content-between">
             <div>
-              <h4 class="mb-sm-0">{{ 'Buat Report Analytics' if page_mode == 'create' else 'Edit Report Analytics' }}</h4>
-              <p class="text-muted mb-0">Report adalah layer semi-CMS di atas dataset contract. Preset waktu, angka, chart, tabel, peta, dan narasi dikonfigurasi di sini.</p>
+              <h4 class="mb-sm-0">{{ 'Tambah Report' if page_mode == 'create' else 'Edit Report' }}</h4>
+              <p class="text-muted mb-0">Halaman report hanya menampilkan item/indikator yang sudah ditambahkan dan persentase capaian semua item.</p>
             </div>
-            <div class="page-title-right d-flex gap-2">
-              <a href="{{ url_for('analytics_web.analytics_report_index') }}" class="btn btn-light">Katalog Report</a>
-              <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-soft-secondary">Katalog Dataset</a>
-              {% if report and report.dataset_id %}
-              <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=report.dataset_id) }}" class="btn btn-primary">Buka Viewer</a>
-              {% endif %}
+            <div class="page-title-right d-flex gap-2 flex-wrap">
+              <a href="{{ url_for('analytics_web.analytics_report_index') }}" class="btn btn-light">Daftar Report</a>
             </div>
           </div>
         </div>
       </div>
 
-      {% if error_message %}
-      <div class="alert alert-danger">{{ error_message }}</div>
-      {% endif %}
-
-      <div class="row g-3 mb-3">
-        <div class="col-xl-3 col-md-6">
-          <div class="card card-animate h-100">
-            <div class="card-body">
-              <p class="text-uppercase text-muted fw-medium mb-2">Step 1</p>
-              <h5 class="mb-1">Pilih Dataset</h5>
-              <p class="text-muted mb-0">Report wajib terhubung ke dataset publish/draft tertentu.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-xl-3 col-md-6">
-          <div class="card card-animate h-100">
-            <div class="card-body">
-              <p class="text-uppercase text-muted fw-medium mb-2">Step 2</p>
-              <h5 class="mb-1">Preset & Filter</h5>
-              <p class="text-muted mb-0">Definisikan preset waktu dan filter interaktif tanpa campur metadata panjang.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-xl-3 col-md-6">
-          <div class="card card-animate h-100">
-            <div class="card-body">
-              <p class="text-uppercase text-muted fw-medium mb-2">Step 3</p>
-              <h5 class="mb-1">Block Report</h5>
-              <p class="text-muted mb-0">Susun cards, Plotly timeseries, tabel, peta, dan narasi.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-xl-3 col-md-6">
-          <div class="card card-animate h-100">
-            <div class="card-body">
-              <p class="text-uppercase text-muted fw-medium mb-2">Step 4</p>
-              <h5 class="mb-1">Publish</h5>
-              <p class="text-muted mb-0">Draft builder siap dipublish menjadi viewer report aktif.</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      {% if error_message %}<div class="alert alert-danger">{{ error_message }}</div>{% endif %}
+      <div id="analyticsReportFormAlert" class="alert d-none" role="alert"></div>
 
       <form id="analytics-report-form" class="card">
         <div class="card-header">
-          <h5 class="card-title mb-1">Builder Report Semi-CMS</h5>
-          <p class="text-muted mb-0">Metadata ringkas dipisah dari interaksi visual supaya pengguna fokus ke preset, angka, dan chart.</p>
+          <h5 class="card-title mb-1">Edit Report</h5>
+          <p class="text-muted mb-0">Edit nama dan deskripsi report. Item dikelola dari halaman edit item masing-masing.</p>
         </div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-lg-6">
-              <label class="form-label">Dataset Analytics</label>
-              <select class="form-select" name="dataset_id" required>
-                <option value="">Pilih dataset</option>
-                {% for item in dataset_items %}
-                  {% set dataset = item.get('dataset') %}
-                  <option value="{{ dataset.id }}" {% if active_dataset_id == dataset.id %}selected{% endif %}>{{ dataset.name }} — {{ dataset.dataset_key }}</option>
-                {% endfor %}
-              </select>
+              <label class="form-label">Nama Report</label>
+              <input class="form-control" name="name" value="{{ report.name if report else '' }}" placeholder="Perjanjian Kinerja" required>
             </div>
             <div class="col-lg-6">
-              <label class="form-label">Dataset Version</label>
-              <select class="form-select" name="dataset_version_id">
-                <option value="">Auto pakai draft/published aktif</option>
-                {% for item in dataset_items %}
-                  {% set dataset = item.get('dataset') %}
-                  {% set draft_ver = item.get('draft_version') %}
-                  {% set published_ver = item.get('published_version') %}
-                  {% if draft_ver %}
-                  <option value="{{ draft_ver.id }}" {% if active_version and active_version.dataset_version_id == draft_ver.id %}selected{% endif %}>{{ dataset.name }} — Draft v{{ draft_ver.version_number }}</option>
-                  {% endif %}
-                  {% if published_ver %}
-                  <option value="{{ published_ver.id }}" {% if active_version and active_version.dataset_version_id == published_ver.id %}selected{% endif %}>{{ dataset.name }} — Publish v{{ published_ver.version_number }}</option>
-                  {% endif %}
-                {% endfor %}
-              </select>
-            </div>
-
-            <div class="col-lg-4">
-              <label class="form-label">Template / Family Report</label>
-              <select class="form-select" name="report_family">
-                {% for value, label in report_family_options %}
-                <option value="{{ value }}" {% if (report_settings.get('report_family') or 'custom') == value %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-              <div class="form-text">PK, IK, dan judul bisnis lain diperlakukan sebagai family/template report semi-CMS, bukan bounded context tabel terpisah.</div>
-            </div>
-            <div class="col-lg-4">
               <label class="form-label">Report Key</label>
-              <input class="form-control" name="report_key" value="{{ report.report_key if report else '' }}" placeholder="pk-kanwil-summary" required>
+              <input class="form-control" name="report_key" value="{{ report.report_key if report else '' }}" placeholder="perjanjian-kinerja" required>
             </div>
-            <div class="col-lg-4">
-              <label class="form-label">Nama Report</label>
-              <input class="form-control" name="name" value="{{ report.name if report else '' }}" placeholder="PK Kanwil" required>
-            </div>
-            <div class="col-lg-4">
-              <label class="form-label">Kategori</label>
-              <input class="form-control" name="category_key" value="{{ report.category_key if report else '' }}" placeholder="pk / ik / renaksi / custom">
-            </div>
-
-            <div class="col-lg-4">
-              <label class="form-label">Tipe Engine Report</label>
-              <select class="form-select" name="report_type">
-                {% set active_report_type = report_type_aliases.get(report.report_type if report else 'custom', report.report_type if report else 'custom') %}
-                {% for value, label in report_type_options %}
-                <option value="{{ value }}" {% if active_report_type == value %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-lg-4">
-              <label class="form-label">Judul Version</label>
-              <input class="form-control" name="title" value="{{ active_version.title if active_version else '' }}" placeholder="PK Kanwil 2026">
-            </div>
-
             <div class="col-12">
-              <label class="form-label">Deskripsi Ringkas</label>
+              <label class="form-label">Deskripsi Singkat</label>
               <textarea class="form-control" rows="2" name="description" placeholder="Deskripsi business report.">{{ report.description if report else '' }}</textarea>
             </div>
+
+            <input type="hidden" name="report_family" value="{{ report_settings.get('report_family') or 'custom' }}">
+            <input type="hidden" name="category_key" value="{{ report.category_key if report and report.category_key else 'custom' }}">
+            <input type="hidden" name="report_type" value="{{ report_type_aliases.get(report.report_type if report else 'custom', report.report_type if report else 'custom') if report_type_aliases is defined else (report.report_type if report else 'custom') }}">
+            <input type="hidden" name="title" value="{{ active_version.title if active_version else '' }}">
+            <input type="hidden" name="meta_description" value="{{ active_version.meta_description if active_version else '' }}">
+            <input type="hidden" name="default_period_mode" value="{{ period_config.get('default_mode', 'quarterly') }}">
+            {% set selected_supported_period_modes = period_config.get('supported_period_modes', ['quarterly', 'semester', 'yearly']) or ['quarterly', 'semester', 'yearly'] %}
+            <select class="d-none" name="supported_period_modes" multiple>{% for value in selected_supported_period_modes %}<option value="{{ value }}" selected>{{ value }}</option>{% endfor %}</select>
+            {% set selected_quick_presets = period_config.get('quick_presets', ['current_quarter', 'current_semester', 'current_year']) or ['current_quarter', 'current_semester', 'current_year'] %}
+            <select class="d-none" name="quick_presets" multiple>{% for value in selected_quick_presets %}<option value="{{ value }}" selected>{{ value }}</option>{% endfor %}</select>
+            <input type="hidden" name="narrative_intro" value="{{ narrative.get('intro', '') }}">
+            <input type="hidden" name="narrative_methodology" value="{{ narrative.get('methodology', '') }}">
+            <input type="hidden" name="summary_prompt" value="{{ narrative.get('summary_prompt', '') }}">
+
+            <div class="col-12"><hr class="text-muted"></div>
+
             <div class="col-12">
-              <label class="form-label">Meta Description Viewer</label>
-              <textarea class="form-control" rows="3" name="meta_description" placeholder="Narasi singkat yang tampil pada viewer report.">{{ active_version.meta_description if active_version else '' }}</textarea>
-            </div>
-
-            <div class="col-12"><hr class="text-muted"></div>
-
-            <div class="col-lg-4">
-              <label class="form-label">Default Period Mode</label>
-              <select class="form-select" name="default_period_mode">
-                {% for value, label in period_mode_options %}
-                <option value="{{ value }}" {% if period_config.get('default_mode', 'quarterly') == value %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-lg-4">
-              <label class="form-label">Supported Period Modes</label>
-              {% set selected_supported_period_modes = period_config.get('supported_period_modes', []) or [] %}
-              <select class="form-select" name="supported_period_modes" multiple size="6">
-                {% for value, label in period_mode_options %}
-                <option value="{{ value }}" {% if value in selected_supported_period_modes %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-              <div class="form-text">Pilih 1+ mode yang boleh dipakai user di viewer.</div>
-            </div>
-            <div class="col-lg-4">
-              <label class="form-label">Quick Presets</label>
-              {% set selected_quick_presets = period_config.get('quick_presets', []) or [] %}
-              <select class="form-select" name="quick_presets" multiple size="6">
-                {% for value, label in quick_preset_options %}
-                <option value="{{ value }}" {% if value in selected_quick_presets %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-              <div class="form-text">Pilih preset tanggal cepat yang tampil di toolbar viewer.</div>
-            </div>
-
-            <div class="col-lg-6">
-              <label class="form-label">Filter Schema (JSON)</label>
-              <textarea class="form-control font-monospace" rows="7" name="filter_schema_json">{{ filter_schema | tojson(indent=2) }}</textarea>
-            </div>
-            <div class="col-lg-6">
-              <label class="form-label">Layout Config (JSON)</label>
-              <textarea class="form-control font-monospace" rows="7" name="layout_json">{{ layout_config | tojson(indent=2) }}</textarea>
-            </div>
-
-            <div class="col-12"><hr class="text-muted"></div>
-
-            <div class="col-lg-8 d-flex flex-column gap-3">
-              <div class="card border h-100">
+              <div class="card border mb-3">
                 <div class="card-header d-flex flex-wrap justify-content-between align-items-start gap-2">
                   <div>
-                    <h6 class="mb-1">Block Editor Manusiawi</h6>
-                    <p class="text-muted mb-0">Susun urutan block, ubah judul, dan pilih field terkurasi tanpa harus edit JSON mentah terus.</p>
+                    <h6 class="mb-1">Item / Indikator Report</h6>
+                    <p class="text-muted mb-0">Kolom hanya nama indikator, nilai capaian, target, dan action.</p>
                   </div>
-                  <div class="d-flex gap-2 flex-wrap">
-                    <button type="button" class="btn btn-soft-secondary btn-sm" id="apply-report-family-template-button">Terapkan Template Family</button>
-                    {% for value, label in block_type_options %}
-                    <button type="button" class="btn btn-soft-primary btn-sm js-add-report-block" data-block-type="{{ value }}">+ {{ label }}</button>
-                    {% endfor %}
-                  </div>
+                  <button type="button" class="btn btn-primary btn-sm" id="add-report-indicator-button">Tambah Indikator</button>
                 </div>
-                <div class="card-body d-flex flex-column gap-3">
-                  <div id="report-block-editor" class="d-flex flex-column gap-3"></div>
-                  <div class="alert alert-light border mb-0" id="report-block-empty-state">
-                    Belum ada block. Klik tombol + di atas untuk mulai menyusun report semi-CMS.
-                  </div>
-                </div>
-              </div>
-
-              <div class="card border">
-                <div class="card-header d-flex justify-content-between align-items-center gap-2">
-                  <div>
-                    <h6 class="mb-1">Advanced JSON</h6>
-                    <p class="text-muted mb-0">Tetap tersedia untuk debug/manual tweak. Nilai ini selalu sinkron dari editor visual.</p>
-                  </div>
-                  <button type="button" class="btn btn-light btn-sm" id="toggle-advanced-json-button">Tampilkan JSON</button>
-                </div>
-                <div class="card-body d-none" id="advanced-json-panel">
-                  <label class="form-label">Blocks (JSON Array)</label>
-                  <textarea class="form-control font-monospace" rows="10" name="blocks_json">{{ blocks | tojson(indent=2) }}</textarea>
-                  <div class="form-text">Gunakan type seperti metric_cards, plotly_timeseries, detail_table, geo_map, narrative.</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="col-lg-4 d-flex flex-column gap-3">
-              <div class="alert alert-light border mb-0">
-                <h6 class="mb-2">Contoh block type</h6>
-                <div class="d-flex flex-wrap gap-2 mb-3">
-                  {% for value, label in block_type_options %}
-                  <span class="badge bg-soft-primary text-primary">{{ label }}</span>
-                  {% endfor %}
-                </div>
-                <p class="text-muted mb-1">Struktur block umum:</p>
-<pre class="small mb-0">[
-  {"type":"metric_cards","title":"Ringkasan KPI","config":{"metric_keys":["capaian_total","achievement_pct"]}},
-  {"type":"plotly_timeseries","title":"Tren Tahunan","config":{"x_key":"tanggal","series":[{"key":"capaian_total","aggregation":"sum"}]}},
-  {"type":"detail_table","title":"Tabel PK","config":{"column_keys":["tanggal","nama_indikator","capaian_total"]}},
-  {"type":"geo_map","title":"Sebaran Wilayah","config":{"latitude_field":"latitude","longitude_field":"longitude","label_field":"nama_indikator"}},
-  {"type":"narrative","title":"Resume","config":{"focus_field_keys":["achievement_pct","capaian_total"]}}
-]</pre>
-              </div>
-              <div class="card border h-100">
-                <div class="card-header">
-                  <h6 class="mb-1">Field Terkurasi Dataset</h6>
-                  <p class="text-muted mb-0">Builder report memilih field terkurasi dari dataset version/run yang terhubung.</p>
-                </div>
-                <div class="card-body d-flex flex-column gap-3">
-                  <div>
-                    <div class="text-muted small">PK -> Dataset Run Binding</div>
-                    <div class="fw-semibold" id="builder-run-binding-mode">{{ run_binding.get('selection_mode') or 'latest_succeeded_run' }}</div>
-                    <div class="text-muted fs-12" id="builder-run-binding-summary">Dataset version {{ run_binding.get('dataset_version_number') or '-' }} · {{ run_binding.get('report_title') or (report.name if report else '-') }}</div>
-                  </div>
-                  <div>
-                    <div class="text-muted small mb-2">Dataset Version Aktif</div>
-                    <div class="fw-semibold" id="builder-active-version-title">Belum dipilih</div>
-                    <div class="text-muted fs-12" id="builder-active-version-meta">Pilih dataset + version agar selector field aktif.</div>
-                  </div>
-                  <div class="d-flex flex-wrap gap-2" id="builder-curated-fields-list">
-                    {% if curated_fields %}
-                      {% for field in curated_fields %}
-                      <span class="badge bg-soft-info text-info">{{ field.get('label') }} · {{ field.get('key') }}</span>
-                      {% endfor %}
-                    {% else %}
-                      <span class="text-muted">Curated field akan muncul setelah report terhubung ke dataset version yang sudah punya contract output.</span>
-                    {% endif %}
+                <div class="card-body">
+                  <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                      <thead class="table-light">
+                        <tr>
+                          <th>Nama Indikator</th>
+                          <th>Nilai (Capaian)</th>
+                          <th>Target</th>
+                          <th class="text-end">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody id="report-items-table-body">
+                        <tr><td colspan="4" class="text-muted text-center py-3">Memuat item...</td></tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
               <div class="card border">
                 <div class="card-header">
-                  <h6 class="mb-1">Ringkasan Item Report Dinamis</h6>
-                  <p class="text-muted mb-0">Jumlah item pada report tidak fixed. Family seperti PK, IK, atau Renaksi bisa punya jumlah indikator berbeda sesuai pilihan field/metric dari curated dataset run.</p>
+                  <h6 class="mb-1">Chart Persentase Capaian Item</h6>
+                  <p class="text-muted mb-0">Chart menghitung persentase capaian dari nilai item dibanding targetnya. Mode awal memakai total capaian / total target per item.</p>
                 </div>
-                <div class="card-body d-flex flex-column gap-2">
-                  <div class="d-flex justify-content-between">
-                    <span class="text-muted" id="report-selection-label">Total item unik</span>
-                    <span class="fw-semibold" id="report-selection-count">0</span>
-                  </div>
-                  <div class="text-muted fs-12" id="report-selection-helper">Pilih metric/field di block untuk menyusun item report dinamis.</div>
-                  <div class="d-flex flex-wrap gap-2" id="report-selection-list"></div>
+                <div class="card-body">
+                  <div id="reportAchievementChart" style="min-height: 360px;"></div>
                 </div>
               </div>
             </div>
 
-            <div class="col-lg-4">
-              <label class="form-label">Narasi Intro</label>
-              <textarea class="form-control" rows="4" name="narrative_intro">{{ narrative.get('intro', '') }}</textarea>
-            </div>
-            <div class="col-lg-4">
-              <label class="form-label">Metodologi</label>
-              <textarea class="form-control" rows="4" name="narrative_methodology">{{ narrative.get('methodology', '') }}</textarea>
-            </div>
-            <div class="col-lg-4">
-              <label class="form-label">Summary Prompt</label>
-              <textarea class="form-control" rows="4" name="summary_prompt">{{ narrative.get('summary_prompt', '') }}</textarea>
-            </div>
+            <textarea class="d-none" name="report_items_json">{{ report_items | tojson(indent=2) }}</textarea>
+            <textarea class="d-none" name="data_sources_json">{{ data_sources | tojson(indent=2) }}</textarea>
+            <textarea class="d-none" name="blocks_json">{{ blocks | tojson(indent=2) }}</textarea>
+            <textarea class="d-none" name="filter_schema_json">{{ filter_schema | tojson(indent=2) }}</textarea>
+            <textarea class="d-none" name="layout_json">{{ layout_config | tojson(indent=2) }}</textarea>
           </div>
         </div>
         <div class="card-footer d-flex flex-wrap gap-2 justify-content-between">
-          <div class="text-muted small">
-            Report akan membaca dataset contract terpilih, bukan source mentah langsung.
-          </div>
-          <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary" id="save-report-button">{{ 'Simpan & Buat Draft' if page_mode == 'create' else 'Simpan Draft' }}</button>
-            <button type="button" class="btn btn-success" id="publish-report-button" {% if not active_version %}disabled{% endif %}>Publish Draft</button>
-          </div>
+          <div class="text-muted small">Untuk menambah dataset/manual input, klik Edit pada item.</div>
+          <div class="d-flex gap-2"><button type="submit" class="btn btn-primary" id="save-report-button">{{ 'Simpan & Buat Draft' if page_mode == 'create' else 'Simpan Draft' }}</button><button type="button" class="btn btn-success" id="publish-report-button" {% if not active_version %}disabled{% endif %}>Publish Draft</button></div>
         </div>
       </form>
 
-      <div class="card d-none mt-3" id="report-result-card">
-        <div class="card-header"><h6 class="card-title mb-0">Response API</h6></div>
-        <div class="card-body">
-          <pre class="small mb-0" id="report-result-output"></pre>
-        </div>
-      </div>
+      <div class="card d-none mt-3" id="report-result-card"><div class="card-header"><h6 class="card-title mb-0">Response API</h6></div><div class="card-body"><pre class="small mb-0" id="report-result-output"></pre></div></div>
     </div>
   </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='libs/plotly.js-dist-min/plotly.min.js') }}"></script>
 <script>
 (() => {
   const form = document.getElementById('analytics-report-form');
   if (!form) return;
-
-  const saveButton = document.getElementById('save-report-button');
-  const publishButton = document.getElementById('publish-report-button');
-  const resultCard = document.getElementById('report-result-card');
-  const resultOutput = document.getElementById('report-result-output');
   const pageMode = {{ page_mode | tojson }};
   const reportId = {{ report.id if report else 'null' }};
-  const builderDatasetCatalog = {{ builder_dataset_catalog | tojson }};
-  const blockTypeLabels = Object.fromEntries({{ block_type_options | tojson }});
-  const reportFamilyPresets = {
-    custom: {
-      reportType: 'custom',
-      categoryKey: 'custom',
-      defaultName: 'Report Custom Dataset',
-      defaultTitle: 'Report Custom Tahun Aktif',
-      supportedPeriodModes: ['quarterly', 'semester', 'yearly'],
-      quickPresets: ['current_quarter', 'current_semester', 'current_year'],
-      blocks: ['metric_cards', 'plotly_timeseries', 'detail_table', 'narrative'],
-      layout: { viewer_variant: 'semi_cms' },
-    },
-    pk: {
-      reportType: 'pk',
-      categoryKey: 'pk',
-      defaultName: 'Perjanjian Kinerja',
-      defaultTitle: 'Perjanjian Kinerja Tahun Aktif',
-      supportedPeriodModes: ['quarterly', 'semester', 'yearly'],
-      quickPresets: ['current_quarter', 'current_semester', 'current_year'],
-      blocks: ['metric_cards', 'detail_table', 'plotly_timeseries', 'narrative'],
-      layout: { viewer_variant: 'pk_summary' },
-    },
-    ik: {
-      reportType: 'scorecard',
-      categoryKey: 'ik',
-      defaultName: 'Indikator Kinerja',
-      defaultTitle: 'Indikator Kinerja Tahun Aktif',
-      supportedPeriodModes: ['monthly', 'quarterly', 'yearly'],
-      quickPresets: ['current_month', 'current_quarter', 'current_year'],
-      blocks: ['metric_cards', 'detail_table', 'narrative'],
-      layout: { viewer_variant: 'ik_summary' },
-    },
-    renaksi: {
-      reportType: 'renaksi',
-      categoryKey: 'renaksi',
-      defaultName: 'Renaksi / Action Plan',
-      defaultTitle: 'Renaksi Tahun Aktif',
-      supportedPeriodModes: ['monthly', 'quarterly', 'yearly'],
-      quickPresets: ['current_month', 'current_quarter', 'current_year'],
-      blocks: ['metric_cards', 'detail_table', 'narrative'],
-      layout: { viewer_variant: 'renaksi_progress' },
-    },
-    'dashboard-eksekutif': {
-      reportType: 'monitoring',
-      categoryKey: 'dashboard-eksekutif',
-      defaultName: 'Dashboard Eksekutif',
-      defaultTitle: 'Dashboard Eksekutif Tahun Aktif',
-      supportedPeriodModes: ['monthly', 'quarterly', 'semester', 'yearly'],
-      quickPresets: ['current_month', 'current_quarter', 'current_semester', 'current_year'],
-      blocks: ['metric_cards', 'plotly_timeseries', 'geo_map', 'detail_table', 'narrative'],
-      layout: { viewer_variant: 'executive_dashboard' },
-    },
-  };
   let draftVersionId = {{ active_version.id if active_version else 'null' }};
-  let blockState = [];
+  const saveButton = document.getElementById('save-report-button');
+  const publishButton = document.getElementById('publish-report-button');
+  const alertNode = document.getElementById('analyticsReportFormAlert');
+  const resultCard = document.getElementById('report-result-card');
+  const resultOutput = document.getElementById('report-result-output');
+  const itemTableBody = document.getElementById('report-items-table-body');
+  const achievementChart = document.getElementById('reportAchievementChart');
+  const addIndicatorButton = document.getElementById('add-report-indicator-button');
 
-  const blockEditor = document.getElementById('report-block-editor');
-  const emptyState = document.getElementById('report-block-empty-state');
-  const advancedJsonPanel = document.getElementById('advanced-json-panel');
-  const toggleAdvancedJsonButton = document.getElementById('toggle-advanced-json-button');
-  const curatedFieldsList = document.getElementById('builder-curated-fields-list');
-  const activeVersionTitle = document.getElementById('builder-active-version-title');
-  const activeVersionMeta = document.getElementById('builder-active-version-meta');
-  const runBindingMode = document.getElementById('builder-run-binding-mode');
-  const runBindingSummary = document.getElementById('builder-run-binding-summary');
-  const reportSelectionLabel = document.getElementById('report-selection-label');
-  const reportSelectionCount = document.getElementById('report-selection-count');
-  const reportSelectionHelper = document.getElementById('report-selection-helper');
-  const reportSelectionList = document.getElementById('report-selection-list');
-  const applyReportFamilyTemplateButton = document.getElementById('apply-report-family-template-button');
+  function escapeHtml(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
+  function showFormMessage(message, type = 'danger') { if (!alertNode) return; alertNode.className = `alert alert-${type}`; alertNode.textContent = message; alertNode.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  function clearFormMessage() { if (!alertNode) return; alertNode.className = 'alert d-none'; alertNode.textContent = ''; }
+  function getSelectedValues(fieldName) { return Array.from(form.elements[fieldName]?.selectedOptions || []).map((option) => option.value).filter(Boolean); }
+  function parseJsonField(name, fallback) { const raw = form.elements[name]?.value?.trim() || ''; if (!raw) return fallback; try { return JSON.parse(raw); } catch (error) { throw new Error(`${name} belum valid JSON: ${error.message}`); } }
+  function numberOrZero(value) { const numeric = Number(value); return Number.isNaN(numeric) ? 0 : numeric; }
+  function rowsForSource(source) { return Array.isArray(source?.row_snapshots) ? source.row_snapshots : []; }
+  function normalizeText(value) { return String(value ?? '').trim().toLowerCase(); }
+  function rowMatchesValue(row, field, expected) {
+    if (!field || expected === '' || expected === null || expected === undefined) return true;
+    return normalizeText(row?.[field]) === normalizeText(expected);
+  }
+  function metricAggregate(source, metricKey) {
+    const rows = rowsForSource(source);
+    if (!rows.length) return 0;
+    const aggregation = source.aggregation_mode || 'sum';
+    const filterValue = source.actual_filter_value || source.condition_value;
+    const filteredRows = rows.filter((row) => rowMatchesValue(row, metricKey, filterValue));
+    if (aggregation === 'count_all') return rows.length;
+    if (aggregation === 'count_value' || aggregation === 'count_condition') return filteredRows.length;
+    if (aggregation === 'count') return metricKey ? filteredRows.filter((row) => row?.[metricKey] !== null && row?.[metricKey] !== undefined && row?.[metricKey] !== '').length : rows.length;
+    if (!metricKey) return 0;
+    const values = filteredRows.map((row) => Number(row?.[metricKey])).filter((value) => !Number.isNaN(value));
+    if (!values.length) return 0;
+    if (aggregation === 'avg') return values.reduce((sum, value) => sum + value, 0) / values.length;
+    return values.reduce((sum, value) => sum + value, 0);
+  }
+  function targetAggregate(source) {
+    const rows = rowsForSource(source);
+    const key = source.target_metric_key;
+    const aggregation = source.target_aggregation_mode || 'count_all';
+    if (!rows.length) return 0;
+    const filteredRows = rows.filter((row) => rowMatchesValue(row, key, source.target_filter_value));
+    if (aggregation === 'count_all') return rows.length;
+    if (aggregation === 'count_value' || aggregation === 'count_condition') return filteredRows.length;
+    if (!key) return 0;
+    const values = filteredRows.map((row) => Number(row?.[key])).filter((value) => !Number.isNaN(value));
+    if (!values.length) return 0;
+    if (aggregation === 'avg') return values.reduce((sum, value) => sum + value, 0) / values.length;
+    return values.reduce((sum, value) => sum + value, 0);
+  }
+  function sourceActual(source) { if (source.computed_actual_value !== undefined && source.computed_actual_value !== null) return numberOrZero(source.computed_actual_value); if (source.source_mode === 'manual_input' || source.aggregation_mode === 'manual') return numberOrZero(source.manual_value); return metricAggregate(source, source.actual_metric_key || source.condition_field); }
+  function sourceTarget(source) { if (source.computed_target_value !== undefined && source.computed_target_value !== null) return numberOrZero(source.computed_target_value); if (source.manual_target !== '' && source.manual_target !== undefined && source.manual_target !== null) return numberOrZero(source.manual_target); return targetAggregate(source); }
+  function itemActual(item) { if (item.actual_value !== '' && item.actual_value !== undefined && item.actual_value !== null) return numberOrZero(item.actual_value); return (item.datasets || []).reduce((sum, source) => sum + sourceActual(source), 0); }
+  function itemTarget(item) { if (item.target_value !== '' && item.target_value !== undefined && item.target_value !== null) return numberOrZero(item.target_value); return (item.datasets || []).reduce((sum, source) => sum + sourceTarget(source), 0); }
+  function achievementPct(item) { const target = itemTarget(item); if (!target) return 0; return Math.round((itemActual(item) / target) * 10000) / 100; }
+  function itemEditUrl(index) { return `/analytics/reports/${reportId || 'new'}/items/${encodeURIComponent((index + 1).toString())}/edit`; }
 
-  function getActiveReportFamilyMeta() {
-    const familyKey = form.elements.report_family.value || 'custom';
-    const preset = reportFamilyPresets[familyKey] || reportFamilyPresets.custom || {};
+  let reportItems = parseJsonField('report_items_json', []);
+  if (!Array.isArray(reportItems)) reportItems = [];
+
+  function slugify(value) { return String(value || 'item').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'item'; }
+  function syncReportItemsJson() { form.elements.report_items_json.value = JSON.stringify(reportItems, null, 2); }
+  function createDefaultItem() {
+    const nextNumber = reportItems.length + 1;
+    const name = `Indikator ${nextNumber}`;
     return {
-      familyKey,
-      familyLabel: form.elements.report_family.selectedOptions?.[0]?.textContent?.trim() || familyKey,
-      itemLabel: ['pk', 'ik', 'renaksi'].includes(familyKey) ? 'indikator' : 'item report',
-      preset,
+      id: `item-${Date.now()}`,
+      item_key: slugify(name),
+      name,
+      description: '',
+      order: nextNumber,
+      datasets: [],
     };
   }
 
-  function getSelectedValues(fieldName) {
-    return Array.from(form.elements[fieldName]?.selectedOptions || []).map((option) => option.value).filter(Boolean);
+  function renderItemTable() {
+    itemTableBody.innerHTML = reportItems.length ? reportItems.map((item, index) => `
+      <tr>
+        <td><div class="fw-semibold">${escapeHtml(item.name || `Indikator ${index + 1}`)}</div><div class="text-muted small">${escapeHtml(item.description || '-')}</div></td>
+        <td>${escapeHtml(itemActual(item))}</td>
+        <td>${escapeHtml(itemTarget(item))}</td>
+        <td class="text-end"><div class="btn-group"><a class="btn btn-soft-primary btn-sm" href="${itemEditUrl(index)}">Detail</a><a class="btn btn-soft-secondary btn-sm" href="${itemEditUrl(index)}">Edit</a><button type="button" class="btn btn-soft-danger btn-sm" data-delete-item-index="${index}">Delete</button></div></td>
+      </tr>
+    `).join('') : '<tr><td colspan="4" class="text-muted text-center py-3">Belum ada item. Buat item lewat flow tambah item berikutnya.</td></tr>';
   }
 
-  function parseJsonField(name, fallback) {
-    const raw = form.elements[name].value.trim();
-    if (!raw) return fallback;
-    return JSON.parse(raw);
-  }
-
-  function escapeHtml(value) {
-    return String(value ?? '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
-
-  function normalizeTitle(type) {
-    return String(type || 'block').replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase());
-  }
-
-  function slugify(value) {
-    return String(value || 'block').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'block';
-  }
-
-  function getDatasetById(datasetId) {
-    return builderDatasetCatalog.find((item) => String(item.id) === String(datasetId)) || null;
-  }
-
-  function getSelectedDataset() {
-    return getDatasetById(form.elements.dataset_id.value);
-  }
-
-  function getSelectedDatasetVersion() {
-    const dataset = getSelectedDataset();
-    if (!dataset) return null;
-    const explicitVersionId = form.elements.dataset_version_id.value;
-    if (explicitVersionId) {
-      return dataset.versions.find((version) => String(version.id) === String(explicitVersionId)) || null;
+  function renderAchievementChart() {
+    if (!window.Plotly || !achievementChart) return;
+    const labels = reportItems.map((item, index) => item.name || `Indikator ${index + 1}`);
+    const values = reportItems.map(achievementPct);
+    if (!labels.length) {
+      achievementChart.innerHTML = '<div class="text-muted">Belum ada item untuk dihitung.</div>';
+      return;
     }
-    return dataset.versions.find((version) => version.variant === 'draft') || dataset.versions.find((version) => version.variant === 'published') || null;
+    Plotly.react(achievementChart, [{ x: labels, y: values, type: 'bar', marker: { color: '#0ab39c' }, text: values.map((value) => `${value}%`), textposition: 'auto', name: 'Persentase Capaian' }], { margin: { l: 48, r: 20, t: 20, b: 80 }, yaxis: { title: 'Persentase Capaian (%)', rangemode: 'tozero' }, paper_bgcolor: 'transparent', plot_bgcolor: 'transparent' }, { responsive: true, displayModeBar: false });
   }
 
-  function getCuratedFieldsForBuilder() {
-    const version = getSelectedDatasetVersion();
-    return Array.isArray(version?.curated_fields) ? version.curated_fields : [];
-  }
+  itemTableBody.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-delete-item-index]');
+    if (!button) return;
+    reportItems.splice(Number(button.dataset.deleteItemIndex), 1);
+    syncReportItemsJson();
+    renderItemTable();
+    renderAchievementChart();
+  });
 
-  function getFieldLabelMap() {
-    return getCuratedFieldsForBuilder().reduce((acc, field) => {
-      if (field?.key) acc[field.key] = field.label || field.key;
-      return acc;
-    }, {});
-  }
-
-  function getFieldsByRole(role) {
-    return getCuratedFieldsForBuilder().filter((field) => field.role === role);
-  }
-
-  function getAllowedKeys(role) {
-    if (role === 'all') return getCuratedFieldsForBuilder().map((field) => field.key);
-    return getFieldsByRole(role).map((field) => field.key);
-  }
-
-  function getDefaultConfig(type) {
-    const allFields = getCuratedFieldsForBuilder();
-    const metricKeys = getAllowedKeys('metric');
-    const dimensionKeys = getAllowedKeys('dimension');
-    const dateKeys = getAllowedKeys('date');
-    const latitudeField = getFieldsByRole('geo_latitude')[0]?.key || '';
-    const longitudeField = getFieldsByRole('geo_longitude')[0]?.key || '';
-    const labelField = dimensionKeys[0] || metricKeys[0] || '';
-    if (type === 'metric_cards') {
-      return { metric_keys: metricKeys.slice(0, 4) };
-    }
-    if (type === 'plotly_timeseries') {
-      return {
-        x_key: dateKeys[0] || dimensionKeys[0] || metricKeys[0] || '',
-        series: metricKeys.slice(0, 3).map((key) => ({ key, label: getFieldLabelMap()[key] || key, aggregation: 'sum' })),
-      };
-    }
-    if (type === 'detail_table') {
-      return { column_keys: [...dateKeys.slice(0, 1), ...dimensionKeys.slice(0, 1), ...metricKeys.slice(0, 2), ...allFields.map((field) => field.key)].filter(Boolean).filter((key, index, arr) => arr.indexOf(key) === index).slice(0, 5) };
-    }
-    if (type === 'geo_map') {
-      return { latitude_field: latitudeField, longitude_field: longitudeField, label_field: labelField };
-    }
-    if (type === 'narrative') {
-      return { focus_field_keys: metricKeys.slice(0, 2), source_mode: 'auto_summary' };
-    }
-    return {};
-  }
-
-  function ensureBlockConfig(block) {
-    const config = typeof block.config === 'object' && block.config ? block.config : {};
-    const defaults = getDefaultConfig(block.type);
-    if (block.type === 'metric_cards') {
-      config.metric_keys = Array.isArray(config.metric_keys) ? config.metric_keys : defaults.metric_keys || [];
-    } else if (block.type === 'plotly_timeseries') {
-      config.x_key = config.x_key || defaults.x_key || '';
-      config.series = Array.isArray(config.series) ? config.series : defaults.series || [];
-    } else if (block.type === 'detail_table') {
-      config.column_keys = Array.isArray(config.column_keys) ? config.column_keys : defaults.column_keys || [];
-    } else if (block.type === 'geo_map') {
-      config.latitude_field = config.latitude_field || defaults.latitude_field || '';
-      config.longitude_field = config.longitude_field || defaults.longitude_field || '';
-      config.label_field = config.label_field || defaults.label_field || '';
-    } else if (block.type === 'narrative') {
-      config.focus_field_keys = Array.isArray(config.focus_field_keys) ? config.focus_field_keys : defaults.focus_field_keys || [];
-      config.source_mode = config.source_mode || defaults.source_mode || 'auto_summary';
-    }
-    return { ...block, config };
-  }
-
-  function normalizeBlock(block, index) {
-    const type = block?.type || block?.block_type || 'metric_cards';
-    return ensureBlockConfig({
-      id: block?.id || `block-${Date.now()}-${index}-${slugify(type)}`,
-      type,
-      title: block?.title || block?.label || normalizeTitle(type),
-      order: Number(block?.order || index + 1),
-      config: typeof block?.config === 'object' && block.config ? JSON.parse(JSON.stringify(block.config)) : {},
-    });
-  }
-
-  function syncOrders() {
-    blockState = blockState.map((block, index) => ({ ...block, order: index + 1 }));
-  }
-
-  function parseBlocksFromTextarea() {
-    try {
-      const parsed = parseJsonField('blocks_json', []);
-      blockState = Array.isArray(parsed) ? parsed.map((block, index) => normalizeBlock(block, index)) : [];
-    } catch (error) {
-      blockState = [];
-    }
-    syncOrders();
-  }
-
-  function renderFieldBadge(field) {
-    const roleLabel = field.role ? ` · ${field.role}` : '';
-    return `<span class="badge bg-soft-info text-info">${escapeHtml(field.label || field.key)} · ${escapeHtml(field.key)}${escapeHtml(roleLabel)}</span>`;
-  }
-
-  function updateCuratedFieldsPanel() {
-    const dataset = getSelectedDataset();
-    const version = getSelectedDatasetVersion();
-    const curatedFields = getCuratedFieldsForBuilder();
-    activeVersionTitle.textContent = version?.label || 'Belum dipilih';
-    activeVersionMeta.textContent = dataset
-      ? `${dataset.name} · ${dataset.dataset_key || '-'} · ${curatedFields.length} curated field`
-      : 'Pilih dataset + version agar selector field aktif.';
-    runBindingMode.textContent = 'latest_succeeded_run';
-    runBindingSummary.textContent = version
-      ? `Dataset version ${version.version_number || '-'} · ${form.elements.name.value.trim() || form.elements.title.value.trim() || 'Draft Report'}`
-      : `Dataset version - · ${form.elements.name.value.trim() || form.elements.title.value.trim() || 'Draft Report'}`;
-    curatedFieldsList.innerHTML = curatedFields.length
-      ? curatedFields.map(renderFieldBadge).join('')
-      : '<span class="text-muted">Curated field akan muncul setelah report terhubung ke dataset version yang sudah punya contract output.</span>';
-  }
-
-  function updateVersionOptions() {
-    const dataset = getSelectedDataset();
-    const selectedVersion = form.elements.dataset_version_id.value;
-    const options = ['<option value="">Auto pakai draft/published aktif</option>'];
-    (dataset?.versions || []).forEach((version) => {
-      const selectedAttr = String(selectedVersion) === String(version.id) ? ' selected' : '';
-      options.push(`<option value="${escapeHtml(version.id)}"${selectedAttr}>${escapeHtml(version.label)}</option>`);
-    });
-    form.elements.dataset_version_id.innerHTML = options.join('');
-    if (selectedVersion && !(dataset?.versions || []).some((version) => String(version.id) === String(selectedVersion))) {
-      form.elements.dataset_version_id.value = '';
-    }
-  }
-
-  function createMultiSelect(name, selectedKeys, allowedFields) {
-    const selected = new Set(Array.isArray(selectedKeys) ? selectedKeys : []);
-    return `
-      <select class="form-select form-select-sm js-block-multiselect" data-config-key="${escapeHtml(name)}" multiple size="${Math.min(Math.max(allowedFields.length || 3, 3), 8)}">
-        ${allowedFields.map((field) => `<option value="${escapeHtml(field.key)}"${selected.has(field.key) ? ' selected' : ''}>${escapeHtml(field.label || field.key)} · ${escapeHtml(field.key)}</option>`).join('')}
-      </select>
-    `;
-  }
-
-  function renderSeriesEditor(block, metricFields) {
-    const config = block.config || {};
-    const series = Array.isArray(config.series) ? config.series : [];
-    if (!metricFields.length) {
-      return '<div class="text-muted small">Belum ada field metric terkurasi untuk dataset version ini.</div>';
-    }
-    return `
-      <div class="d-flex flex-column gap-2">
-        ${series.map((item, index) => `
-          <div class="border rounded p-2 d-flex flex-column gap-2">
-            <div class="d-flex justify-content-between align-items-center gap-2">
-              <strong class="small">Series ${index + 1}</strong>
-              <button type="button" class="btn btn-soft-danger btn-sm js-remove-series" data-block-id="${escapeHtml(block.id)}" data-series-index="${index}">Hapus</button>
-            </div>
-            <div class="row g-2">
-              <div class="col-md-5">
-                <label class="form-label small mb-1">Field Metric</label>
-                <select class="form-select form-select-sm js-series-key" data-block-id="${escapeHtml(block.id)}" data-series-index="${index}">
-                  ${metricFields.map((field) => `<option value="${escapeHtml(field.key)}"${field.key === item.key ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
-                </select>
-              </div>
-              <div class="col-md-4">
-                <label class="form-label small mb-1">Label</label>
-                <input class="form-control form-control-sm js-series-label" data-block-id="${escapeHtml(block.id)}" data-series-index="${index}" value="${escapeHtml(item.label || '')}" placeholder="Label series">
-              </div>
-              <div class="col-md-3">
-                <label class="form-label small mb-1">Agregasi</label>
-                <select class="form-select form-select-sm js-series-aggregation" data-block-id="${escapeHtml(block.id)}" data-series-index="${index}">
-                  ${['sum', 'avg', 'min', 'max', 'count'].map((aggregation) => `<option value="${aggregation}"${aggregation === (item.aggregation || 'sum') ? ' selected' : ''}>${aggregation}</option>`).join('')}
-                </select>
-              </div>
-            </div>
-          </div>
-        `).join('')}
-        <button type="button" class="btn btn-soft-primary btn-sm align-self-start js-add-series" data-block-id="${escapeHtml(block.id)}">+ Tambah Series</button>
-      </div>
-    `;
-  }
-
-  function renderBlockConfigEditor(block) {
-    const allFields = getCuratedFieldsForBuilder();
-    const metricFields = getFieldsByRole('metric');
-    const dateFields = getFieldsByRole('date');
-    const dimensionFields = getFieldsByRole('dimension');
-    if (block.type === 'metric_cards') {
-      return `
-        <div>
-          <label class="form-label small">Field Metric</label>
-          ${createMultiSelect('metric_keys', block.config.metric_keys || [], metricFields)}
-          <div class="form-text">Pilih indikator yang akan muncul sebagai KPI cards.</div>
-        </div>
-      `;
-    }
-    if (block.type === 'plotly_timeseries') {
-      return `
-        <div class="row g-3">
-          <div class="col-md-4">
-            <label class="form-label small">Field Sumbu X</label>
-            <select class="form-select form-select-sm js-block-config-input" data-config-key="x_key">
-              ${[...dateFields, ...dimensionFields].map((field) => `<option value="${escapeHtml(field.key)}"${field.key === block.config.x_key ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="col-md-8">
-            <label class="form-label small d-block">Series Metric</label>
-            ${renderSeriesEditor(block, metricFields)}
-          </div>
-        </div>
-      `;
-    }
-    if (block.type === 'detail_table') {
-      return `
-        <div>
-          <label class="form-label small">Kolom Tabel</label>
-          ${createMultiSelect('column_keys', block.config.column_keys || [], allFields)}
-          <div class="form-text">Tabel detail membaca curated field dari dataset run aktif.</div>
-        </div>
-      `;
-    }
-    if (block.type === 'geo_map') {
-      return `
-        <div class="row g-3">
-          <div class="col-md-4">
-            <label class="form-label small">Latitude</label>
-            <select class="form-select form-select-sm js-block-config-input" data-config-key="latitude_field">
-              <option value="">Pilih field</option>
-              ${getFieldsByRole('geo_latitude').map((field) => `<option value="${escapeHtml(field.key)}"${field.key === block.config.latitude_field ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label small">Longitude</label>
-            <select class="form-select form-select-sm js-block-config-input" data-config-key="longitude_field">
-              <option value="">Pilih field</option>
-              ${getFieldsByRole('geo_longitude').map((field) => `<option value="${escapeHtml(field.key)}"${field.key === block.config.longitude_field ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label small">Label Titik</label>
-            <select class="form-select form-select-sm js-block-config-input" data-config-key="label_field">
-              <option value="">Pilih field</option>
-              ${[...dimensionFields, ...metricFields].map((field) => `<option value="${escapeHtml(field.key)}"${field.key === block.config.label_field ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-      `;
-    }
-    if (block.type === 'narrative') {
-      return `
-        <div class="row g-3">
-          <div class="col-md-8">
-            <label class="form-label small">Fokus Narasi</label>
-            ${createMultiSelect('focus_field_keys', block.config.focus_field_keys || [], allFields)}
-          </div>
-          <div class="col-md-4">
-            <label class="form-label small">Source Mode</label>
-            <select class="form-select form-select-sm js-block-config-input" data-config-key="source_mode">
-              ${['auto_summary', 'manual_guidance', 'hybrid'].map((mode) => `<option value="${mode}"${mode === (block.config.source_mode || 'auto_summary') ? ' selected' : ''}>${mode}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-      `;
-    }
-    return '<div class="text-muted small">Block type belum punya editor khusus.</div>';
-  }
-
-  function buildBlockCard(block, index) {
-    return `
-      <div class="card border js-report-block-card" data-block-id="${escapeHtml(block.id)}">
-        <div class="card-header d-flex flex-wrap justify-content-between align-items-start gap-2">
-          <div>
-            <div class="text-muted small">Order ${index + 1}</div>
-            <h6 class="mb-1">${escapeHtml(block.title || normalizeTitle(block.type))}</h6>
-            <div class="text-muted fs-12">${escapeHtml(blockTypeLabels[block.type] || block.type)}</div>
-          </div>
-          <div class="d-flex gap-2 flex-wrap">
-            <button type="button" class="btn btn-light btn-sm js-move-block-up" data-block-id="${escapeHtml(block.id)}">↑</button>
-            <button type="button" class="btn btn-light btn-sm js-move-block-down" data-block-id="${escapeHtml(block.id)}">↓</button>
-            <button type="button" class="btn btn-soft-danger btn-sm js-remove-block" data-block-id="${escapeHtml(block.id)}">Hapus</button>
-          </div>
-        </div>
-        <div class="card-body d-flex flex-column gap-3">
-          <div class="row g-3">
-            <div class="col-md-4">
-              <label class="form-label small">Tipe Block</label>
-              <select class="form-select form-select-sm js-block-type">
-                ${Object.entries(blockTypeLabels).map(([value, label]) => `<option value="${escapeHtml(value)}"${value === block.type ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
-              </select>
-            </div>
-            <div class="col-md-8">
-              <label class="form-label small">Judul Block</label>
-              <input class="form-control form-control-sm js-block-title" value="${escapeHtml(block.title || '')}" placeholder="Judul block">
-            </div>
-          </div>
-          ${renderBlockConfigEditor(block)}
-        </div>
-      </div>
-    `;
-  }
-
-  function syncBlocksTextarea() {
-    syncOrders();
-    form.elements.blocks_json.value = JSON.stringify(
-      blockState.map((block) => ({
-        type: block.type,
-        title: block.title,
-        order: block.order,
-        config: block.config,
-      })),
-      null,
-      2,
-    );
-  }
-
-  function updateReportSelectionSummary() {
-    const fieldLabels = getFieldLabelMap();
-    const { familyLabel, itemLabel } = getActiveReportFamilyMeta();
-    const indicatorKeys = new Set();
-    blockState.forEach((block) => {
-      const config = block.config || {};
-      (config.metric_keys || []).forEach((key) => indicatorKeys.add(key));
-      (config.focus_field_keys || []).forEach((key) => indicatorKeys.add(key));
-      (config.series || []).forEach((series) => series?.key && indicatorKeys.add(series.key));
-    });
-    const indicators = [...indicatorKeys];
-    reportSelectionLabel.textContent = `Total ${itemLabel} unik`;
-    reportSelectionCount.textContent = String(indicators.length);
-    reportSelectionHelper.textContent = indicators.length
-      ? `Family ${familyLabel} saat ini mengkurasi ${indicators.length} ${itemLabel} unik dari curated dataset run aktif.`
-      : `Pilih metric/field di block untuk menyusun ${itemLabel} pada family ${familyLabel}.`;
-    reportSelectionList.innerHTML = indicators.length
-      ? indicators.map((key) => `<span class="badge bg-soft-primary text-primary">${escapeHtml(fieldLabels[key] || key)} · ${escapeHtml(key)}</span>`).join('')
-      : '<span class="text-muted">Belum ada item yang dipilih.</span>';
-  }
-
-  function setMultiSelectValues(fieldName, values) {
-    const selected = new Set(Array.isArray(values) ? values : []);
-    Array.from(form.elements[fieldName]?.options || []).forEach((option) => {
-      option.selected = selected.has(option.value);
-    });
-  }
-
-  function buildPresetBlocks(blockTypes) {
-    return (Array.isArray(blockTypes) ? blockTypes : []).map((type, index) => normalizeBlock({
-      type,
-      title: normalizeTitle(type),
-      config: getDefaultConfig(type),
-      order: index + 1,
-    }, index));
-  }
-
-  function applyReportFamilyPreset() {
-    const familyKey = form.elements.report_family.value || 'custom';
-    const preset = reportFamilyPresets[familyKey] || reportFamilyPresets.custom;
-    if (!preset) return;
-
-    if (!form.elements.name.value.trim() || pageMode === 'create') {
-      form.elements.name.value = preset.defaultName || form.elements.name.value;
-    }
-    if (!form.elements.title.value.trim() || pageMode === 'create') {
-      form.elements.title.value = preset.defaultTitle || form.elements.title.value;
-    }
-    if (!form.elements.category_key.value.trim() || pageMode === 'create') {
-      form.elements.category_key.value = preset.categoryKey || form.elements.category_key.value;
-    }
-    form.elements.report_type.value = preset.reportType || form.elements.report_type.value;
-    form.elements.default_period_mode.value = preset.supportedPeriodModes?.[0] || form.elements.default_period_mode.value;
-    setMultiSelectValues('supported_period_modes', preset.supportedPeriodModes || []);
-    setMultiSelectValues('quick_presets', preset.quickPresets || []);
-
-    const currentLayout = parseJsonField('layout_json', {});
-    form.elements.layout_json.value = JSON.stringify({
-      ...currentLayout,
-      ...(preset.layout || {}),
-      report_family: familyKey,
-      block_order_strategy: 'explicit_order',
-    }, null, 2);
-
-    blockState = buildPresetBlocks(preset.blocks || []);
-    updateCuratedFieldsPanel();
-    renderBlockEditor();
-  }
-
-  function renderBlockEditor() {
-    syncOrders();
-    emptyState.classList.toggle('d-none', blockState.length > 0);
-    blockEditor.innerHTML = blockState.map((block, index) => buildBlockCard(block, index)).join('');
-    syncBlocksTextarea();
-    updateReportSelectionSummary();
-  }
-
-  function addBlock(type) {
-    blockState.push(normalizeBlock({ type, title: normalizeTitle(type), config: getDefaultConfig(type) }, blockState.length));
-    renderBlockEditor();
-  }
-
-  function updateBlock(blockId, updater) {
-    blockState = blockState.map((block) => {
-      if (block.id !== blockId) return block;
-      return ensureBlockConfig(updater({ ...block, config: JSON.parse(JSON.stringify(block.config || {})) }));
-    });
-    renderBlockEditor();
-  }
-
-  function refreshBlockConfigsForDatasetChange() {
-    blockState = blockState.map((block, index) => normalizeBlock(block, index));
-    updateCuratedFieldsPanel();
-    renderBlockEditor();
-  }
+  addIndicatorButton?.addEventListener('click', () => {
+    const item = createDefaultItem();
+    reportItems.push(item);
+    syncReportItemsJson();
+    renderItemTable();
+    renderAchievementChart();
+    showFormMessage('Indikator baru ditambahkan. Klik Simpan Draft, lalu buka Edit untuk mengatur dataset/manual input.', 'success');
+  });
 
   function buildPayload() {
-    syncBlocksTextarea();
+    syncReportItemsJson();
     return {
-      report: {
-        dataset_id: form.elements.dataset_id.value ? Number(form.elements.dataset_id.value) : null,
-        report_key: form.elements.report_key.value.trim(),
-        name: form.elements.name.value.trim(),
-        description: form.elements.description.value.trim(),
-        report_type: form.elements.report_type.value,
-        report_family: form.elements.report_family.value,
-        report_template_key: form.elements.report_family.value,
-        category_key: form.elements.category_key.value.trim() || null,
-      },
-      draft_version: {
-        dataset_version_id: form.elements.dataset_version_id.value ? Number(form.elements.dataset_version_id.value) : null,
-        title: form.elements.title.value.trim(),
-        meta_description: form.elements.meta_description.value.trim(),
-        default_period_mode: form.elements.default_period_mode.value,
-        supported_period_modes: getSelectedValues('supported_period_modes'),
-        quick_presets: getSelectedValues('quick_presets'),
-        filter_schema: parseJsonField('filter_schema_json', {}),
-        layout: parseJsonField('layout_json', {}),
-        blocks: parseJsonField('blocks_json', []),
-        narrative_intro: form.elements.narrative_intro.value.trim(),
-        narrative_methodology: form.elements.narrative_methodology.value.trim(),
-        summary_prompt: form.elements.summary_prompt.value.trim(),
-      }
+      report: { dataset_id: null, report_key: form.elements.report_key.value.trim(), name: form.elements.name.value.trim(), description: form.elements.description.value.trim(), report_type: form.elements.report_type.value, report_family: form.elements.report_family.value, report_template_key: form.elements.report_family.value, category_key: form.elements.category_key.value.trim() || null },
+      draft_version: { dataset_version_id: null, title: form.elements.title.value.trim() || form.elements.name.value.trim(), meta_description: form.elements.meta_description.value.trim(), default_period_mode: form.elements.default_period_mode.value, supported_period_modes: getSelectedValues('supported_period_modes'), quick_presets: getSelectedValues('quick_presets'), filter_schema: parseJsonField('filter_schema_json', {}), layout: parseJsonField('layout_json', {}), report_items: parseJsonField('report_items_json', []), data_sources: parseJsonField('data_sources_json', []), blocks: parseJsonField('blocks_json', []), narrative_intro: form.elements.narrative_intro.value.trim(), narrative_methodology: form.elements.narrative_methodology.value.trim(), summary_prompt: form.elements.summary_prompt.value.trim() }
     };
   }
 
-  toggleAdvancedJsonButton?.addEventListener('click', () => {
-    advancedJsonPanel.classList.toggle('d-none');
-    toggleAdvancedJsonButton.textContent = advancedJsonPanel.classList.contains('d-none') ? 'Tampilkan JSON' : 'Sembunyikan JSON';
-  });
-
-  document.querySelectorAll('.js-add-report-block').forEach((button) => {
-    button.addEventListener('click', () => addBlock(button.dataset.blockType));
-  });
-
-  blockEditor.addEventListener('click', (event) => {
-    const removeButton = event.target.closest('.js-remove-block');
-    if (removeButton) {
-      blockState = blockState.filter((block) => block.id !== removeButton.dataset.blockId);
-      renderBlockEditor();
-      return;
-    }
-    const upButton = event.target.closest('.js-move-block-up');
-    if (upButton) {
-      const index = blockState.findIndex((block) => block.id === upButton.dataset.blockId);
-      if (index > 0) {
-        [blockState[index - 1], blockState[index]] = [blockState[index], blockState[index - 1]];
-        renderBlockEditor();
-      }
-      return;
-    }
-    const downButton = event.target.closest('.js-move-block-down');
-    if (downButton) {
-      const index = blockState.findIndex((block) => block.id === downButton.dataset.blockId);
-      if (index >= 0 && index < blockState.length - 1) {
-        [blockState[index + 1], blockState[index]] = [blockState[index], blockState[index + 1]];
-        renderBlockEditor();
-      }
-      return;
-    }
-    const addSeriesButton = event.target.closest('.js-add-series');
-    if (addSeriesButton) {
-      const blockId = addSeriesButton.dataset.blockId;
-      const metricField = getFieldsByRole('metric')[0];
-      if (!metricField) return;
-      updateBlock(blockId, (block) => {
-        block.config.series = Array.isArray(block.config.series) ? block.config.series : [];
-        block.config.series.push({ key: metricField.key, label: metricField.label || metricField.key, aggregation: 'sum' });
-        return block;
-      });
-      return;
-    }
-    const removeSeriesButton = event.target.closest('.js-remove-series');
-    if (removeSeriesButton) {
-      const blockId = removeSeriesButton.dataset.blockId;
-      const seriesIndex = Number(removeSeriesButton.dataset.seriesIndex);
-      updateBlock(blockId, (block) => {
-        block.config.series = (block.config.series || []).filter((_, index) => index !== seriesIndex);
-        return block;
-      });
-    }
-  });
-
-  blockEditor.addEventListener('input', (event) => {
-    const card = event.target.closest('.js-report-block-card');
-    if (!card) return;
-    const blockId = card.dataset.blockId;
-    if (event.target.classList.contains('js-block-title')) {
-      updateBlock(blockId, (block) => ({ ...block, title: event.target.value }));
-      return;
-    }
-    if (event.target.classList.contains('js-series-label')) {
-      const seriesIndex = Number(event.target.dataset.seriesIndex);
-      updateBlock(blockId, (block) => {
-        block.config.series[seriesIndex].label = event.target.value;
-        return block;
-      });
-    }
-  });
-
-  blockEditor.addEventListener('change', (event) => {
-    const card = event.target.closest('.js-report-block-card');
-    if (!card) return;
-    const blockId = card.dataset.blockId;
-    if (event.target.classList.contains('js-block-type')) {
-      const nextType = event.target.value;
-      updateBlock(blockId, (block) => ({ ...block, type: nextType, title: block.title || normalizeTitle(nextType), config: getDefaultConfig(nextType) }));
-      return;
-    }
-    if (event.target.classList.contains('js-block-multiselect')) {
-      const selectedValues = Array.from(event.target.selectedOptions).map((option) => option.value);
-      updateBlock(blockId, (block) => {
-        block.config[event.target.dataset.configKey] = selectedValues;
-        return block;
-      });
-      return;
-    }
-    if (event.target.classList.contains('js-block-config-input')) {
-      updateBlock(blockId, (block) => {
-        block.config[event.target.dataset.configKey] = event.target.value;
-        return block;
-      });
-      return;
-    }
-    if (event.target.classList.contains('js-series-key') || event.target.classList.contains('js-series-label') || event.target.classList.contains('js-series-aggregation')) {
-      const seriesIndex = Number(event.target.dataset.seriesIndex);
-      updateBlock(blockId, (block) => {
-        block.config.series = Array.isArray(block.config.series) ? block.config.series : [];
-        block.config.series[seriesIndex] = block.config.series[seriesIndex] || { aggregation: 'sum' };
-        if (event.target.classList.contains('js-series-key')) {
-          const selectedField = getCuratedFieldsForBuilder().find((field) => field.key === event.target.value);
-          block.config.series[seriesIndex].key = event.target.value;
-          if (!block.config.series[seriesIndex].label) {
-            block.config.series[seriesIndex].label = selectedField?.label || event.target.value;
-          }
-        } else if (event.target.classList.contains('js-series-aggregation')) {
-          block.config.series[seriesIndex].aggregation = event.target.value;
-        }
-        return block;
-      });
-    }
-  });
-
-  form.elements.dataset_id.addEventListener('change', () => {
-    updateVersionOptions();
-    refreshBlockConfigsForDatasetChange();
-  });
-
-  form.elements.dataset_version_id.addEventListener('change', refreshBlockConfigsForDatasetChange);
-  form.elements.name.addEventListener('input', updateCuratedFieldsPanel);
-  form.elements.title.addEventListener('input', updateCuratedFieldsPanel);
-  form.elements.report_family.addEventListener('change', () => {
-    if (!form.elements.category_key.value.trim() || pageMode === 'create') {
-      form.elements.category_key.value = form.elements.report_family.value;
-    }
-  });
-  form.elements.report_type.addEventListener('change', updateReportSelectionSummary);
-  form.elements.category_key.addEventListener('input', updateReportSelectionSummary);
-  form.elements.report_family.addEventListener('change', updateReportSelectionSummary);
-  applyReportFamilyTemplateButton?.addEventListener('click', applyReportFamilyPreset);
-
   form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    saveButton.disabled = true;
-    saveButton.textContent = 'Menyimpan...';
+    event.preventDefault(); clearFormMessage(); saveButton.disabled = true; saveButton.textContent = 'Menyimpan...';
     try {
       const payload = buildPayload();
       const endpoint = pageMode === 'create' ? '/api/v1/analytics/reports' : `/api/v1/analytics/reports/${reportId}`;
       const method = pageMode === 'create' ? 'POST' : 'PUT';
-      const response = await fetch(endpoint, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const response = await fetch(endpoint, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const result = await response.json();
-      resultCard.classList.remove('d-none');
-      resultOutput.textContent = JSON.stringify(result, null, 2);
-      if (!response.ok || result.success === false) {
-        throw new Error(result.message || 'Gagal menyimpan report.');
-      }
-      draftVersionId = result.data?.draft_version?.id || draftVersionId;
-      publishButton.disabled = !draftVersionId;
-      alert(result.message || 'Report berhasil disimpan.');
-      if (pageMode === 'create' && result.data?.report?.id) {
-        window.location.href = `/analytics/reports/${result.data.report.id}/edit`;
-        return;
-      }
-    } catch (error) {
-      alert(error.message || 'Terjadi kesalahan saat menyimpan report.');
-    } finally {
-      saveButton.disabled = false;
-      saveButton.textContent = pageMode === 'create' ? 'Simpan & Buat Draft' : 'Simpan Draft';
-    }
+      resultCard.classList.remove('d-none'); resultOutput.textContent = JSON.stringify(result, null, 2);
+      if (!response.ok || result.success === false) throw new Error(result.message || 'Gagal menyimpan report.');
+      draftVersionId = result.data?.draft_version?.id || draftVersionId; publishButton.disabled = !draftVersionId; showFormMessage(result.message || 'Report berhasil disimpan.', 'success');
+      if (pageMode === 'create' && result.data?.report?.id) window.setTimeout(() => { window.location.href = `/analytics/reports/${result.data.report.id}/edit`; }, 700);
+    } catch (error) { showFormMessage(error.message || 'Terjadi kesalahan saat menyimpan report.', 'danger'); }
+    finally { saveButton.disabled = false; saveButton.textContent = pageMode === 'create' ? 'Simpan & Buat Draft' : 'Simpan Draft'; }
   });
 
   publishButton?.addEventListener('click', async () => {
-    if (!draftVersionId) {
-      alert('Simpan draft dulu sebelum publish.');
-      return;
-    }
-    publishButton.disabled = true;
-    publishButton.textContent = 'Publishing...';
+    if (!draftVersionId) { showFormMessage('Simpan draft dulu sebelum publish.', 'warning'); return; }
+    publishButton.disabled = true; publishButton.textContent = 'Publishing...';
     try {
-      const response = await fetch(`/api/v1/analytics/report-versions/${draftVersionId}/publish`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
+      const response = await fetch(`/api/v1/analytics/report-versions/${draftVersionId}/publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       const result = await response.json();
-      resultCard.classList.remove('d-none');
-      resultOutput.textContent = JSON.stringify(result, null, 2);
-      if (!response.ok || result.success === false) {
-        throw new Error(result.message || 'Gagal publish report.');
-      }
-      alert(result.message || 'Report berhasil dipublish.');
-      window.location.reload();
-    } catch (error) {
-      alert(error.message || 'Terjadi kesalahan saat publish report.');
-    } finally {
-      publishButton.disabled = false;
-      publishButton.textContent = 'Publish Draft';
-    }
+      resultCard.classList.remove('d-none'); resultOutput.textContent = JSON.stringify(result, null, 2);
+      if (!response.ok || result.success === false) throw new Error(result.message || 'Gagal publish report.');
+      showFormMessage(result.message || 'Report berhasil dipublish.', 'success'); window.setTimeout(() => window.location.reload(), 700);
+    } catch (error) { showFormMessage(error.message || 'Terjadi kesalahan saat publish report.', 'danger'); }
+    finally { publishButton.disabled = false; publishButton.textContent = 'Publish Draft'; }
   });
 
-  parseBlocksFromTextarea();
-  updateVersionOptions();
-  updateCuratedFieldsPanel();
-  if (pageMode === 'create' && blockState.length === 0) {
-    applyReportFamilyPreset();
-  }
-  renderBlockEditor();
+  renderItemTable();
+  renderAchievementChart();
 })();
 </script>
 {% endblock %}

@@ -1,0 +1,214 @@
+{% extends 'partials/base.html' %}
+{% block title %}Edit Item Report{% endblock %}
+
+{% set structure = active_version.structure_json if active_version and active_version.structure_json else {} %}
+{% set report_items = structure.get('report_items', []) or [] %}
+{% set item = report_item or {} %}
+{% set item_index = item_index or 0 %}
+{% set item_datasets = item.get('datasets', []) if item else [] %}
+{% set builder_dataset_catalog = builder_dataset_catalog or [] %}
+
+{% block content %}
+<div class="main-content">
+  <div class="page-content">
+    <div class="container-fluid">
+      <div class="row mb-3">
+        <div class="col-12">
+          <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+            <div>
+              <h4 class="mb-sm-0">Edit Item Report</h4>
+              <p class="text-muted mb-0">Kelola dataset, metric capaian, target, dan manual input untuk satu indikator.</p>
+            </div>
+            <div class="page-title-right d-flex gap-2 flex-wrap">
+              <a href="{{ url_for('analytics_web.analytics_report_edit', report_definition_id=report.id) }}" class="btn btn-light">Kembali ke Report</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if error_message %}<div class="alert alert-danger">{{ error_message }}</div>{% endif %}
+      <div id="analyticsReportItemAlert" class="alert d-none" role="alert"></div>
+
+      <form id="analytics-report-item-form" class="card">
+        <div class="card-header">
+          <h5 class="card-title mb-1">{{ item.get('name') or ('Indikator ' ~ (item_index + 1)) }}</h5>
+          <p class="text-muted mb-0">URL: /analytics/reports/{{ report.id }}/items/{{ item_index + 1 }}/edit. Tambahkan dataset atau gunakan manual input untuk laporan semi-CMS tanpa dataset.</p>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-3">
+            <div class="col-lg-12">
+              <label class="form-label">Nama Indikator</label>
+              <input class="form-control" name="item_name" value="{{ item.get('name', '') }}" placeholder="Indikator 1">
+              <div class="form-text">Nilai capaian dan target diatur per row dataset/manual input di bawah agar tidak dobel sumber kebenaran.</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Deskripsi</label>
+              <textarea class="form-control" rows="2" name="item_description">{{ item.get('description', '') }}</textarea>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+            <div>
+              <h6 class="mb-1">Dataset / Manual Input Item</h6>
+              <div class="text-muted small">Setiap row bisa memakai dataset atau manual input. Pilih field dari dataset aktif. Jika field berisi pilihan seperti status_realisasi, value-nya muncul sebagai dropdown; contoh harmonisasi: field status_realisasi, value selesai, aggregation count matching value, target count semua record.</div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="add-item-dataset-button">Tambah Dataset</button>
+          </div>
+          <div class="table-responsive mb-3">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light"><tr><th style="width:30%">Dataset</th><th>Nilai / Metric (Capaian)</th><th>Target</th><th class="text-end">Action</th></tr></thead>
+              <tbody id="item-dataset-table-body"><tr><td colspan="4" class="text-muted text-center py-3">Memuat dataset...</td></tr></tbody>
+            </table>
+          </div>
+          <textarea class="d-none" name="report_items_json">{{ report_items | tojson(indent=2) }}</textarea>
+        </div>
+        <div class="card-footer d-flex justify-content-between gap-2 flex-wrap">
+          <div class="text-muted small">Simpan item akan mengupdate draft report dan kembali tetap pada halaman ini.</div>
+          <button type="submit" class="btn btn-primary" id="save-report-item-button">Simpan Item</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='libs/plotly.js-dist-min/plotly.min.js') }}"></script>
+<script>
+(() => {
+  const form = document.getElementById('analytics-report-item-form');
+  if (!form) return;
+  const reportId = {{ report.id }};
+  const itemIndex = {{ item_index }};
+  const activeVersionId = {{ active_version.id if active_version else 'null' }};
+  const builderDatasetCatalog = {{ builder_dataset_catalog | tojson }};
+  const tableBody = document.getElementById('item-dataset-table-body');
+  const addButton = document.getElementById('add-item-dataset-button');
+  const saveButton = document.getElementById('save-report-item-button');
+  const alertNode = document.getElementById('analyticsReportItemAlert');
+  let reportItems = {{ report_items | tojson }};
+  if (!Array.isArray(reportItems)) reportItems = [];
+  reportItems[itemIndex] = reportItems[itemIndex] || { name: `Indikator ${itemIndex + 1}`, item_key: `indikator-${itemIndex + 1}`, datasets: [] };
+
+  function escapeHtml(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
+  function showMessage(message, type = 'danger') { alertNode.className = `alert alert-${type}`; alertNode.textContent = message; alertNode.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  function slugify(value) { return String(value || 'item').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'item'; }
+  function getDatasetById(id) { return builderDatasetCatalog.find((dataset) => String(dataset.id) === String(id)) || null; }
+  function getVersion(dataset, id) { if (!dataset) return null; if (id) return (dataset.versions || []).find((version) => String(version.id) === String(id)) || null; return (dataset.versions || []).find((version) => version.variant === 'published') || (dataset.versions || [])[0] || null; }
+  function getFields(source) { const dataset = getDatasetById(source.dataset_id); const version = getVersion(dataset, source.dataset_version_id); return Array.isArray(version?.curated_fields) ? version.curated_fields : []; }
+  function getRows(source) { const dataset = getDatasetById(source.dataset_id); const version = getVersion(dataset, source.dataset_version_id); return version?.latest_run?.row_snapshots || []; }
+  function datasetOptions(selected) { return ['<option value="">Manual input / tanpa dataset</option>'].concat(builderDatasetCatalog.map((dataset) => `<option value="${dataset.id}"${String(dataset.id) === String(selected || '') ? ' selected' : ''}>${escapeHtml(dataset.name)} — ${escapeHtml(dataset.dataset_key || '')}</option>`)).join(''); }
+  function versionOptions(source) { const dataset = getDatasetById(source.dataset_id); return ['<option value="">Auto published aktif</option>'].concat((dataset?.versions || []).map((version) => `<option value="${version.id}"${String(version.id) === String(source.dataset_version_id || '') ? ' selected' : ''}>${escapeHtml(version.label || `v${version.version_number}`)}</option>`)).join(''); }
+  function fieldOptions(source, selected, label) {
+    return [`<option value="">${escapeHtml(label)}</option>`]
+      .concat(getFields(source).map((field) => `<option value="${escapeHtml(field.key)}"${String(field.key) === String(selected || '') ? ' selected' : ''}>${escapeHtml(field.label || field.key)} · ${escapeHtml(field.key)}</option>`))
+      .join('');
+  }
+  function distinctFieldValues(source, fieldKey) {
+    if (!fieldKey) return [];
+    const seen = new Set();
+    const values = [];
+    getRows(source).forEach((row) => {
+      const value = row?.[fieldKey];
+      if (value === null || value === undefined || String(value).trim() === '') return;
+      const key = String(value);
+      if (seen.has(key)) return;
+      seen.add(key);
+      values.push(value);
+    });
+    return values;
+  }
+  function valueOptions(source, fieldKey, selected, label = 'Semua value') {
+    const options = [`<option value="">${escapeHtml(label)}</option>`];
+    distinctFieldValues(source, fieldKey).forEach((value) => {
+      options.push(`<option value="${escapeHtml(value)}"${String(value) === String(selected || '') ? ' selected' : ''}>${escapeHtml(value)}</option>`);
+    });
+    return options.join('');
+  }
+  function tableColumnOptions(source) { const selected = new Set(source.table_column_keys || []); return getFields(source).map((field) => `<option value="${escapeHtml(field.key)}"${selected.has(field.key) ? ' selected' : ''}>${escapeHtml(field.label || field.key)}</option>`).join(''); }
+  function numberOrZero(value) { const numeric = Number(value); return Number.isNaN(numeric) ? 0 : numeric; }
+  function normalizeText(value) { return String(value ?? '').trim().toLowerCase(); }
+  function rowMatchesValue(row, field, expected) {
+    if (!field || expected === '' || expected === null || expected === undefined) return true;
+    return normalizeText(row?.[field]) === normalizeText(expected);
+  }
+  function aggregate(source, key, mode, filterValue) {
+    const rows = getRows(source);
+    if (!rows.length) return 0;
+    const aggregation = mode || source.aggregation_mode || 'sum';
+    const filteredRows = rows.filter((row) => rowMatchesValue(row, key, filterValue));
+    if (aggregation === 'count_all') return rows.length;
+    if (aggregation === 'count_value') return filteredRows.length;
+    if (aggregation === 'count') return key ? filteredRows.filter((row) => row?.[key] !== null && row?.[key] !== undefined && row?.[key] !== '').length : rows.length;
+    if (!key) return 0;
+    const values = filteredRows.map((row) => Number(row[key])).filter((value) => !Number.isNaN(value));
+    if (!values.length) return aggregation === 'count' ? filteredRows.length : 0;
+    if (aggregation === 'avg') return values.reduce((a,b)=>a+b,0)/values.length;
+    return values.reduce((a,b)=>a+b,0);
+  }
+  function actualValue(source) { return source.source_mode === 'manual_input' || source.aggregation_mode === 'manual' ? numberOrZero(source.manual_value) : aggregate(source, source.actual_metric_key || source.condition_field, source.aggregation_mode, source.actual_filter_value || source.condition_value); }
+  function targetValue(source) { if (source.manual_target !== '' && source.manual_target !== undefined && source.manual_target !== null) return numberOrZero(source.manual_target); return aggregate(source, source.target_metric_key, source.target_aggregation_mode || 'count_all', source.target_filter_value); }
+  function enrichComputedValues() {
+    const item = reportItems[itemIndex];
+    item.datasets = (item.datasets || []).map((source) => ({
+      ...source,
+      computed_actual_value: actualValue(source),
+      computed_target_value: targetValue(source),
+    }));
+  }
+  function defaultSource() { return { id: `source-${Date.now()}`, source_mode: 'dataset_driven', dataset_id: '', dataset_version_id: '', actual_metric_key: 'status_realisasi', target_metric_key: '', aggregation_mode: 'count_value', target_aggregation_mode: 'count_all', actual_filter_value: 'selesai', target_filter_value: '', manual_value: '', manual_target: '', chart_type: 'bar', table_column_keys: [] }; }
+
+  function renderChart(node, source) {
+    if (!window.Plotly || !node) return;
+    const rows = getRows(source);
+    if (source.source_mode === 'manual_input') {
+      Plotly.react(node, [{ labels: ['Capaian', 'Sisa Target'], values: [actualValue(source), Math.max(targetValue(source) - actualValue(source), 0)], type: 'pie' }], { margin: { l: 10, r: 10, t: 10, b: 10 }, paper_bgcolor: 'transparent' }, { responsive: true, displayModeBar: false });
+      return;
+    }
+    if (!rows.length || !source.actual_metric_key) { node.innerHTML = '<div class="text-muted small">Belum ada data chart dari latest run.</div>'; return; }
+    const labels = rows.slice(0, 12).map((row, index) => row.nama_indikator || row.daerah || row.jenis || row.hasil || `Row ${index + 1}`);
+    const values = rows.slice(0, 12).map((row) => Number(row[source.actual_metric_key]) || 0);
+    Plotly.react(node, [{ x: labels, y: values, type: source.chart_type === 'line' ? 'scatter' : 'bar', mode: source.chart_type === 'line' ? 'lines+markers' : undefined, marker: { color: '#405189' } }], { margin: { l: 36, r: 12, t: 10, b: 48 }, paper_bgcolor: 'transparent', plot_bgcolor: 'transparent' }, { responsive: true, displayModeBar: false });
+  }
+  function previewTable(source) { const rows = getRows(source).slice(0, 5); const cols = (source.table_column_keys || []).slice(0, 5); if (!rows.length || !cols.length) return '<div class="text-muted small">Belum ada data tabel dari latest run.</div>'; return `<table class="table table-sm mb-0"><thead><tr>${cols.map((key) => `<th>${escapeHtml(key)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${cols.map((key) => `<td>${escapeHtml(row[key] ?? '-')}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }
+
+  function render() {
+    const item = reportItems[itemIndex];
+    const sources = item.datasets || [];
+    tableBody.innerHTML = sources.length ? sources.map((source, index) => `
+      <tr class="js-source-row" data-source-index="${index}">
+        <td><select class="form-select form-select-sm js-source-dataset mb-1">${datasetOptions(source.dataset_id)}</select><select class="form-select form-select-sm js-source-version">${versionOptions(source)}</select><select class="form-select form-select-sm mt-1 js-source-mode"><option value="dataset_driven"${source.source_mode !== 'manual_input' ? ' selected' : ''}>Dataset driven</option><option value="manual_input"${source.source_mode === 'manual_input' ? ' selected' : ''}>Manual input</option></select></td>
+        <td><select class="form-select form-select-sm js-source-actual mb-1">${fieldOptions(source, source.actual_metric_key || source.condition_field, 'Pilih field capaian')}</select><select class="form-select form-select-sm js-source-actual-value mb-1">${valueOptions(source, source.actual_metric_key || source.condition_field, source.actual_filter_value || source.condition_value, 'Semua value')}</select><select class="form-select form-select-sm js-source-aggregation mb-1"><option value="count_value"${(source.aggregation_mode === 'count_value' || source.aggregation_mode === 'count_condition') ? ' selected' : ''}>count matching value</option><option value="count_all"${source.aggregation_mode === 'count_all' ? ' selected' : ''}>count semua record</option><option value="count"${source.aggregation_mode === 'count' ? ' selected' : ''}>count field terisi</option><option value="sum"${source.aggregation_mode === 'sum' ? ' selected' : ''}>sum</option><option value="avg"${source.aggregation_mode === 'avg' ? ' selected' : ''}>average</option><option value="manual"${source.aggregation_mode === 'manual' ? ' selected' : ''}>manual</option></select><input class="form-control form-control-sm js-source-manual-value" value="${escapeHtml(source.manual_value || '')}" placeholder="nilai manual jika mode manual"><div class="text-muted fs-12 js-source-actual-preview">Capaian: ${escapeHtml(actualValue(source))}</div></td>
+        <td><select class="form-select form-select-sm js-source-target mb-1">${fieldOptions(source, source.target_metric_key, 'Pilih field target')}</select><select class="form-select form-select-sm js-source-target-value mb-1">${valueOptions(source, source.target_metric_key, source.target_filter_value, 'Semua value')}</select><select class="form-select form-select-sm js-source-target-aggregation mb-1"><option value="count_all"${(source.target_aggregation_mode || 'count_all') === 'count_all' ? ' selected' : ''}>target = count semua record</option><option value="count_value"${source.target_aggregation_mode === 'count_value' ? ' selected' : ''}>target = count matching value</option><option value="sum"${source.target_aggregation_mode === 'sum' ? ' selected' : ''}>target = sum field</option><option value="avg"${source.target_aggregation_mode === 'avg' ? ' selected' : ''}>target = average field</option></select><input class="form-control form-control-sm js-source-manual-target" value="${escapeHtml(source.manual_target || '')}" placeholder="target manual (override)"><div class="text-muted fs-12 js-source-target-preview">Target: ${escapeHtml(targetValue(source))}</div></td>
+        <td class="text-end"><div class="btn-group"><a class="btn btn-soft-primary btn-sm" href="/analytics/datasets/${escapeHtml(source.dataset_id || '')}/statistics" target="_blank">Detail</a><button type="button" class="btn btn-soft-secondary btn-sm js-toggle-source-preview">Edit</button><button type="button" class="btn btn-soft-danger btn-sm js-delete-source">Delete</button></div></td>
+      </tr>
+      <tr class="js-source-preview" data-source-index="${index}"><td colspan="4"><div class="row g-3"><div class="col-lg-5"><div class="border rounded p-2"><div class="d-flex justify-content-between mb-2"><strong class="small">Chart Dataset / Manual</strong><select class="form-select form-select-sm w-auto js-source-chart-type"><option value="bar"${source.chart_type === 'bar' ? ' selected' : ''}>bar</option><option value="line"${source.chart_type === 'line' ? ' selected' : ''}>line</option></select></div><div class="js-source-chart" style="min-height:220px"></div></div></div><div class="col-lg-7"><div class="border rounded p-2"><div class="d-flex justify-content-between mb-2"><strong class="small">Tabel Data Dataset</strong><select class="form-select form-select-sm w-auto js-source-columns" multiple size="3">${tableColumnOptions(source)}</select></div>${previewTable(source)}</div></div></div></td></tr>
+    `).join('') : '<tr><td colspan="4" class="text-muted text-center py-3">Belum ada dataset/manual input. Klik Tambah Dataset.</td></tr>';
+    tableBody.querySelectorAll('.js-source-chart').forEach((node) => { const preview = node.closest('.js-source-preview'); renderChart(node, sources[Number(preview.dataset.sourceIndex)]); });
+  }
+  function updateSource(index, updater) { const item = reportItems[itemIndex]; item.datasets[index] = { ...item.datasets[index], ...updater(item.datasets[index]) }; render(); }
+  function updateSourceState(index, updater) { const item = reportItems[itemIndex]; item.datasets[index] = { ...item.datasets[index], ...updater(item.datasets[index]) }; return item.datasets[index]; }
+  function updateManualPreview(row, source) { row.querySelector('.js-source-actual-preview').textContent = `Capaian: ${actualValue(source)}`; row.querySelector('.js-source-target-preview').textContent = `Target: ${targetValue(source)}`; }
+
+  addButton.addEventListener('click', () => { reportItems[itemIndex].datasets = reportItems[itemIndex].datasets || []; reportItems[itemIndex].datasets.push(defaultSource()); render(); });
+  tableBody.addEventListener('click', (event) => { const row = event.target.closest('.js-source-row'); const index = Number(row?.dataset.sourceIndex); if (event.target.closest('.js-delete-source')) { reportItems[itemIndex].datasets.splice(index, 1); render(); } });
+  tableBody.addEventListener('input', (event) => { const row = event.target.closest('.js-source-row'); if (!row) return; const index = Number(row.dataset.sourceIndex); if (event.target.classList.contains('js-source-manual-value')) { const source = updateSourceState(index, () => ({ manual_value: event.target.value, source_mode: 'manual_input' })); updateManualPreview(row, source); } if (event.target.classList.contains('js-source-manual-target')) { const source = updateSourceState(index, () => ({ manual_target: event.target.value })); updateManualPreview(row, source); } });
+  tableBody.addEventListener('change', (event) => { const row = event.target.closest('.js-source-row') || event.target.closest('.js-source-preview'); if (!row) return; const index = Number(row.dataset.sourceIndex); if (event.target.classList.contains('js-source-dataset')) updateSource(index, () => ({ dataset_id: event.target.value, dataset_version_id: '', actual_metric_key: '', target_metric_key: '', table_column_keys: [], source_mode: event.target.value ? 'dataset_driven' : 'manual_input' })); if (event.target.classList.contains('js-source-version')) updateSource(index, () => ({ dataset_version_id: event.target.value })); if (event.target.classList.contains('js-source-mode')) updateSource(index, () => ({ source_mode: event.target.value })); if (event.target.classList.contains('js-source-actual')) updateSource(index, () => ({ actual_metric_key: event.target.value, condition_field: event.target.value, actual_filter_value: '', condition_value: '' })); if (event.target.classList.contains('js-source-actual-value')) updateSource(index, () => ({ actual_filter_value: event.target.value, condition_value: event.target.value })); if (event.target.classList.contains('js-source-target')) updateSource(index, () => ({ target_metric_key: event.target.value, target_filter_value: '' })); if (event.target.classList.contains('js-source-target-value')) updateSource(index, () => ({ target_filter_value: event.target.value })); if (event.target.classList.contains('js-source-aggregation')) updateSource(index, () => ({ aggregation_mode: event.target.value, source_mode: event.target.value === 'manual' ? 'manual_input' : reportItems[itemIndex].datasets[index].source_mode })); if (event.target.classList.contains('js-source-target-aggregation')) updateSource(index, () => ({ target_aggregation_mode: event.target.value })); if (event.target.classList.contains('js-source-chart-type')) updateSource(index, () => ({ chart_type: event.target.value })); if (event.target.classList.contains('js-source-columns')) updateSource(index, () => ({ table_column_keys: Array.from(event.target.selectedOptions).map((option) => option.value) })); });
+
+  form.addEventListener('input', (event) => { const item = reportItems[itemIndex]; if (event.target.name === 'item_name') item.name = event.target.value; if (event.target.name === 'item_description') item.description = event.target.value; });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); saveButton.disabled = true; saveButton.textContent = 'Menyimpan...';
+    try {
+      enrichComputedValues();
+      const payload = { draft_version: { report_items: reportItems, blocks: [], data_sources: [], layout: { report_builder_mode: 'items_with_datasets' } } };
+      const response = await fetch(`/api/v1/analytics/reports/${reportId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const result = await response.json();
+      if (!response.ok || result.success === false) throw new Error(result.message || 'Gagal menyimpan item.');
+      showMessage('Item berhasil disimpan.', 'success');
+    } catch (error) { showMessage(error.message || 'Gagal menyimpan item.', 'danger'); }
+    finally { saveButton.disabled = false; saveButton.textContent = 'Simpan Item'; }
+  });
+  render();
+})();
+</script>
+{% endblock %}

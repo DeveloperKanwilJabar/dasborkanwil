@@ -1,5 +1,5 @@
 {% extends "partials/base.html" %}
-{% block title %}Report Dataset Analytics{% endblock title %}
+{% block title %}Statistik Dataset{% endblock title %}
 {% set report = linked_report_item.get('report') if linked_report_item else None %}
 {% set report_version = active_report_version %}
 {% set report_blocks = report_config.blocks if report_config and report_config.blocks else [] %}
@@ -7,6 +7,7 @@
 {% set report_period_modes = report_config.supported_period_modes if report_config and report_config.supported_period_modes else ['quarterly', 'semester', 'yearly'] %}
 {% set report_quick_presets = report_config.quick_presets if report_config and report_config.quick_presets else ['current_quarter', 'current_semester', 'current_year'] %}
 {% set dataset_contract = report_config.dataset_contract if report_config and report_config.dataset_contract else {} %}
+{% set report_data_sources = report_config.data_sources if report_config and report_config.data_sources else [] %}
 {% set curated_fields = dataset_contract.get('curated_fields', []) if dataset_contract else [] %}
 {% set run_binding = dataset_contract.get('run_binding', {}) if dataset_contract else {} %}
 {% set report_family_key = report_config.report_family if report_config and report_config.report_family else ((report.settings_json or {}).get('report_family') if report and report.settings_json else 'custom') %}
@@ -48,20 +49,14 @@
                 <div class="col-12">
                     <div class="page-title-box d-sm-flex align-items-center justify-content-between">
                         <div>
-                            <h4 class="mb-sm-0">Report Dataset Analytics</h4>
-                            <p class="text-muted mb-0">Report dibuka dari dataset analytics, bukan langsung dari registry. Viewer ini diposisikan sebagai layer semi-CMS yang fleksibel untuk chart, tabel, peta, dan narasi berbasis kontrak dataset aktif.</p>
+                            <h4 class="mb-sm-0">Statistik Dataset</h4>
+                            <p class="text-muted mb-0">Tahap kedua setelah Dataset: validasi chart keseluruhan, tabel data, export CSV/XLSX/JSON, dan semua jenis chart dasar dari field terpilih.</p>
                         </div>
                         <div class="page-title-right d-flex gap-2 flex-wrap justify-content-end">
                             <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-soft-secondary btn-sm">Katalog Dataset</a>
-                            <a href="{{ url_for('analytics_web.analytics_report_index') }}" class="btn btn-soft-info btn-sm">Katalog Report</a>
                             {% if dataset %}
-                            <a href="{{ url_for('analytics_web.analytics_dataset_workspace', dataset_id=dataset.id) }}" class="btn btn-soft-primary btn-sm">Workspace Dataset</a>
+                            <a href="{{ url_for('analytics_web.analytics_dataset_workspace', dataset_id=dataset.id) }}" class="btn btn-soft-primary btn-sm">Detail Dataset</a>
                             <a href="{{ url_for('analytics_web.analytics_dataset_edit', dataset_id=dataset.id) }}" class="btn btn-soft-secondary btn-sm">Edit Dataset</a>
-                            {% if linked_report_item and linked_report_item.get('report') %}
-                            <a href="{{ url_for('analytics_web.analytics_report_edit', report_definition_id=linked_report_item.get('report').id) }}" class="btn btn-soft-warning btn-sm">Builder Report</a>
-                            {% else %}
-                            <a href="{{ url_for('analytics_web.analytics_report_create', dataset_id=dataset.id) }}" class="btn btn-soft-warning btn-sm">Buat Report</a>
-                            {% endif %}
                             {% endif %}
                             {% if primary_registry %}
                             <a href="{{ url_for('analytics_web.analytics_registry_metadata', registry_id=primary_registry.id) }}" class="btn btn-soft-primary btn-sm">Metadata Registry</a>
@@ -86,22 +81,53 @@
             {% endif %}
 
             <div class="row g-4 mb-4">
+                {% if false and report_data_sources %}
+                <div class="col-12">
+                    <div class="card border-info-subtle">
+                        <div class="card-header border-0">
+                            <h5 class="card-title mb-1">Data Sources Report</h5>
+                            <p class="text-muted mb-0">Report ini bisa menggabungkan beberapa dataset. Tiap block membaca field dari <code>data_source_alias</code> masing-masing.</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                {% for source in report_data_sources %}
+                                <div class="col-md-6 col-xl-4">
+                                    <div class="border rounded p-3 h-100 bg-light-subtle">
+                                        <div class="d-flex justify-content-between gap-2 align-items-start mb-2">
+                                            <div>
+                                                <div class="fw-semibold">{{ source.get('label') or source.get('dataset_name') or source.get('alias') }}</div>
+                                                <code class="fs-12">{{ source.get('alias') }}</code>
+                                            </div>
+                                            <span class="badge bg-info-subtle text-info">v{{ source.get('dataset_version_number') or '-' }}</span>
+                                        </div>
+                                        <div class="text-muted fs-12">{{ source.get('dataset_name') or source.get('dataset_key') or '-' }}</div>
+                                        <div class="text-muted fs-12">Dataset ID: {{ source.get('dataset_id') or '-' }} · Version ID: {{ source.get('dataset_version_id') or '-' }}</div>
+                                        <div class="text-muted fs-12">Run: {{ source.get('selection_mode') or (source.get('run_binding') or {}).get('selection_mode') or 'latest_succeeded_run' }}</div>
+                                        <div class="text-muted fs-12 mt-2">Fields: {{ (source.get('curated_fields', []) or []) | map(attribute='key') | list | join(', ') if source.get('curated_fields') else '-' }}</div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
                 <div class="col-12">
                     <div class="card border-warning-subtle bg-warning-subtle">
                         <div class="card-body d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-start">
                             <div>
-                                <div class="text-uppercase text-muted small mb-2">Semi-CMS report dinamis</div>
-                                <h5 class="mb-1">{{ report_version.title if report_version else (report.name if report else 'Viewer Dataset Tanpa Builder Report') }}</h5>
-                                <p class="text-muted mb-0">{{ report_version.meta_description if report_version and report_version.meta_description else 'Viewer ini belum memakai narasi publish khusus. Hubungkan builder report agar preset, block, dan narasi lebih terkurasi.' }}</p>
+                                <div class="text-uppercase text-muted small mb-2">Statistik dataset</div>
+                                <h5 class="mb-1">{{ dataset.name if dataset else 'Statistik Dataset' }}</h5>
+                                <p class="text-muted mb-0">Halaman ini fokus untuk membaca hasil run dataset: KPI, chart, tabel lengkap, preset waktu, dan export data.</p>
                             </div>
                             <div class="text-lg-end">
-                                <div class="fw-semibold">{{ report.name if report else 'Belum ada report linked' }}</div>
-                                <div class="text-muted small">{{ report.report_key if report else 'dataset-only-viewer' }}</div>
+                                <div class="fw-semibold">{{ dataset.name if dataset else 'Dataset' }}</div>
+                                <div class="text-muted small">{{ dataset.dataset_key if dataset else 'dataset-statistics' }}</div>
                                 {% if report and report.settings_json and report.settings_json.get('report_family') %}
-                                <div class="badge bg-soft-warning text-warning mt-2">Family: {{ report.settings_json.get('report_family') }}</div>
+                                <div class="badge bg-soft-warning text-warning mt-2">Dataset</div>
                                 {% endif %}
                                 {% if report_version %}
-                                <div class="badge bg-soft-warning text-warning mt-2">Version report aktif: v{{ report_version.version_number }}</div>
+                                <div class="badge bg-soft-warning text-warning mt-2">Statistik dataset aktif</div>
                                 {% endif %}
                             </div>
                         </div>
@@ -139,16 +165,16 @@
                         <div class="card-body">
                             <p class="text-muted mb-2">Versi Aktif</p>
                             <div class="fw-semibold">{% if active_version %}v{{ active_version.version_number }}{% else %}Belum ada versi{% endif %}</div>
-                            <small class="text-muted">Report viewer ini membaca hasil materialisasi dataset aktif.</small>
+                            <small class="text-muted">Statistik ini membaca hasil materialisasi dataset aktif.</small>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
                     <div class="card analytics-metric-card h-100 border-success-subtle bg-success-subtle">
                         <div class="card-body">
-                            <p class="text-muted mb-2">Cakupan Report</p>
+                            <p class="text-muted mb-2">Field Statistik</p>
                             <div class="fw-semibold">{{ report_family_label }}</div>
-                            <small class="text-muted">{{ selected_indicator_count }} item indikator/field aktif. Jumlahnya tidak fixed dan mengikuti konfigurasi block pada report ini.</small>
+                            <small class="text-muted">{{ selected_indicator_count }} field/metric terkurasi dari dataset aktif.</small>
                         </div>
                     </div>
                 </div>
@@ -158,13 +184,13 @@
                 <div class="col-12 col-xxl-9">
                     <div class="card h-100" id="detailReportInsightSection">
                         <div class="card-header">
-                            <h5 class="card-title mb-1">Insight Report</h5>
-                            <p class="text-muted mb-0">Filter, preset waktu, angka, chart, dan ruang narasi didekatkan dalam satu workspace supaya report terasa lebih natural saat eksplorasi indikator dinamis.</p>
+                            <h5 class="card-title mb-1">Statistik Dataset</h5>
+                            <p class="text-muted mb-0">Filter, preset waktu, KPI, chart Plotly, tabel data, export, dan narasi ringkas ditempatkan di satu area agar dataset mudah divalidasi sebelum masuk Builder Report.</p>
                         </div>
                         <div class="card-body">
                             <div class="row g-3 mb-3">
                                 <div class="col-md-4">
-                                    <label class="form-label small text-muted" for="analyticsDetailDatasetSelect">Dataset Aktif</label>
+                                    <label class="form-label small text-muted" for="analyticsDetailDatasetSelect">Dataset Statistik</label>
                                     <select class="form-select form-select-sm" id="analyticsDetailDatasetSelect">
                                         {% if related_dataset_items %}
                                             {% for item in related_dataset_items %}
@@ -195,11 +221,20 @@
                                     </select>
                                 </div>
                                 <div class="col-md-2">
-                                    <label class="form-label small text-muted" for="analyticsDatasetMetricPeriodMode">Timeseries</label>
+                                    <label class="form-label small text-muted" for="analyticsDatasetMetricPeriodMode">Mode Chart</label>
                                     <select class="form-select form-select-sm" id="analyticsDatasetMetricPeriodMode">
                                         {% for mode in report_period_modes %}
                                         <option value="{{ mode }}" {% if report_config and report_config.default_period_mode == mode %}selected{% endif %}>{{ report_viewer_options.period_mode_labels.get(mode, mode|replace('_', ' ')|title) }}</option>
                                         {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small text-muted" for="analyticsDatasetChartType">Jenis Chart</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetChartType">
+                                        <option value="bar">Bar</option>
+                                        <option value="line">Line</option>
+                                        <option value="pie">Pie</option>
+                                        <option value="scatter">Scatter</option>
                                     </select>
                                 </div>
                                 <div class="col-md-3">
@@ -221,7 +256,7 @@
 
                             <div class="card border mb-3">
                                 <div class="card-header border-0">
-                                    <h6 class="card-title mb-1">Ringkasan Dataset</h6>
+                                    <h6 class="card-title mb-1">Ringkasan Statistik Dataset</h6>
                                     <p class="text-muted mb-0">Konteks singkat dataset aktif tanpa menjejalkan metadata panjang.</p>
                                 </div>
                                 <div class="card-body" id="analyticsDatasetDetailSummary">
@@ -231,17 +266,23 @@
 
                             {% for block in ordered_report_blocks %}
                                 {% if block.get('type') == 'metric_cards' %}
-                                <div class="row g-3 mb-3" id="analyticsDatasetMetricCards">
-                                    <div class="col-12">
-                                        <div class="text-muted small mb-2">Metric: {{ (block.get('config', {}).get('metric_keys', []) or []) | join(', ') if block.get('config', {}).get('metric_keys') else '-' }}</div>
+                                <div class="card border mb-3">
+                                    <div class="card-header border-0">
+                                        <h6 class="card-title mb-1">{{ block.get('title') or 'KPI Statistik Dataset' }}</h6>
+                                        <p class="text-muted mb-0">Kartu angka dihitung dari baris hasil run yang lolos filter aktif.</p>
+                                        <div class="text-muted small mt-2">Metric: {{ (block.get('config', {}).get('metric_keys', []) or []) | join(', ') if block.get('config', {}).get('metric_keys') else '-' }}</div>
                                     </div>
-                                    <div class="col-md-3"><div class="card border h-100"><div class="card-body"><div class="text-muted small">Total</div><div class="display-6">0</div></div></div></div>
+                                    <div class="card-body">
+                                        <div class="row g-3" id="analyticsDatasetMetricCards">
+                                            <div class="col-md-3"><div class="card border h-100"><div class="card-body"><div class="text-muted small">Total</div><div class="display-6">0</div></div></div></div>
+                                        </div>
+                                    </div>
                                 </div>
                                 {% elif block.get('type') == 'plotly_timeseries' %}
                                 <div class="card border mb-3" id="detailReportChartSection">
                                     <div class="card-header border-0">
                                         <h6 class="card-title mb-1">{{ block.get('title') or 'Chart Timeseries' }}</h6>
-                                        <p class="text-muted mb-0">Chart akan ikut berubah sesuai preset dan filter aktif tanpa perlu scroll mencari panel lain.</p>
+                                        <p class="text-muted mb-0">Chart akan ikut berubah sesuai preset dan filter aktif. Jika dataset tidak punya field tanggal, chart otomatis memakai kategori/dimensi yang tersedia.</p>
                                         {% if block.get('config', {}).get('series') %}
                                         <div class="text-muted small mt-2">Series: {{ block.get('config', {}).get('series', []) | map(attribute='key') | list | join(', ') }} · X: {{ block.get('config', {}).get('x_key') or '-' }}</div>
                                         {% endif %}
@@ -253,8 +294,17 @@
                                 {% elif block.get('type') == 'detail_table' %}
                                 <div class="card border mb-3">
                                     <div class="card-header border-0">
-                                        <h6 class="card-title mb-1">{{ block.get('title') or 'Tabel Detail' }}</h6>
-                                        <p class="text-muted mb-0">Preview baris hasil filter aktif supaya viewer report mulai terasa mengikuti manifest builder.</p>
+                                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+                                            <div>
+                                                <h6 class="card-title mb-1">{{ block.get('title') or 'Tabel Detail' }}</h6>
+                                                <p class="text-muted mb-0">Preview baris hasil filter aktif dan export data statistik dataset.</p>
+                                            </div>
+                                            <div class="d-flex flex-wrap gap-2">
+                                                <button class="btn btn-soft-primary btn-sm" type="button" data-analytics-export="csv">Export CSV</button>
+                                                <button class="btn btn-soft-success btn-sm" type="button" data-analytics-export="xlsx">Export XLSX</button>
+                                                <button class="btn btn-soft-info btn-sm" type="button" data-analytics-export="json">Export JSON</button>
+                                            </div>
+                                        </div>
                                         {% if block.get('config', {}).get('column_keys') %}
                                         <div class="text-muted small mt-2">Kolom: {{ block.get('config', {}).get('column_keys', []) | join(', ') }}</div>
                                         {% endif %}
@@ -269,14 +319,14 @@
                                 <div class="card border mb-3">
                                     <div class="card-header border-0">
                                         <h6 class="card-title mb-1">{{ block.get('title') or 'Narasi Insight' }}</h6>
-                                        <p class="text-muted mb-0">Narasi ini dirakit dari konfigurasi report aktif dan snapshot data hasil filter saat ini.</p>
+                                        <p class="text-muted mb-0">Narasi ini dirakit dari snapshot data hasil filter saat ini.</p>
                                         {% if block.get('config', {}).get('focus_field_keys') %}
                                         <div class="text-muted small mt-2">Fokus narasi: {{ block.get('config', {}).get('focus_field_keys', []) | join(', ') }}</div>
                                         {% endif %}
                                     </div>
                                     <div class="card-body">
                                         <div id="analyticsDatasetNarrative" class="d-flex flex-column gap-3">
-                                            <div class="text-muted">Menyiapkan narasi report...</div>
+                                            <div class="text-muted">Menyiapkan narasi statistik...</div>
                                         </div>
                                     </div>
                                 </div>
@@ -314,8 +364,8 @@
                 <div class="col-12 col-xxl-3 d-flex flex-column gap-4">
                     <div class="card border-warning-subtle shadow-sm">
                         <div class="card-header">
-                            <h5 class="card-title mb-1">Block Report Aktif</h5>
-                            <p class="text-muted mb-0">Manifest block ini berasal dari builder report semi-CMS yang terhubung ke dataset aktif.</p>
+                            <h5 class="card-title mb-1">Field Dataset Terkurasi</h5>
+                            <p class="text-muted mb-0">Daftar block statistik dasar yang dipakai untuk membaca field hasil run dataset.</p>
                         </div>
                         <div class="card-body">
                             {% if ordered_report_blocks %}
@@ -331,18 +381,18 @@
                                 {% endfor %}
                             </div>
                             {% else %}
-                            <div class="text-muted">Belum ada block report terpasang. Buat builder report agar viewer lebih terkurasi.</div>
+                            <div class="text-muted">Belum ada block statistik terpasang.</div>
                             {% endif %}
                         </div>
                     </div>
                     <div class="card border-primary shadow-sm">
                         <div class="card-header">
                             <h5 class="card-title mb-1">Kontrak Field Terkurasi</h5>
-                            <p class="text-muted mb-0">Report memilih field curated dari dataset run, bukan query liar ke source mentah.</p>
+                            <p class="text-muted mb-0">Statistik memilih field curated dari dataset run, bukan query liar ke source mentah.</p>
                         </div>
                         <div class="card-body d-flex flex-column gap-3">
                             <div>
-                                <div class="text-muted small">PK -> Dataset Run Binding</div>
+                                <div class="text-muted small">Dataset Run Binding</div>
                                 <div class="fw-semibold">{{ run_binding.get('selection_mode') or 'latest_succeeded_run' }}</div>
                                 <div class="text-muted fs-12">Dataset version {{ run_binding.get('dataset_version_number') or '-' }} · {{ run_binding.get('report_title') or (report.name if report else '-') }}</div>
                             </div>
@@ -403,5 +453,6 @@
 </script>
 <script src="{{ url_for('static', filename='libs/plotly.js-dist-min/plotly.min.js') }}"></script>
 <script src="{{ url_for('static', filename='libs/leaflet/dist/leaflet.js') }}"></script>
-<script src="{{ url_for('static', filename='js/pages/analytics-workspace.js', v='20260609-dataset-report-viewer') }}"></script>
+<script src="{{ url_for('static', filename='libs/xlsx/dist/xlsx.full.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/analytics-workspace.js', v='20260619-dataset-statistics-v2') }}"></script>
 {% endblock extra_js %}

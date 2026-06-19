@@ -90,8 +90,8 @@
                                             </td>
                                             <td class="text-end">
                                                 <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
-                                                    <a href="{{ url_for('analytics_web.analytics_dataset_workspace', dataset_id=dataset.id) }}" class="btn btn-sm btn-soft-primary">Workspace</a>
-                                                    <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=dataset.id) }}" class="btn btn-sm btn-primary">Buka Report</a>
+                                                    <a href="{{ url_for('analytics_web.analytics_dataset_workspace', dataset_id=dataset.id) }}" class="btn btn-sm btn-soft-primary">Detail Dataset</a>
+                                                    <a href="{{ url_for('analytics_web.analytics_dataset_statistics', dataset_id=dataset.id) }}" class="btn btn-sm btn-primary">Statistik Dataset</a>
                                                     <a href="{{ url_for('analytics_web.analytics_dataset_edit', dataset_id=dataset.id) }}" class="btn btn-sm btn-soft-secondary">Edit</a>
                                                 </div>
                                             </td>

@@ -14,6 +14,7 @@
     const datasetFilterDateStart = document.getElementById('analyticsDatasetFilterDateStart');
     const datasetFilterDateEnd = document.getElementById('analyticsDatasetFilterDateEnd');
     const datasetMetricPeriodMode = document.getElementById('analyticsDatasetMetricPeriodMode');
+    const datasetChartType = document.getElementById('analyticsDatasetChartType');
     const datasetQuickRanges = document.getElementById('analyticsDatasetQuickRanges');
     const chartContainer = document.getElementById('analyticsDatasetChart');
     const detailTableContainer = document.getElementById('analyticsDatasetDetailTable');
@@ -30,7 +31,11 @@
         selectedDatasetId: config.initialDatasetId || null,
         currentDatasetDetail: null,
         currentDatasetRuns: [],
+        reportSourceDetails: {},
+        reportSourceRuns: {},
+        currentFilteredRowsByBlock: {},
         chartRendered: false,
+        lastChartType: '',
         map: null,
         mapLayer: null,
         filters: {
@@ -40,6 +45,7 @@
             dateStart: '',
             dateEnd: '',
             metricPeriodMode: reportConfig.default_period_mode || 'quarterly',
+            chartType: 'bar',
         },
     };
 
@@ -122,7 +128,9 @@
     }
 
     function resolveRowDate(row) {
-        const rawValue = row && row.tanggal ? String(row.tanggal) : '';
+        const rawValue = row && (row.tanggal || row.period_date || row.submitted_at || row.created_at)
+            ? String(row.tanggal || row.period_date || row.submitted_at || row.created_at).slice(0, 10)
+            : '';
         if (!rawValue) {
             return null;
         }
@@ -223,6 +231,10 @@
             : [];
     }
 
+    function getReportDataSources() {
+        return Array.isArray(reportConfig.data_sources) ? reportConfig.data_sources : [];
+    }
+
     function getBlockConfig(blockType) {
         const block = getOrderedReportBlocks().find(function (item) {
             return item && item.type === blockType;
@@ -230,13 +242,61 @@
         return (block && block.config) || {};
     }
 
+    function getReportBlock(blockType) {
+        return getOrderedReportBlocks().find(function (item) {
+            return item && item.type === blockType;
+        }) || null;
+    }
+
+    function getBlockDataSource(block) {
+        const sources = getReportDataSources();
+        const blockConfig = (block && block.config) || {};
+        const sourceAlias = block && (block.data_source_alias || block.source_alias || blockConfig.data_source_alias);
+        if (sourceAlias) {
+            const matchedSource = sources.find(function (source) {
+                return source && source.alias === sourceAlias;
+            });
+            if (matchedSource) {
+                return matchedSource;
+            }
+        }
+        return sources[0] || null;
+    }
+
     function getCuratedFields() {
         const datasetContract = reportConfig.dataset_contract || {};
         return Array.isArray(datasetContract.curated_fields) ? datasetContract.curated_fields : [];
     }
 
-    function getFieldLabelMap() {
-        return getCuratedFields().reduce(function (acc, field) {
+    function getRowsFromRuns(runs) {
+        const successfulRun = (runs || []).find((run) => run.status === 'succeeded') || (runs || [])[0] || null;
+        const summaryJson = (successfulRun && successfulRun.summary_json) || {};
+        return Array.isArray(summaryJson.row_snapshots) ? summaryJson.row_snapshots : [];
+    }
+
+    function getRowsForBlock(block, fallbackRows) {
+        const source = getBlockDataSource(block);
+        const datasetId = source && source.dataset_id;
+        if (datasetId && state.reportSourceRuns[String(datasetId)]) {
+            return getRowsFromRuns(state.reportSourceRuns[String(datasetId)]);
+        }
+        return Array.isArray(fallbackRows) ? fallbackRows : [];
+    }
+
+    function filterRowsForBlock(block, fallbackRows) {
+        return applyDatasetFilters(getRowsForBlock(block, fallbackRows));
+    }
+
+    function getBlockCuratedFields(block) {
+        const source = getBlockDataSource(block);
+        if (source && Array.isArray(source.curated_fields) && source.curated_fields.length) {
+            return source.curated_fields;
+        }
+        return getCuratedFields();
+    }
+
+    function getFieldLabelMap(block) {
+        return getBlockCuratedFields(block).reduce(function (acc, field) {
             if (field && field.key) {
                 acc[field.key] = field.label || field.key;
             }
@@ -244,8 +304,8 @@
         }, {});
     }
 
-    function resolveConfiguredFieldKeys(requestedKeys, fallbackKeys) {
-        const curatedFieldKeys = getCuratedFields().map(function (field) {
+    function resolveConfiguredFieldKeys(block, requestedKeys, fallbackKeys) {
+        const curatedFieldKeys = getBlockCuratedFields(block).map(function (field) {
             return field.key;
         }).filter(Boolean);
         const allowlist = curatedFieldKeys.length ? new Set(curatedFieldKeys) : null;
@@ -261,10 +321,10 @@
         });
     }
 
-    function resolveConfiguredSeries(fallbackKeys) {
-        const config = getBlockConfig('plotly_timeseries');
+    function resolveConfiguredSeries(block, fallbackKeys) {
+        const config = (block && block.config) || getBlockConfig('plotly_timeseries');
         const requestedSeries = Array.isArray(config.series) ? config.series : [];
-        const curatedFieldKeys = new Set(getCuratedFields().map(function (field) {
+        const curatedFieldKeys = new Set(getBlockCuratedFields(block).map(function (field) {
             return field.key;
         }).filter(Boolean));
         const normalized = requestedSeries.filter(function (series) {
@@ -281,20 +341,52 @@
         }
         return (fallbackKeys || []).map(function (key) {
             return { key, label: key, aggregation: 'sum' };
+        }).filter(function (series) {
+            return series.key === 'total' || !curatedFieldKeys.size || curatedFieldKeys.has(series.key);
         });
+    }
+
+    function resolveChartXKey(block, rows, configuredXKey) {
+        const availableKeys = new Set();
+        (rows || []).forEach(function (row) {
+            Object.keys(row || {}).forEach(function (key) {
+                if (row[key] !== null && row[key] !== undefined && row[key] !== '') {
+                    availableKeys.add(key);
+                }
+            });
+        });
+        if (configuredXKey && availableKeys.has(configuredXKey)) {
+            return configuredXKey;
+        }
+
+        const categoricalField = getBlockCuratedFields(block).find(function (field) {
+            return field && field.key && availableKeys.has(field.key) && !['metric', 'date', 'geo_latitude', 'geo_longitude'].includes(field.role);
+        });
+        if (categoricalField) {
+            return categoricalField.key;
+        }
+
+        return ['status_realisasi', 'hasil', 'status', 'jenis', 'nama_indikator', 'judul_kegiatan', 'daerah', 'reporting_year'].find(function (key) {
+            return availableKeys.has(key);
+        }) || '';
     }
 
     function summarizeFieldMetric(rows, key) {
         if (key === 'total') {
             return rows.length;
         }
-        const numericValues = rows.map(function (row) {
-            return Number(row && row[key]);
+        const rawValues = rows.map(function (row) {
+            return row && row[key];
+        }).filter(function (value) {
+            return value !== null && value !== undefined && value !== '';
+        });
+        const numericValues = rawValues.map(function (value) {
+            return Number(value);
         }).filter(function (value) {
             return !Number.isNaN(value);
         });
         if (!numericValues.length) {
-            return null;
+            return rawValues.length ? rawValues.length : null;
         }
         const normalizedKey = String(key || '').toLowerCase();
         if (normalizedKey.includes('pct') || normalizedKey.includes('percent') || normalizedKey.includes('achievement')) {
@@ -327,11 +419,14 @@
             return;
         }
         const yearSummary = state.filters.reportingYear || ((summaryJson && summaryJson.filter_dimensions && summaryJson.filter_dimensions.reporting_years || []).join(', ') || 'Semua tahun');
+        const metricBlock = getReportBlock('metric_cards');
+        const metricConfig = (metricBlock && metricBlock.config) || {};
         const configuredMetricKeys = resolveConfiguredFieldKeys(
-            getBlockConfig('metric_cards').metric_keys,
+            metricBlock,
+            metricConfig.metric_keys,
             ['total', 'selesai', 'dikembalikan', 'achievement_pct']
         );
-        const fieldLabels = getFieldLabelMap();
+        const fieldLabels = getFieldLabelMap(metricBlock);
         const metricCards = configuredMetricKeys.map(function (key) {
             if (key === 'selesai') {
                 const value = rows.filter((row) => String(row.hasil || '').toLowerCase() === 'selesai').length;
@@ -399,12 +494,15 @@
             return;
         }
 
+        const tableBlock = getReportBlock('detail_table');
+        const tableConfig = (tableBlock && tableBlock.config) || {};
         const configuredColumns = resolveConfiguredFieldKeys(
-            getBlockConfig('detail_table').column_keys,
+            tableBlock,
+            tableConfig.column_keys,
             ['tanggal', 'daerah', 'jenis', 'hasil', 'reporting_year']
         );
-        const fieldLabels = getFieldLabelMap();
-        const previewRows = rows.slice(0, 8);
+        const fieldLabels = getFieldLabelMap(tableBlock);
+        const previewRows = rows;
         detailTableContainer.innerHTML = `
             <table class="table table-sm align-middle mb-0">
                 <thead>
@@ -426,8 +524,101 @@
                     }).join('')}
                 </tbody>
             </table>
-            <div class="text-muted fs-12 mt-3">Menampilkan ${escapeHtml(formatNumber(previewRows.length))} dari ${escapeHtml(formatNumber(rows.length))} baris aktif.</div>
+            <div class="text-muted fs-12 mt-3">Menampilkan semua ${escapeHtml(formatNumber(rows.length))} baris aktif hasil run/filter.</div>
         `;
+    }
+
+    function resolveTableExportRows() {
+        const rows = state.currentFilteredRowsByBlock.detail_table || [];
+        return Array.isArray(rows) ? rows : [];
+    }
+
+    function resolveTableExportColumns(rows) {
+        const tableBlock = getReportBlock('detail_table');
+        const tableConfig = (tableBlock && tableBlock.config) || {};
+        const configuredColumns = resolveConfiguredFieldKeys(
+            tableBlock,
+            tableConfig.column_keys,
+            ['tanggal', 'daerah', 'jenis', 'hasil', 'reporting_year']
+        );
+        if (configuredColumns.length) {
+            return configuredColumns;
+        }
+        const discovered = new Set();
+        rows.forEach(function (row) {
+            Object.keys(row || {}).forEach(function (key) {
+                discovered.add(key);
+            });
+        });
+        return Array.from(discovered);
+    }
+
+    function downloadBlob(filename, content, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    }
+
+    function serializeCsvCell(value) {
+        const normalized = value === null || value === undefined ? '' : String(value);
+        return `"${normalized.replaceAll('"', '""')}"`;
+    }
+
+    function exportDetailRows(format) {
+        const rows = resolveTableExportRows();
+        const columns = resolveTableExportColumns(rows);
+        const datasetName = state.currentDatasetDetail && state.currentDatasetDetail.dataset
+            ? (state.currentDatasetDetail.dataset.dataset_key || state.currentDatasetDetail.dataset.id || 'dataset')
+            : 'dataset';
+        const timestamp = new Date().toISOString().slice(0, 10);
+        if (format === 'json') {
+            downloadBlob(
+                `${datasetName}-filtered-rows-${timestamp}.json`,
+                JSON.stringify({ columns, rows }, null, 2),
+                'application/json;charset=utf-8'
+            );
+            return;
+        }
+        if (format === 'xlsx') {
+            if (window.XLSX) {
+                const exportRows = rows.map(function (row) {
+                    return columns.reduce(function (acc, column) {
+                        acc[column] = resolveRowDisplayValue(row, column);
+                        return acc;
+                    }, {});
+                });
+                const worksheet = window.XLSX.utils.json_to_sheet(exportRows, { header: columns });
+                const workbook = window.XLSX.utils.book_new();
+                window.XLSX.utils.book_append_sheet(workbook, worksheet, 'Dataset Run');
+                window.XLSX.writeFile(workbook, `${datasetName}-filtered-rows-${timestamp}.xlsx`);
+                return;
+            }
+            const tsv = [
+                columns.join('\t'),
+                ...rows.map(function (row) {
+                    return columns.map(function (column) {
+                        return String(resolveRowDisplayValue(row, column)).replaceAll('\t', ' ');
+                    }).join('\t');
+                }),
+            ].join('\n');
+            downloadBlob(`${datasetName}-filtered-rows-${timestamp}.xls`, tsv, 'application/vnd.ms-excel;charset=utf-8');
+            return;
+        }
+        const csv = [
+            columns.map(serializeCsvCell).join(','),
+            ...rows.map(function (row) {
+                return columns.map(function (column) {
+                    return serializeCsvCell(resolveRowDisplayValue(row, column));
+                }).join(',');
+            }),
+        ].join('\n');
+        downloadBlob(`${datasetName}-filtered-rows-${timestamp}.csv`, csv, 'text/csv;charset=utf-8');
     }
 
     function renderNarrative(rows, summaryJson) {
@@ -444,9 +635,10 @@
         const rangeText = state.filters.dateStart || state.filters.dateEnd
             ? `${state.filters.dateStart || 'awal data'} s.d. ${state.filters.dateEnd || 'akhir data'}`
             : 'seluruh rentang data aktif';
-        const narrativeConfig = getBlockConfig('narrative');
-        const focusFieldKeys = resolveConfiguredFieldKeys(narrativeConfig.focus_field_keys, ['achievement_pct', 'total']);
-        const fieldLabels = getFieldLabelMap();
+        const narrativeBlock = getReportBlock('narrative');
+        const narrativeConfig = (narrativeBlock && narrativeBlock.config) || getBlockConfig('narrative');
+        const focusFieldKeys = resolveConfiguredFieldKeys(narrativeBlock, narrativeConfig.focus_field_keys, ['achievement_pct', 'total']);
+        const fieldLabels = getFieldLabelMap(narrativeBlock);
         const focusSummary = focusFieldKeys.map(function (key) {
             const resolvedValue = key === 'achievement_pct'
                 ? achievement
@@ -562,13 +754,10 @@
 
     function aggregateRows(rows, periodMode, xKey, seriesConfig) {
         const bucketMap = new Map();
-        rows.forEach(function (row) {
+        rows.forEach(function (row, rowIndex) {
             const date = resolveRowDate(row);
             const rawXValue = xKey ? row[xKey] : null;
-            if (!rawXValue && !date) {
-                return;
-            }
-            let label = rawXValue || row.tanggal || '-';
+            let label = rawXValue || row.tanggal || row.period_date || row.submitted_at || `Baris ${rowIndex + 1}`;
             if (!rawXValue && date) {
                 if (periodMode === 'weekly') {
                     const weekStart = new Date(date);
@@ -600,12 +789,15 @@
                 } else if (key === 'dikembalikan') {
                     value = String(row.hasil || '').toLowerCase() === 'dikembalikan' ? 1 : 0;
                 } else {
-                    const numeric = Number(row && row[key]);
-                    value = Number.isNaN(numeric) ? 0 : numeric;
+                    const rawValue = row && row[key];
+                    const numeric = Number(rawValue);
+                    value = Number.isNaN(numeric)
+                        ? (rawValue === null || rawValue === undefined || rawValue === '' ? 0 : 1)
+                        : numeric;
                 }
                 current.values[key] = (current.values[key] || 0) + value;
             });
-            current.sortValue = Math.min(current.sortValue, date ? date.getTime() : current.sortValue);
+            current.sortValue = date ? Math.min(current.sortValue, date.getTime()) : current.sortValue;
             bucketMap.set(label, current);
         });
 
@@ -618,10 +810,11 @@
         if (!chartContainer || !Plotly) {
             return;
         }
-        const chartConfig = getBlockConfig('plotly_timeseries');
+        const chartBlock = getReportBlock('plotly_timeseries');
+        const chartConfig = (chartBlock && chartBlock.config) || getBlockConfig('plotly_timeseries');
         const fallbackSeriesKeys = ['total', 'selesai', 'dikembalikan'];
-        const configuredSeries = resolveConfiguredSeries(fallbackSeriesKeys);
-        const xKey = chartConfig.x_key || 'tanggal';
+        const configuredSeries = resolveConfiguredSeries(chartBlock, fallbackSeriesKeys);
+        const xKey = resolveChartXKey(chartBlock, rows, chartConfig.x_key || 'tanggal');
         const series = aggregateRows(rows, state.filters.metricPeriodMode || 'quarterly', xKey, configuredSeries);
         if (!series.length) {
             Plotly.react(chartContainer, [], {
@@ -633,27 +826,51 @@
         }
 
         const palette = ['#405189', '#0ab39c', '#f06548', '#f7b84b'];
-        const traces = configuredSeries.map(function (seriesItem, index) {
-            return {
-                x: series.map((item) => item.label),
-                y: series.map((item) => item.values[seriesItem.key] || 0),
-                type: index === 0 ? 'scatter' : 'bar',
-                mode: index === 0 ? 'lines+markers' : undefined,
-                name: seriesItem.label || seriesItem.key,
-                line: index === 0 ? { color: palette[index % palette.length], width: 3 } : undefined,
-                marker: { color: palette[index % palette.length], opacity: index === 0 ? 1 : 0.75, size: index === 0 ? 8 : undefined },
-            };
-        });
+        const chartType = state.filters.chartType || 'bar';
+        if (state.lastChartType && state.lastChartType !== chartType && Plotly.purge) {
+            Plotly.purge(chartContainer);
+        }
+        state.lastChartType = chartType;
+        let traces = [];
+        if (chartType === 'pie') {
+            const firstSeries = configuredSeries[0] || { key: 'total', label: 'Total' };
+            traces = [{
+                labels: series.map((item) => item.label),
+                values: series.map((item) => item.values[firstSeries.key] || 0),
+                type: 'pie',
+                name: firstSeries.label || firstSeries.key,
+                marker: { colors: palette },
+                textinfo: 'label+percent',
+            }];
+        } else {
+            traces = configuredSeries.map(function (seriesItem, index) {
+                const isLine = chartType === 'line';
+                const isScatter = chartType === 'scatter';
+                return {
+                    x: series.map((item) => item.label),
+                    y: series.map((item) => item.values[seriesItem.key] || 0),
+                    type: isLine || isScatter ? 'scatter' : 'bar',
+                    mode: isLine ? 'lines+markers' : isScatter ? 'markers' : undefined,
+                    name: seriesItem.label || seriesItem.key,
+                    line: isLine ? { color: palette[index % palette.length], width: 3 } : undefined,
+                    marker: { color: palette[index % palette.length], opacity: 0.8, size: isScatter ? 10 : undefined },
+                };
+            });
+        }
 
-        Plotly.react(chartContainer, traces, {
-            barmode: 'group',
+        const layout = {
             margin: { l: 48, r: 20, t: 20, b: 48 },
             legend: { orientation: 'h' },
             paper_bgcolor: 'transparent',
             plot_bgcolor: 'transparent',
-            xaxis: { title: xKey || 'Periode' },
-            yaxis: { title: 'Nilai' },
-        }, {
+        };
+        if (chartType !== 'pie') {
+            layout.barmode = 'group';
+            layout.xaxis = { title: xKey || 'Kategori/Periode' };
+            layout.yaxis = { title: 'Nilai' };
+        }
+
+        Plotly.react(chartContainer, traces, layout, {
             responsive: true,
             displayModeBar: false,
         });
@@ -671,7 +888,8 @@
     }
 
     function extractMapPoints(rows) {
-        const mapConfig = getBlockConfig('geo_map');
+        const mapBlock = getReportBlock('geo_map');
+        const mapConfig = (mapBlock && mapBlock.config) || getBlockConfig('geo_map');
         const latitudeField = mapConfig.latitude_field || 'latitude';
         const longitudeField = mapConfig.longitude_field || 'longitude';
         const labelField = mapConfig.label_field || 'daerah';
@@ -783,16 +1001,29 @@
         const activeVersion = detail.published_version || detail.draft_version || null;
         const latestRun = (state.currentDatasetRuns || []).find((run) => run.status === 'succeeded') || state.currentDatasetRuns[0] || null;
         const summaryJson = (latestRun && latestRun.summary_json) || {};
-        const rows = Array.isArray(summaryJson.row_snapshots) ? summaryJson.row_snapshots : [];
-        const filteredRows = applyDatasetFilters(rows);
+        const currentRows = Array.isArray(summaryJson.row_snapshots) ? summaryJson.row_snapshots : [];
+        const filteredRows = applyDatasetFilters(currentRows);
+        const metricBlock = getReportBlock('metric_cards');
+        const chartBlock = getReportBlock('plotly_timeseries');
+        const tableBlock = getReportBlock('detail_table');
+        const narrativeBlock = getReportBlock('narrative');
+        const mapBlock = getReportBlock('geo_map');
 
-        renderMetricCards(filteredRows, summaryJson);
+        state.currentFilteredRowsByBlock = {
+            metric_cards: filterRowsForBlock(metricBlock, currentRows),
+            plotly_timeseries: filterRowsForBlock(chartBlock, currentRows),
+            detail_table: filterRowsForBlock(tableBlock, currentRows),
+            narrative: filterRowsForBlock(narrativeBlock, currentRows),
+            geo_map: filterRowsForBlock(mapBlock, currentRows),
+        };
+
+        renderMetricCards(state.currentFilteredRowsByBlock.metric_cards, summaryJson);
         renderDatasetSummary(dataset, activeVersion, latestRun, filteredRows);
         renderExecutionBridge(detail, latestRun);
-        renderChart(filteredRows);
-        renderDetailTable(filteredRows);
-        renderNarrative(filteredRows, summaryJson);
-        renderMap(filteredRows);
+        renderChart(state.currentFilteredRowsByBlock.plotly_timeseries);
+        renderDetailTable(state.currentFilteredRowsByBlock.detail_table);
+        renderNarrative(state.currentFilteredRowsByBlock.narrative, summaryJson);
+        renderMap(state.currentFilteredRowsByBlock.geo_map);
     }
 
     function populateFilterControls(detail, runs) {
@@ -803,6 +1034,53 @@
         populateSelectOptions(datasetFilterReportingYear, options.reportingYears, state.filters.reportingYear, 'Semua Tahun');
         populateSelectOptions(datasetFilterStatus, options.statuses, state.filters.status, 'Semua Status');
         populateSelectOptions(datasetFilterJenis, options.jenisOptions, state.filters.jenis, 'Semua Jenis');
+    }
+
+    function fetchDatasetRunsForSource(datasetId) {
+        if (!datasetId || !config.analyticsDatasetRunsUrlTemplate) {
+            return Promise.resolve([]);
+        }
+        const url = replaceTemplate(config.analyticsDatasetRunsUrlTemplate, '__DATASET_ID__', datasetId);
+        return fetchJson(url).then(function (data) {
+            return data.runs || [];
+        }).catch(function () {
+            return [];
+        });
+    }
+
+    function fetchDatasetDetailForSource(datasetId) {
+        if (!datasetId || !config.analyticsDatasetDetailUrlTemplate) {
+            return Promise.resolve(null);
+        }
+        const url = replaceTemplate(config.analyticsDatasetDetailUrlTemplate, '__DATASET_ID__', datasetId);
+        return fetchJson(url).catch(function () {
+            return null;
+        });
+    }
+
+    function loadReportDataSources() {
+        const sources = getReportDataSources();
+        if (!sources.length) {
+            return Promise.resolve([]);
+        }
+        const uniqueDatasetIds = Array.from(new Set(sources.map(function (source) {
+            return source && source.dataset_id ? String(source.dataset_id) : '';
+        }).filter(Boolean)));
+        return Promise.all(uniqueDatasetIds.map(function (datasetId) {
+            if (String(datasetId) === String(state.selectedDatasetId || '') && state.currentDatasetDetail) {
+                state.reportSourceDetails[String(datasetId)] = state.currentDatasetDetail;
+                state.reportSourceRuns[String(datasetId)] = state.currentDatasetRuns || [];
+                return Promise.resolve({ datasetId, detail: state.currentDatasetDetail, runs: state.currentDatasetRuns || [] });
+            }
+            return Promise.all([
+                fetchDatasetDetailForSource(datasetId),
+                fetchDatasetRunsForSource(datasetId),
+            ]).then(function (results) {
+                state.reportSourceDetails[String(datasetId)] = results[0];
+                state.reportSourceRuns[String(datasetId)] = results[1] || [];
+                return { datasetId, detail: results[0], runs: results[1] || [] };
+            });
+        }));
     }
 
     function loadDatasetRuns(datasetId) {
@@ -832,8 +1110,10 @@
         fetchJson(url).then(function (data) {
             state.currentDatasetDetail = data;
             return loadDatasetRuns(datasetId).then(function (runs) {
-                populateFilterControls(data, runs);
-                rerenderDatasetView();
+                return loadReportDataSources().then(function () {
+                    populateFilterControls(data, runs);
+                    rerenderDatasetView();
+                });
             });
         }).catch(function (error) {
             datasetDetailSummary.innerHTML = `<div class="text-danger">${escapeHtml(error.message || 'Gagal memuat detail dataset.')}</div>`;
@@ -935,6 +1215,7 @@
             [datasetFilterDateStart, 'dateStart'],
             [datasetFilterDateEnd, 'dateEnd'],
             [datasetMetricPeriodMode, 'metricPeriodMode'],
+            [datasetChartType, 'chartType'],
         ].forEach(function (entry) {
             const element = entry[0];
             const key = entry[1];
@@ -967,6 +1248,12 @@
                 });
             });
         }
+
+        document.querySelectorAll('[data-analytics-export]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                exportDetailRows(button.getAttribute('data-analytics-export'));
+            });
+        });
     }
 
     function loadDatasets() {
@@ -996,6 +1283,7 @@
         datasetMetricPeriodMode.value = 'quarterly';
     }
     state.filters.metricPeriodMode = datasetMetricPeriodMode ? datasetMetricPeriodMode.value : 'quarterly';
+    state.filters.chartType = datasetChartType ? datasetChartType.value : 'bar';
 
     bindFilters();
     loadDatasets();

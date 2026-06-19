@@ -31,12 +31,25 @@ def _make_registry_version(version_number=3):
 
 
 def _make_dataset_run(run_id=31, status='succeeded'):
+    row_snapshots = [
+        {'nama_indikator': 'A', 'status_realisasi': 'selesai', 'capaian_total': 1},
+        {'nama_indikator': 'B', 'status_realisasi': 'selesai', 'capaian_total': 1},
+        {'nama_indikator': 'C', 'status_realisasi': 'selesai', 'capaian_total': 1},
+        {'nama_indikator': 'D', 'status_realisasi': 'proses', 'capaian_total': 0},
+        {'nama_indikator': 'E', 'status_realisasi': 'belum_jalan', 'capaian_total': 0},
+        {'nama_indikator': 'F', 'status_realisasi': 'proses', 'capaian_total': 0},
+    ]
     return SimpleNamespace(
         id=run_id,
         status=status,
-        result_row_count=42,
+        result_row_count=6,
         updated_at='2026-06-09T10:00:00+00:00',
         requested_reporting_year=2026,
+        result_preview_json=row_snapshots[:3],
+        summary_json={
+            'row_snapshots': row_snapshots,
+            'row_count': 6,
+        },
     )
 
 
@@ -146,12 +159,67 @@ def _make_report_item(report_id=21, dataset_id=7):
                         {'key': 'longitude', 'label': 'Longitude', 'role': 'geo_longitude', 'type': 'number'},
                     ],
                 },
+                'data_sources': [
+                    {
+                        'alias': 'pk_target',
+                        'label': 'Dataset PK',
+                        'dataset_id': dataset_id,
+                        'dataset_key': 'dataset-wilayah',
+                        'dataset_name': 'Dataset Wilayah',
+                        'dataset_version_id': 21,
+                        'dataset_version_number': 2,
+                        'selection_mode': 'latest_succeeded_run',
+                        'curated_fields': [
+                            {'key': 'tanggal', 'label': 'Tanggal', 'role': 'date', 'type': 'date'},
+                            {'key': 'capaian_total', 'label': 'Capaian Total', 'role': 'metric', 'type': 'integer'},
+                            {'key': 'achievement_pct', 'label': 'Achievement %', 'role': 'metric', 'type': 'number'},
+                        ],
+                    },
+                    {
+                        'alias': 'renaksi_progress',
+                        'label': 'Dataset Renaksi',
+                        'dataset_id': 8,
+                        'dataset_key': 'dataset-renaksi',
+                        'dataset_name': 'Dataset Renaksi',
+                        'dataset_version_id': 22,
+                        'dataset_version_number': 1,
+                        'selection_mode': 'latest_succeeded_run',
+                        'curated_fields': [
+                            {'key': 'kegiatan', 'label': 'Kegiatan', 'role': 'dimension', 'type': 'string'},
+                            {'key': 'status_renaksi', 'label': 'Status Renaksi', 'role': 'dimension', 'type': 'string'},
+                            {'key': 'progress_pct', 'label': 'Progress %', 'role': 'metric', 'type': 'number'},
+                        ],
+                    },
+                ],
+                'report_items': [
+                    {
+                        'item_key': 'indikator-1',
+                        'name': 'Indikator 1',
+                        'description': 'Item uji',
+                        'target_value': '100',
+                        'datasets': [
+                            {
+                                'source_mode': 'dataset_driven',
+                                'dataset_id': dataset_id,
+                                'dataset_version_id': 21,
+                                'actual_metric_key': 'capaian_total',
+                                'target_metric_key': 'achievement_pct',
+                                'aggregation_mode': 'count_value',
+                                'target_aggregation_mode': 'count_all',
+                                'actual_metric_key': 'status_realisasi',
+                                'actual_filter_value': 'selesai',
+                                'manual_target': '',
+                                'table_column_keys': ['nama_indikator', 'capaian_total'],
+                            }
+                        ],
+                    }
+                ],
                 'blocks': [
-                    {'type': 'metric_cards', 'title': 'Ringkasan KPI', 'config': {'metric_keys': ['capaian_total', 'achievement_pct']}},
-                    {'type': 'plotly_timeseries', 'title': 'Tren Kinerja', 'config': {'x_key': 'tanggal', 'series': [{'key': 'capaian_total', 'label': 'Capaian Total'}]}},
-                    {'type': 'detail_table', 'title': 'Tabel Detail Kinerja', 'config': {'column_keys': ['tanggal', 'nama_indikator', 'capaian_total', 'achievement_pct']}},
-                    {'type': 'geo_map', 'title': 'Sebaran Wilayah', 'config': {'latitude_field': 'latitude', 'longitude_field': 'longitude', 'label_field': 'nama_indikator'}},
-                    {'type': 'narrative', 'title': 'Narasi Eksekutif', 'config': {'focus_field_keys': ['achievement_pct', 'capaian_total']}},
+                    {'type': 'metric_cards', 'title': 'Ringkasan KPI', 'data_source_alias': 'pk_target', 'config': {'metric_keys': ['capaian_total', 'achievement_pct']}},
+                    {'type': 'plotly_timeseries', 'title': 'Tren Kinerja', 'data_source_alias': 'pk_target', 'config': {'x_key': 'tanggal', 'series': [{'key': 'capaian_total', 'label': 'Capaian Total'}]}},
+                    {'type': 'detail_table', 'title': 'Tabel Progress Renaksi', 'data_source_alias': 'renaksi_progress', 'config': {'column_keys': ['kegiatan', 'status_renaksi', 'progress_pct']}},
+                    {'type': 'geo_map', 'title': 'Sebaran Wilayah', 'data_source_alias': 'pk_target', 'config': {'latitude_field': 'latitude', 'longitude_field': 'longitude', 'label_field': 'nama_indikator'}},
+                    {'type': 'narrative', 'title': 'Narasi Eksekutif', 'data_source_alias': 'renaksi_progress', 'config': {'focus_field_keys': ['progress_pct']}},
                 ],
             },
             narrative_guidance_json={'summary_prompt': 'Ringkas capaian.'},
@@ -244,14 +312,13 @@ def test_analytics_index_page_shows_dataset_catalog(monkeypatch):
 
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert 'Analytics Datasets' in html
-    assert 'Katalog Dataset Analytics' in html
+    assert 'Dataset Analytics' in html
+    assert 'Katalog Dataset' in html
     assert 'Buat Dataset' in html
     assert 'Linkage Registry' in html
     assert 'Dataset Wilayah' in html
-    assert 'Viewer' in html
-    assert 'Workspace' in html
-    assert 'Builder Report' in html
+    assert 'Statistik Dataset' in html
+    assert 'Detail Dataset' in html
     assert 'Edit' in html
     assert 'Registry Wilayah' in html
 
@@ -290,8 +357,8 @@ def test_analytics_registry_datasets_page_shows_dataset_actions(monkeypatch):
     html = response.get_data(as_text=True)
     assert 'Dataset Terkait Registry' in html
     assert 'Daftar Dataset Analytics Terkait' in html
-    assert 'Buka Report' in html
-    assert 'Workspace' in html
+    assert 'Statistik Dataset' in html
+    assert 'Detail Dataset' in html
     assert 'Edit' in html
 
 
@@ -309,6 +376,20 @@ def test_analytics_dataset_create_page_renders_stage_shell(monkeypatch):
     assert 'Step 3 — Contract & Publish' in html
     assert 'Step 4 — Report Readiness' in html
     assert 'Semi-CMS report dinamis' in html
+    assert 'Dataset Wizard Manusiawi' in html
+    assert 'Pilih Source Form' in html
+    assert 'Field Picker' in html
+    assert 'Bangun Contract Otomatis' in html
+    assert 'Role Field' in html
+    assert 'js-dataset-field-role' in html
+    assert 'renderDatasetFieldCards' in html
+    assert 'syncContractFromFieldCards' in html
+    assert 'inferFieldRole' in html
+    assert 'Advanced JSON Contract' in html
+    assert 'analyticsDatasetBuilderForm' in html
+    assert 'analyticsDatasetFormAlert' in html
+    assert "addEventListener('submit'" in html
+    assert 'createUrl' in html
 
 
 def test_analytics_dataset_workspace_page_renders_operational_shell(monkeypatch):
@@ -323,16 +404,15 @@ def test_analytics_dataset_workspace_page_renders_operational_shell(monkeypatch)
 
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert 'Workspace Dataset Analytics' in html
+    assert 'Detail Dataset Analytics' in html
     assert 'Source Summary' in html
     assert 'Versi Dataset' in html
     assert 'Latest Run Snapshot' in html
     assert 'Riwayat Run' in html
-    assert 'Edit Report' in html
-    assert 'Buka Report' in html
+    assert 'Statistik Dataset' in html
 
 
-def test_analytics_dataset_report_page_renders_humanized_focus_layout(monkeypatch):
+def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkeypatch):
     app = create_app('testing')
 
     monkeypatch.setattr('app.modules.analytics.routes_web.DataRegistryService', StubDataRegistryService)
@@ -340,35 +420,32 @@ def test_analytics_dataset_report_page_renders_humanized_focus_layout(monkeypatc
     monkeypatch.setattr('app.modules.analytics.routes_web.AnalyticsQueryService', StubAnalyticsQueryService)
 
     client = app.test_client()
-    response = client.get('/analytics/datasets/7/report')
+    response = client.get('/analytics/datasets/7/statistics')
 
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert 'Report Dataset Analytics' in html
-    assert 'Workspace Dataset' in html
-    assert 'Katalog Report' in html
-    assert 'Builder Report' in html
+    assert 'Statistik Dataset' in html
+    assert 'Detail Dataset' in html
     assert 'Metadata Registry' in html
-    assert 'PK Kanwil 2026' in html
-    assert 'Narasi laporan tahun aktif.' in html
-    assert 'Block Report Aktif' in html
+    assert 'Field Dataset Terkurasi' in html
     assert 'metric_cards' in html
     assert 'plotly_timeseries' in html
     assert 'detail_table' in html
-    assert 'geo_map' in html
     assert 'narrative' in html
-    assert 'Ringkasan KPI' in html
-    assert 'Tren Kinerja' in html
-    assert 'Tabel Detail Kinerja' in html
-    assert 'Sebaran Wilayah' in html
-    assert 'Narasi Eksekutif' in html
+    assert 'KPI Statistik Dataset' in html
+    assert 'Chart Dataset' in html
+    assert 'Tabel Data Hasil Run' in html
+    assert 'Narasi Statistik Otomatis' in html
     assert 'Ke Chart' in html
-    assert 'Ke Peta' in html
     assert 'id="analyticsDetailDatasetSelect"' in html
     assert 'id="analyticsDatasetMetricCards"' in html
     assert 'id="analyticsDatasetChart"' in html
     assert 'id="analyticsDatasetDetailTable"' in html
-    assert 'id="analyticsDatasetMap"' in html
+    assert 'data-analytics-export="csv"' in html
+    assert 'data-analytics-export="json"' in html
+    assert 'data-analytics-export="xlsx"' in html
+    assert 'id="analyticsDatasetChartType"' in html
+    assert 'libs/xlsx/dist/xlsx.full.min.js' in html
     assert 'id="analyticsDatasetNarrative"' in html
     assert 'id="analyticsDatasetRunsList"' in html
     assert 'id="analyticsDatasetRunButton"' in html
@@ -385,18 +462,15 @@ def test_analytics_dataset_report_page_renders_humanized_focus_layout(monkeypatc
     assert 'quick_presets' in html
     assert 'Triwulan Ini' in html
     assert 'latest_succeeded_run' in html
-    assert 'Cakupan Report' in html
-    assert 'Jumlahnya tidak fixed dan mengikuti konfigurasi block pada report ini.' in html
+    assert 'Field Statistik' in html
+    assert 'field/metric terkurasi dari dataset aktif' in html
     assert 'reportViewerOptions' in html
     assert 'Kontrak Field Terkurasi' in html
-    assert 'Capaian Total' in html
-    assert 'Achievement %' in html
     assert 'Metric: capaian_total, achievement_pct' in html
-    assert 'Kolom: tanggal, nama_indikator, capaian_total, achievement_pct' in html
-    assert 'Fokus narasi: achievement_pct, capaian_total' in html
+    assert 'Kolom: tanggal, nama_indikator, latitude, longitude' in html
 
 
-def test_analytics_dataset_report_page_follows_block_order_from_builder(monkeypatch):
+def test_analytics_dataset_statistics_page_follows_block_order_from_builder(monkeypatch):
     app = create_app('testing')
 
     custom_report_item = _make_report_item(dataset_id=7)
@@ -414,11 +488,12 @@ def test_analytics_dataset_report_page_follows_block_order_from_builder(monkeypa
     )
 
     client = app.test_client()
-    response = client.get('/analytics/datasets/7/report')
+    response = client.get('/analytics/datasets/7/statistics')
 
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert html.index('Narasi Pembuka') < html.index('Tabel Setelah Narasi') < html.index('Chart Penutup')
+    insight_html = html.split('id="detailReportInsightSection"', 1)[1]
+    assert insight_html.index('KPI Statistik Dataset') < insight_html.index('Chart Dataset') < insight_html.index('Tabel Data Hasil Run')
 
 
 def test_analytics_report_index_page_renders_catalog(monkeypatch):
@@ -431,12 +506,14 @@ def test_analytics_report_index_page_renders_catalog(monkeypatch):
 
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert 'Report Analytics' in html
-    assert 'Katalog Report Semi-CMS' in html
+    assert 'Report' in html
+    assert 'Tabel Report' in html
+    assert 'Nama Report' in html
     assert 'PK Kanwil' in html
-    assert 'Dataset Wilayah' in html
-    assert 'Builder' in html
-    assert 'Viewer' in html
+    assert 'Edit' in html
+    assert 'Delete' in html
+    assert 'Dataset Wilayah' not in html
+    assert 'Statistik Dataset' not in html
 
 
 def test_analytics_report_create_page_renders_builder(monkeypatch):
@@ -449,20 +526,19 @@ def test_analytics_report_create_page_renders_builder(monkeypatch):
 
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert 'Buat Report Analytics' in html
-    assert 'Builder Report Semi-CMS' in html
-    assert 'Dataset Analytics' in html
-    assert 'Template / Family Report' in html
-    assert 'Default Period Mode' in html
-    assert 'name="supported_period_modes"' in html
-    assert 'name="quick_presets"' in html
-    assert 'Terapkan Template Family' in html
-    assert 'Block Editor Manusiawi' in html
-    assert 'Advanced JSON' in html
-    assert 'Ringkasan Item Report Dinamis' in html
-    assert 'Jumlah item pada report tidak fixed.' in html
-    assert 'builderDatasetCatalog' in html
-    assert 'js-add-report-block' in html
+    assert 'Tambah Report' in html
+    assert 'Edit Report' in html
+    assert 'Nama Report' in html
+    assert 'Deskripsi Singkat' in html
+    assert 'Item / Indikator Report' in html
+    assert 'Nama Indikator' in html
+    assert 'Nilai (Capaian)' in html
+    assert 'Action' in html
+    assert 'report_items_json' in html
+    assert 'reportAchievementChart' in html
+    assert 'analyticsReportFormAlert' in html
+    assert 'showFormMessage' in html
+    assert 'alert(' not in html
     assert 'Publish Draft' in html
 
 
@@ -476,23 +552,59 @@ def test_analytics_report_edit_page_renders_builder(monkeypatch):
 
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert 'Edit Report Analytics' in html
-    assert 'Builder Report Semi-CMS' in html
-    assert 'Template / Family Report' in html
+    assert 'Edit Report' in html
     assert 'PK Kanwil' in html
-    assert 'PK Kanwil 2026' in html
-    assert 'name="supported_period_modes"' in html
-    assert 'name="quick_presets"' in html
-    assert 'Plotly Timeseries' in html or 'plotly_timeseries' in html
-    assert 'Field Terkurasi Dataset' in html
-    assert 'PK -> Dataset Run Binding' in html
-    assert 'latest_succeeded_run' in html
-    assert 'Block Editor Manusiawi' in html
-    assert 'builder-active-version-title' in html
-    assert 'report-selection-count' in html
-    assert 'toggle-advanced-json-button' in html
-    assert 'builderDatasetCatalog' in html
-    assert 'js-add-series' in html or 'Tambah Series' in html
+    assert 'Buka Statistik Dataset' not in html
+    assert 'Nama Report' in html
+    assert 'Deskripsi Singkat' in html
+    assert 'Item / Indikator Report' in html
+    assert 'Nama Indikator' in html
+    assert 'Nilai (Capaian)' in html
+    assert 'Target' in html
+    assert 'Action' in html
+    assert 'Chart Persentase Capaian Item' in html
+    assert 'reportAchievementChart' in html
+    assert 'Tambah Indikator' in html
+    assert 'add-report-indicator-button' in html
+    assert 'Tambah Dataset' not in html
+    assert '/analytics/reports/${reportId || \'new\'}/items/' in html
+    assert 'showFormMessage' in html
+
+
+def test_analytics_report_item_edit_page_renders_dataset_and_manual_input_builder(monkeypatch):
+    app = create_app('testing')
+
+    monkeypatch.setattr('app.modules.analytics.routes_web.AnalyticsQueryService', StubAnalyticsQueryService)
+
+    client = app.test_client()
+    response = client.get('/analytics/reports/21/items/1/edit')
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'Edit Item Report' in html
+    assert 'Tambah Dataset' in html
+    assert 'Dataset / Manual Input Item' in html
+    assert 'Nilai / Metric (Capaian)' in html
+    assert 'Manual input / tanpa dataset' in html
+    assert 'sum' in html
+    assert 'average' in html
+    assert 'count matching value' in html
+    assert 'target = count semua record' in html
+    assert 'status_realisasi' in html
+    assert 'selesai' in html
+    assert 'proses' in html
+    assert 'belum_jalan' in html
+    assert 'row_snapshots' in html
+    assert 'js-source-actual-value' in html
+    assert 'js-source-target-value' in html
+    assert 'manual' in html
+    assert 'Chart Dataset / Manual' in html
+    assert 'Tabel Data Dataset' in html
+    assert 'js-source-actual' in html
+    assert 'js-source-manual-value' in html
+    assert 'js-source-manual-target' in html
+    assert 'js-source-condition-field' not in html
+    assert 'js-source-target-aggregation' in html
 
 
 def test_analytics_metadata_page_separates_registry_metadata(monkeypatch):
@@ -544,9 +656,18 @@ def test_analytics_workspace_source_js_contains_expected_fetch_and_filter_contra
     assert 'datasetMatchesRegistry' in content
     assert 'applyDatasetFilters' in content
     assert 'aggregateRows' in content
+    assert 'resolveChartXKey' in content
     assert 'renderMetricCards' in content
     assert 'renderChart' in content
     assert 'renderDetailTable' in content
+    assert 'exportDetailRows' in content
+    assert "format === 'xlsx'" in content
+    assert 'window.XLSX.writeFile' in content
+    assert 'datasetChartType' in content
+    assert 'Plotly.purge' in content
+    assert 'lastChartType' in content
+    assert 'downloadBlob' in content
+    assert 'data-analytics-export' in content
     assert 'renderNarrative' in content
     assert 'renderMap' in content
     assert 'getOrderedReportBlocks' in content
@@ -566,3 +687,78 @@ def test_analytics_workspace_source_js_contains_expected_fetch_and_filter_contra
     assert 'current_semester' in content
     assert 'current_year' in content
     assert 'full_range' in content
+    assert "series.key === 'total'" in content
+
+
+def test_analytics_dataset_report_shortcut_opens_multi_dataset_builder(monkeypatch):
+    app = create_app('testing')
+
+    monkeypatch.setattr('app.modules.analytics.routes_web.AnalyticsQueryService', StubAnalyticsQueryService)
+    monkeypatch.setattr('app.modules.analytics.routes_web.DataRegistryService', StubDataRegistryService)
+    monkeypatch.setattr('app.modules.analytics.routes_web.DataRegistryVersionService', StubDataRegistryVersionService)
+
+    client = app.test_client()
+    response = client.get('/analytics/datasets/7/report')
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'Tambah Report' in html or 'Edit Report' in html
+    assert 'Item / Indikator Report' in html
+    assert 'report_items_json' in html
+    assert 'data_sources_json' in html
+    assert 'blocks_json' in html
+    assert 'reportAchievementChart' in html
+
+
+def test_analytics_report_builder_template_is_item_dataset_aware():
+    content = Path('app/templates/pages/analytics/report_form.html').read_text()
+
+    assert 'report_items_json' in content
+    assert 'const pageMode' in content
+    assert 'reportAchievementChart' in content
+    assert 'achievementPct' in content
+    assert 'itemEditUrl' in content
+    assert 'createDefaultItem' in content
+    assert 'syncReportItemsJson' in content
+    assert 'Tambah Indikator' in content
+    assert 'Nilai (Capaian)' in content
+    assert 'computed_actual_value' in content
+    assert 'target_aggregation_mode' in content
+    assert 'count_value' in content
+    assert 'Tambah Dataset' not in content
+
+
+def test_analytics_report_item_form_persists_computed_values_for_summary_page():
+    content = Path('app/templates/pages/analytics/report_item_form.html').read_text()
+
+    assert 'enrichComputedValues' in content
+    assert 'computed_actual_value' in content
+    assert 'computed_target_value' in content
+    assert 'target_aggregation_mode' in content
+    assert 'count_value' in content
+
+
+def test_analytics_report_item_form_manual_inputs_do_not_rerender_on_each_keystroke():
+    content = Path('app/templates/pages/analytics/report_item_form.html').read_text()
+
+    assert 'function updateSourceState' in content
+    assert 'function updateManualPreview' in content
+    assert 'js-source-actual-preview' in content
+    assert 'js-source-target-preview' in content
+    assert "if (event.target.classList.contains('js-source-manual-value')) { const source = updateSourceState" in content
+    assert "if (event.target.classList.contains('js-source-manual-target')) { const source = updateSourceState" in content
+
+
+def test_analytics_workspace_source_js_loads_rows_per_report_data_source():
+    js_path = Path('app/src/js/pages/analytics-workspace.js')
+    content = js_path.read_text()
+
+    assert 'reportSourceDetails' in content
+    assert 'reportSourceRuns' in content
+    assert 'loadReportDataSources' in content
+    assert 'fetchDatasetDetailForSource' in content
+    assert 'fetchDatasetRunsForSource' in content
+    assert 'getRowsForBlock' in content
+    assert 'currentFilteredRowsByBlock' in content
+    assert 'renderDetailTable(state.currentFilteredRowsByBlock.detail_table)' in content
+    assert 'renderMetricCards(state.currentFilteredRowsByBlock.metric_cards, summaryJson)' in content

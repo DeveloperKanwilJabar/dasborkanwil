@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 from app import create_app
 from app.modules.analytics.models import (
+    AnalyticsDataset,
+    AnalyticsDatasetVersion,
     AnalyticsIndicatorDefinition,
     AnalyticsIndicatorProgressItem,
     AnalyticsIndicatorResult,
@@ -66,6 +68,12 @@ class StubReportVersionRepository(SaveMixin):
             if version.report_definition_id == report_definition_id
         ]
         return (max(numbers) if numbers else 0) + 1
+
+    def get_draft_version(self, report_definition_id):
+        for version in self.versions:
+            if version.report_definition_id == report_definition_id and getattr(version, 'is_current_draft', False):
+                return version
+        return None
 
     def archive_published_others(self, report_definition_id, except_version_id=None):
         self.archived_calls.append(
@@ -233,6 +241,86 @@ class StubProgressEntryRepository(SaveMixin):
             if entry.id == progress_entry_id:
                 return entry
         return None
+
+
+def test_create_dataset_bundle_rejects_invalid_contract_without_persisting_dataset():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsDatasetService
+
+        class RecordingDatasetRepository(SaveMixin):
+            def __init__(self):
+                super().__init__()
+                self.datasets = []
+
+            def save(self, obj):
+                obj = super().save(obj)
+                if obj not in self.datasets:
+                    self.datasets.append(obj)
+                return obj
+
+            def get_by_id(self, dataset_id):
+                for dataset in self.datasets:
+                    if dataset.id == dataset_id:
+                        return dataset
+                return None
+
+            def get_by_key(self, dataset_key):
+                for dataset in self.datasets:
+                    if dataset.dataset_key == dataset_key:
+                        return dataset
+                return None
+
+        class RecordingDatasetVersionRepository(SaveMixin):
+            def __init__(self):
+                super().__init__()
+                self.versions = []
+
+            def save(self, obj):
+                obj = super().save(obj)
+                if obj not in self.versions:
+                    self.versions.append(obj)
+                return obj
+
+            def get_next_version_number(self, dataset_id):
+                return 1
+
+            def get_draft_version(self, dataset_id):
+                return None
+
+        dataset_repository = RecordingDatasetRepository()
+        version_repository = RecordingDatasetVersionRepository()
+        service = AnalyticsDatasetService(
+            dataset_repository=dataset_repository,
+            dataset_version_repository=version_repository,
+        )
+
+        payload = {
+            'dataset': {
+                'dataset_key': 'harmon-26',
+                'name': 'Dataset Harmon 2026',
+                'source_domain': AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION,
+                'source_type': AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT,
+            },
+            'draft_version': {
+                'source_contract_json': {'selected_fields': ['nama_indikator']},
+                'output_schema_json': [],
+                'dimension_definitions_json': [{'key': 'nama_indikator', 'label': 'Nama Indikator'}],
+                'metric_definitions_json': [],
+                'grain_key': AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR,
+            },
+        }
+
+        try:
+            service.create_dataset_bundle(payload)
+            assert False, 'create_dataset_bundle seharusnya menolak draft tanpa metric definitions'
+        except ValueError as exc:
+            assert 'metric_definitions_json minimal satu metric' in str(exc)
+
+        assert dataset_repository.datasets == []
+        assert version_repository.versions == []
+        assert dataset_repository.get_by_key('harmon-26') is None
 
 
 def test_create_publish_indicator_and_report_flow_archives_previous_versions():
@@ -474,6 +562,272 @@ def test_create_report_version_normalizes_block_configs_and_curated_dataset_cont
         assert map_block['config']['latitude_field'] == 'latitude'
         assert map_block['config']['longitude_field'] == 'longitude'
         assert narrative_block['config']['focus_field_keys'] == ['achievement_pct']
+
+
+
+def test_update_report_version_preserves_explicitly_empty_blocks():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsReportService
+
+        report_definition = AnalyticsReportDefinition(
+            id=23,
+            uuid='report-def-uuid-empty-blocks',
+            report_key='empty-block-test',
+            dataset_id=9,
+            name='Report Kosong Sementara',
+            category_key='custom',
+            status=AnalyticsReportDefinition.STATUS_DRAFT,
+        )
+        dataset = SimpleNamespace(id=9, dataset_key='dataset-empty-blocks', name='Dataset Empty Blocks', settings_json={})
+        dataset_version = SimpleNamespace(
+            id=703,
+            dataset_id=9,
+            version_number=1,
+            is_current_published=True,
+            is_current_draft=False,
+            grain_key='per_scope_per_year',
+            output_schema_json=[{'key': 'tanggal', 'label': 'Tanggal', 'type': 'date'}],
+            dimension_definitions_json=[],
+            metric_definitions_json=[{'key': 'jumlah_dokumen', 'label': 'Jumlah Dokumen', 'type': 'integer'}],
+        )
+        existing_draft = AnalyticsReportVersion(
+            id=33,
+            uuid='report-version-empty-blocks',
+            report_definition_id=23,
+            dataset_version_id=703,
+            version_number=1,
+            status=AnalyticsReportVersion.STATUS_DRAFT,
+            is_current_draft=True,
+            is_current_published=False,
+            title='Draft yang sebelumnya punya block',
+            structure_json={
+                'blocks': [
+                    {'type': 'metric_cards', 'title': 'Block lama', 'config': {'metric_keys': ['jumlah_dokumen']}},
+                ],
+            },
+        )
+        report_service = AnalyticsReportService(
+            report_definition_repository=StubReportDefinitionRepository([report_definition]),
+            report_version_repository=StubReportVersionRepository([existing_draft]),
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([dataset_version]),
+        )
+
+        updated_version = report_service.upsert_draft_version(
+            23,
+            {
+                'dataset_version_id': 703,
+                'title': 'Draft tanpa block',
+                'blocks': [],
+            },
+        )
+
+        assert updated_version.structure_json['blocks'] == []
+
+
+def test_report_builder_preserves_multi_dataset_sources_and_block_aliases():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsReportService
+
+        report_definition = AnalyticsReportDefinition(
+            id=24,
+            uuid='report-def-multi-source',
+            report_key='pk-renaksi-multi-source',
+            dataset_id=None,
+            name='PK dan Renaksi Multi Dataset',
+            category_key='pk',
+            status=AnalyticsReportDefinition.STATUS_DRAFT,
+            settings_json={'report_family': 'pk'},
+        )
+        pk_dataset = SimpleNamespace(id=11, dataset_key='dataset-pk', name='Dataset PK', settings_json={})
+        renaksi_dataset = SimpleNamespace(id=12, dataset_key='dataset-renaksi', name='Dataset Renaksi', settings_json={})
+        pk_version = SimpleNamespace(
+            id=801,
+            dataset_id=11,
+            version_number=3,
+            is_current_published=True,
+            is_current_draft=False,
+            grain_key='per_scope_per_year',
+            output_schema_json=[
+                {'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'},
+                {'key': 'target_kinerja', 'label': 'Target Kinerja', 'type': 'number'},
+                {'key': 'nilai_realisasi', 'label': 'Nilai Realisasi', 'type': 'number'},
+            ],
+            dimension_definitions_json=[{'key': 'nama_indikator', 'label': 'Nama Indikator'}],
+            metric_definitions_json=[
+                {'key': 'target_kinerja', 'label': 'Target Kinerja', 'type': 'number'},
+                {'key': 'nilai_realisasi', 'label': 'Nilai Realisasi', 'type': 'number'},
+            ],
+        )
+        renaksi_version = SimpleNamespace(
+            id=802,
+            dataset_id=12,
+            version_number=2,
+            is_current_published=True,
+            is_current_draft=False,
+            grain_key='per_action_per_period',
+            output_schema_json=[
+                {'key': 'kegiatan', 'label': 'Kegiatan', 'type': 'string'},
+                {'key': 'status', 'label': 'Status', 'type': 'string'},
+                {'key': 'progress_pct', 'label': 'Progress', 'type': 'number'},
+            ],
+            dimension_definitions_json=[
+                {'key': 'kegiatan', 'label': 'Kegiatan'},
+                {'key': 'status', 'label': 'Status'},
+            ],
+            metric_definitions_json=[{'key': 'progress_pct', 'label': 'Progress', 'type': 'number'}],
+        )
+        report_service = AnalyticsReportService(
+            report_definition_repository=StubReportDefinitionRepository([report_definition]),
+            report_version_repository=StubReportVersionRepository(),
+            dataset_repository=StubDatasetRepository([pk_dataset, renaksi_dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([pk_version, renaksi_version]),
+        )
+
+        created_version = report_service.create_report_version(
+            24,
+            {
+                'title': 'PK + Renaksi 2026',
+                'data_sources': [
+                    {'alias': 'pk_target', 'dataset_id': 11, 'dataset_version_id': 801},
+                    {'alias': 'renaksi_progress', 'dataset_id': 12, 'dataset_version_id': 802},
+                ],
+                'blocks': [
+                    {'type': 'metric_cards', 'title': 'Ringkasan PK', 'data_source_alias': 'pk_target'},
+                    {'type': 'detail_table', 'title': 'Progress Renaksi', 'data_source_alias': 'renaksi_progress'},
+                ],
+            },
+        )
+
+        structure = created_version.structure_json
+        assert created_version.dataset_version_id is None
+        assert structure['data_sources'][0]['alias'] == 'pk_target'
+        assert structure['data_sources'][0]['dataset_key'] == 'dataset-pk'
+        assert structure['data_sources'][0]['curated_fields'][1]['key'] == 'target_kinerja'
+        assert structure['data_sources'][1]['alias'] == 'renaksi_progress'
+        assert structure['data_sources'][1]['dataset_key'] == 'dataset-renaksi'
+        assert structure['blocks'][0]['data_source_alias'] == 'pk_target'
+        assert structure['blocks'][0]['config']['metric_keys'] == ['target_kinerja', 'nilai_realisasi']
+        assert structure['blocks'][1]['data_source_alias'] == 'renaksi_progress'
+        assert structure['blocks'][1]['config']['column_keys'] == ['kegiatan', 'progress_pct', 'status']
+
+
+
+def test_report_builder_publishes_report_version_with_multi_dataset_sources_without_primary_dataset_version():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsReportService
+
+        report_definition = AnalyticsReportDefinition(
+            id=25,
+            uuid='report-def-publish-multi-source',
+            report_key='pk-renaksi-publish',
+            dataset_id=None,
+            name='PK Renaksi Publish',
+            status=AnalyticsReportDefinition.STATUS_DRAFT,
+        )
+        report_version = AnalyticsReportVersion(
+            id=88,
+            uuid='report-version-publish-multi-source',
+            report_definition_id=25,
+            dataset_version_id=None,
+            version_number=1,
+            status=AnalyticsReportVersion.STATUS_DRAFT,
+            is_current_draft=True,
+            is_current_published=False,
+            title='PK Renaksi Multi Source',
+            structure_json={
+                'data_sources': [
+                    {'alias': 'pk_target', 'dataset_id': 11, 'dataset_version_id': 801},
+                    {'alias': 'renaksi_progress', 'dataset_id': 12, 'dataset_version_id': 802},
+                ],
+                'blocks': [
+                    {'type': 'metric_cards', 'title': 'Ringkasan PK', 'data_source_alias': 'pk_target', 'config': {}},
+                ],
+            },
+        )
+        report_service = AnalyticsReportService(
+            report_definition_repository=StubReportDefinitionRepository([report_definition]),
+            report_version_repository=StubReportVersionRepository([report_version]),
+            dataset_repository=StubDatasetRepository(),
+            dataset_version_repository=StubDatasetVersionRepository(),
+        )
+
+        published = report_service.publish_report_version(88)
+
+        assert published.status == AnalyticsReportVersion.STATUS_PUBLISHED
+        assert published.is_current_published is True
+        assert published.is_current_draft is False
+
+
+def test_report_builder_derives_publishable_data_sources_from_report_items():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsReportService
+
+        report_definition = AnalyticsReportDefinition(
+            id=26,
+            uuid='report-def-item-sources',
+            report_key='item-source-report',
+            dataset_id=None,
+            name='Report Item Source',
+            status=AnalyticsReportDefinition.STATUS_DRAFT,
+        )
+        dataset = SimpleNamespace(id=13, dataset_key='dataset-item-source', name='Dataset Item Source', settings_json={})
+        dataset_version = SimpleNamespace(
+            id=803,
+            dataset_id=13,
+            version_number=1,
+            is_current_published=True,
+            is_current_draft=False,
+            grain_key='per_scope_per_year',
+            output_schema_json=[{'key': 'status_realisasi', 'label': 'Status Realisasi', 'type': 'string'}],
+            dimension_definitions_json=[{'key': 'status_realisasi', 'label': 'Status Realisasi'}],
+            metric_definitions_json=[],
+        )
+        report_service = AnalyticsReportService(
+            report_definition_repository=StubReportDefinitionRepository([report_definition]),
+            report_version_repository=StubReportVersionRepository(),
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([dataset_version]),
+        )
+
+        draft = report_service.create_report_version(
+            26,
+            {
+                'title': 'Draft item source',
+                'data_sources': [],
+                'report_items': [
+                    {
+                        'item_key': 'indikator-1',
+                        'name': 'Indikator 1',
+                        'datasets': [
+                            {
+                                'source_mode': 'dataset_driven',
+                                'dataset_id': 13,
+                                'dataset_version_id': '',
+                                'actual_metric_key': 'status_realisasi',
+                                'aggregation_mode': 'count_value',
+                            }
+                        ],
+                    }
+                ],
+                'blocks': [],
+            },
+        )
+        published = report_service.publish_report_version(draft.id)
+
+        assert draft.dataset_version_id is None
+        assert draft.structure_json['data_sources'][0]['dataset_id'] == 13
+        assert draft.structure_json['data_sources'][0]['dataset_version_id'] == 803
+        assert draft.structure_json['data_sources'][0]['alias'] == 'indikator_1_1'
+        assert published.status == AnalyticsReportVersion.STATUS_PUBLISHED
 
 
 
@@ -839,3 +1193,80 @@ def test_report_service_normalizes_legacy_report_type_alias_and_family_defaults(
             'plotly_timeseries',
             'narrative',
         ]
+
+
+def test_report_service_preserves_item_based_report_structure():
+    from app.modules.analytics.services import AnalyticsReportService
+
+    dataset = SimpleNamespace(id=7, dataset_key='dataset-pk', name='Dataset PK', settings_json={})
+    dataset_version = SimpleNamespace(
+        id=701,
+        dataset_id=7,
+        dataset=dataset,
+        version_number=2,
+        grain_key='per_scope_per_year',
+        output_schema_json=[{'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'}],
+        dimension_definitions_json=[{'key': 'nama_indikator', 'label': 'Nama Indikator', 'type': 'string'}],
+        metric_definitions_json=[
+            {'key': 'nilai_realisasi', 'label': 'Nilai Realisasi', 'type': 'number'},
+            {'key': 'target_kinerja', 'label': 'Target Kinerja', 'type': 'number'},
+        ],
+    )
+    service = AnalyticsReportService(
+        report_definition_repository=StubReportDefinitionRepository(),
+        report_version_repository=StubReportVersionRepository(),
+        dataset_repository=StubDatasetRepository([dataset]),
+        dataset_version_repository=StubDatasetVersionRepository([dataset_version]),
+    )
+
+    bundle = service.create_report_bundle({
+        'report': {
+            'report_key': 'perjanjian-kinerja',
+            'name': 'Perjanjian Kinerja',
+            'report_type': 'pk',
+            'report_family': 'pk',
+            'category_key': 'pk',
+        },
+        'draft_version': {
+            'title': 'Perjanjian Kinerja 2026',
+            'report_items': [
+                {
+                    'item_key': 'indikator-1',
+                    'name': 'indikator 1',
+                    'datasets': [
+                        {
+                            'dataset_id': 7,
+                            'dataset_version_id': 701,
+                            'actual_metric_key': 'nilai_realisasi',
+                            'target_metric_key': 'target_kinerja',
+                            'chart_type': 'bar',
+                            'table_column_keys': ['nama_indikator', 'nilai_realisasi', 'target_kinerja'],
+                        }
+                    ],
+                }
+            ],
+            'data_sources': [
+                {'alias': 'indikator_1_dataset_pk', 'dataset_id': 7, 'dataset_version_id': 701}
+            ],
+            'blocks': [
+                {
+                    'type': 'metric_cards',
+                    'title': 'indikator 1 — Aktual vs Target',
+                    'data_source_alias': 'indikator_1_dataset_pk',
+                    'config': {
+                        'metric_keys': ['nilai_realisasi', 'target_kinerja'],
+                        'actual_metric_key': 'nilai_realisasi',
+                        'target_metric_key': 'target_kinerja',
+                    },
+                }
+            ],
+        },
+    })
+
+    structure = bundle['draft_version'].structure_json
+    assert structure['report_items'][0]['name'] == 'indikator 1'
+    assert structure['report_items'][0]['datasets'][0]['actual_metric_key'] == 'nilai_realisasi'
+    assert structure['report_items'][0]['datasets'][0]['target_metric_key'] == 'target_kinerja'
+    assert structure['data_sources'][0]['alias'] == 'indikator_1_dataset_pk'
+    assert structure['blocks'][0]['config']['actual_metric_key'] == 'nilai_realisasi'
+    assert structure['blocks'][0]['config']['target_metric_key'] == 'target_kinerja'

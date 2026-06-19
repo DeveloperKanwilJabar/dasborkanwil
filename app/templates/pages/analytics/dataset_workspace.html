@@ -1,5 +1,5 @@
 {% extends 'partials/base.html' %}
-{% block title %}Workspace Dataset Analytics{% endblock %}
+{% block title %}Detail Dataset Analytics{% endblock %}
 
 {% set active_version = draft_version or published_version %}
 {% set source_contract = active_version.source_contract_json if active_version and active_version.source_contract_json else {} %}
@@ -17,19 +17,14 @@
       <div class="col-12">
         <div class="page-title-box d-sm-flex align-items-center justify-content-between">
           <div>
-            <h4 class="mb-sm-0">Workspace Dataset Analytics</h4>
-            <p class="text-muted mb-0">Dataset adalah kontrak analitik di tengah antara source mentah dan report semi-CMS.</p>
+            <h4 class="mb-sm-0">Detail Dataset Analytics</h4>
+            <p class="text-muted mb-0">Dataset adalah kontrak analitik. Setelah kontrak/run siap, lanjut ke Statistik Dataset untuk chart, tabel, dan export.</p>
           </div>
           <div class="page-title-right d-flex gap-2">
             <a href="{{ url_for('analytics_web.analytics_workspace') }}" class="btn btn-light">Katalog Dataset</a>
             {% if dataset %}
             <a href="{{ url_for('analytics_web.analytics_dataset_edit', dataset_id=dataset.id) }}" class="btn btn-soft-primary">Edit Dataset</a>
-            {% if linked_report_item and linked_report_item.get('report') %}
-            <a href="{{ url_for('analytics_web.analytics_report_edit', report_definition_id=linked_report_item.get('report').id) }}" class="btn btn-soft-info">Edit Report</a>
-            {% else %}
-            <a href="{{ url_for('analytics_web.analytics_report_create', dataset_id=dataset.id) }}" class="btn btn-soft-info">Buat Report</a>
-            {% endif %}
-            <a href="{{ url_for('analytics_web.analytics_dataset_report', dataset_id=dataset.id) }}" class="btn btn-primary">Buka Report</a>
+            <a href="{{ url_for('analytics_web.analytics_dataset_statistics', dataset_id=dataset.id) }}" class="btn btn-primary">Statistik Dataset</a>
             {% endif %}
           </div>
         </div>

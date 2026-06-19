@@ -83,7 +83,8 @@
     "sweetalert2": "^11.22.0",
     "swiper": "^11.2.8",
     "toastify-js": "^1.12.0",
-    "wnumb": "^1.2.0"
+    "wnumb": "^1.2.0",
+    "xlsx": "^0.18.5"
   },
   "resolutions": {
     "autoprefixer": "10.4.5"
