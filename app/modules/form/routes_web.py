@@ -128,6 +128,100 @@ def forms_data():
         return jsonify([]), 500
 
 
+@form_web_bp.route('/forms/submissions')
+@login_required
+def submissions_index():
+    """Katalog form yang punya workspace submission seperti CRUD data."""
+    error_message = None
+    form_options = []
+    try:
+        all_forms = FormService().repository.get_all()
+        for form in all_forms:
+            permissions = _build_form_permissions(form)
+            if not permissions['can_view'] and not permissions['can_manage']:
+                continue
+            form_options.append(_serialize_form_list_item(form))
+    except Exception as error:
+        current_app.logger.error(f'Submissions catalog error: {str(error)}')
+        error_message = 'Gagal memuat katalog form submissions.'
+
+    return render_template(
+        'pages/forms/submission_index.html',
+        form_options=form_options,
+        error_message=error_message,
+    )
+
+
+@form_web_bp.route('/forms/submissions/<int:form_id>')
+@login_required
+def submission_detail(form_id):
+    """Halaman data submissions untuk satu form, dengan kolom mengikuti schema."""
+    selected_form = None
+    published_version = None
+    schema = dict(EMPTY_FORMIO_SCHEMA)
+    fields = []
+    error_message = None
+    permissions = _build_form_permissions(None)
+
+    try:
+        selected_form = FormService().get_form_detail(form_id)
+        permissions = _build_form_permissions(selected_form)
+        if not selected_form:
+            error_message = 'Form tidak ditemukan.'
+        elif not permissions['can_view'] and not permissions['can_manage']:
+            error_message = 'Akun Anda tidak memiliki izin membuka submission form ini.'
+            selected_form = None
+        else:
+            published_version = FormVersionService().get_published_version(form_id)
+            if published_version and isinstance(published_version.schema, dict):
+                schema = published_version.schema
+                fields = FormDataImportPipelineService().extract_importable_fields(schema)
+    except Exception as error:
+        current_app.logger.error(f'Submission detail page error: {str(error)}')
+        error_message = 'Gagal memuat data submissions.'
+
+    return render_template(
+        'pages/forms/submission_detail.html',
+        selected_form=selected_form,
+        published_version=published_version,
+        schema=schema,
+        fields=fields,
+        permissions=permissions,
+        error_message=error_message,
+    )
+
+
+@form_web_bp.route('/forms/submissions/<int:form_id>/new')
+def submission_new(form_id):
+    """Halaman tambah submission mandiri, terpisah dari preview form builder."""
+    form = None
+    published_version = None
+    schema = dict(EMPTY_FORMIO_SCHEMA)
+    error_message = None
+
+    try:
+        form = FormService().get_form_detail(form_id)
+        published_version = FormVersionService().get_published_version(form_id)
+        if not form:
+            error_message = 'Form tidak ditemukan.'
+        elif not published_version:
+            error_message = 'Form belum memiliki published schema. Publish draft terlebih dahulu.'
+        elif isinstance(published_version.schema, dict):
+            schema = published_version.schema
+    except Exception as error:
+        current_app.logger.warning(f'Gagal memuat halaman tambah submission: {str(error)}')
+        error_message = 'Gagal memuat form submission.'
+
+    return render_template(
+        'pages/forms/submission_new.html',
+        form=form,
+        form_id=form_id,
+        published_version=published_version,
+        schema=schema,
+        error_message=error_message,
+    )
+
+
 @form_web_bp.route('/forms/builder')
 @login_required
 def builder():
@@ -202,6 +296,10 @@ def export_template(form_id):
         if not form:
             return Response('Form tidak ditemukan.', status=404)
 
+        permissions = _build_form_permissions(form)
+        if not permissions['can_view'] and not permissions['can_manage'] and not permissions['can_submit']:
+            return Response('Akun Anda tidak memiliki izin download template form ini.', status=403)
+
         published_version = FormVersionService().get_published_version(form_id)
         if not published_version:
             return Response('Form belum memiliki published schema.', status=400)
@@ -241,7 +339,7 @@ def import_mapping(form_id):
 
         if not form:
             error_message = 'Form tidak ditemukan.'
-        elif not permissions['can_view'] and not permissions['can_manage']:
+        elif not permissions['can_view'] and not permissions['can_manage'] and not permissions['can_submit']:
             error_message = 'Akun Anda tidak memiliki izin membuka halaman import untuk form ini.'
             current_app.logger.warning(
                 'Import mapping page authorization error: actor tanpa izin view membuka form_id=%s',
@@ -266,6 +364,13 @@ def import_mapping(form_id):
                     for key, value in request.form.items()
                     if key.startswith('mapping_')
                 }
+                date_formats = {
+                    key.replace('date_format_', '', 1): value
+                    for key, value in request.form.items()
+                    if key.startswith('date_format_') and value
+                }
+                if date_formats:
+                    mapping_config['__date_formats__'] = date_formats
                 import_batch = FormDataImportPipelineService().create_import_batch_from_workbook(
                     form,
                     published_version,

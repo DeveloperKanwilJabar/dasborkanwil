@@ -1,0 +1,109 @@
+{% extends "partials/base.html" %}
+{% block title %}Tambah Submission{% endblock title %}
+
+{% block extra_css %}
+<link href="{{ url_for('static', filename='libs/@formio/js/dist/formio.form.min.css') }}" rel="stylesheet" type="text/css" />
+<style>
+    .submission-form-canvas { min-height: 420px; }
+    .submission-indicator-dot { width: .5rem; height: .5rem; display: inline-block; border-radius: 50%; background: var(--vz-secondary); }
+    .submission-indicator-dot.is-saving { background: var(--vz-warning); }
+    .submission-indicator-dot.is-saved { background: var(--vz-success); }
+    .submission-indicator-dot.is-error { background: var(--vz-danger); }
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">Tambah Submission</h4>
+                            <p class="text-muted mb-0">Form entry mandiri untuk menambah data submission baru.</p>
+                        </div>
+                        <div class="page-title-right">
+                            <ol class="breadcrumb m-0">
+                                <li class="breadcrumb-item"><a href="{{ url_for('user.dashboard') }}">Dashboard</a></li>
+                                <li class="breadcrumb-item"><a href="{{ url_for('form.submissions_index') }}">Form Submissions</a></li>
+                                {% if form %}<li class="breadcrumb-item"><a href="{{ url_for('form.submission_detail', form_id=form.id) }}">{{ form.name }}</a></li>{% endif %}
+                                <li class="breadcrumb-item active">Tambah</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if error_message %}
+            <div class="alert alert-warning"><i class="ri-alert-line me-1 align-middle"></i>{{ error_message }}</div>
+            {% endif %}
+
+            <div class="row">
+                <div class="col-xl-8">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-0">{{ form.name if form else 'Form tidak ditemukan' }}</h5>
+                                <p class="text-muted mb-0 fs-13">{{ form.description if form and form.description else 'Isi data lalu klik tombol Submit/Kirim bawaan Form.io.' }}</p>
+                            </div>
+                            {% if published_version %}
+                            <span class="badge bg-success-subtle text-success">Published v{{ published_version.version_number }}</span>
+                            {% endif %}
+                        </div>
+                        <div class="card-body">
+                            {% if published_version %}
+                            <div id="submissionNewFormio" class="submission-form-canvas"></div>
+                            {% else %}
+                            <div class="alert alert-warning mb-0">Form ini belum memiliki published version.</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-4">
+                    <div class="card">
+                        <div class="card-header"><h5 class="card-title mb-0">Status</h5></div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Form</p>
+                                <h6 class="mb-0">{{ form.name if form else '-' }}</h6>
+                                <code>{{ form.code if form else '-' }}</code>
+                            </div>
+                            <div class="border-top pt-3">
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <span class="submission-indicator-dot" id="submissionNewDot"></span>
+                                    <span class="fw-semibold" id="submissionNewLabel">Menunggu submit</span>
+                                </div>
+                                <p class="text-muted mb-0 fs-13" id="submissionNewDetail">Isi form lalu klik tombol Submit/Kirim dari schema form.</p>
+                            </div>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            {% if form %}
+                            <a href="{{ url_for('form.submission_detail', form_id=form.id) }}" class="btn btn-soft-secondary w-100"><i class="ri-arrow-left-line me-1"></i> Kembali ke Data</a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+    window.submissionNewConfig = {
+        formId: {{ form.id|tojson if form else 'null' }},
+        publishedVersionId: {{ published_version.id|tojson if published_version else 'null' }},
+        schema: {{ schema|tojson }},
+        submitUrl: {{ url_for('api_submission_v1.submit_form', form_id=form_id)|tojson }},
+        formioBaseUrl: {{ request.url_root.rstrip('/')|tojson }},
+    };
+</script>
+<script src="{{ url_for('static', filename='libs/@formio/js/dist/formio.full.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/submission-new.js') }}"></script>
+{% endblock extra_js %}

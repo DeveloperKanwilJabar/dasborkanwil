@@ -137,6 +137,7 @@
                                             <th style="width: 18%;">Tipe</th>
                                             <th style="width: 18%;">Required</th>
                                             <th>Kolom Excel</th>
+                                            <th style="width: 22%;">Format Tanggal</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -162,6 +163,21 @@
                                                     {% endfor %}
                                                 </select>
                                             </td>
+                                            <td>
+                                                {% if field.type in ['datetime', 'day'] %}
+                                                <select class="form-select form-select-sm" name="date_format_{{ field.key }}" {% if not permissions.can_submit %}disabled{% endif %}>
+                                                    <option value="auto">Auto detect</option>
+                                                    <option value="%Y-%m-%d">YYYY-MM-DD</option>
+                                                    <option value="%d/%m/%Y">DD/MM/YYYY</option>
+                                                    <option value="%d-%m-%Y">DD-MM-YYYY</option>
+                                                    <option value="%m/%d/%Y">MM/DD/YYYY</option>
+                                                    <option value="%Y-%m-%d %H:%M:%S">YYYY-MM-DD HH:mm:ss</option>
+                                                </select>
+                                                <div class="form-text">Normalisasi ISO sebelum masuk submission.</div>
+                                                {% else %}
+                                                <span class="text-muted fs-12">-</span>
+                                                {% endif %}
+                                            </td>
                                         </tr>
                                         {% endfor %}
                                     </tbody>
@@ -177,6 +193,9 @@
                                         <input type="hidden" name="action" value="create_batch">
                                         {% for field in mapping_result.fields %}
                                         <input type="hidden" name="mapping_{{ field.key }}" value="{{ mapping_result.auto_mapping.get(field.key, '') }}">
+                                        {% if field.type in ['datetime', 'day'] %}
+                                        <input type="hidden" name="date_format_{{ field.key }}" value="auto">
+                                        {% endif %}
                                         {% endfor %}
                                         <div class="row g-2 align-items-end">
                                             <div class="col-md-8">
@@ -267,6 +286,17 @@
                     background: colors[node.dataset.toastCategory] || colors.info,
                 },
             }).showToast();
+        });
+    })();
+
+    (function () {
+        const batchForm = document.querySelector('form input[name="action"][value="create_batch"]')?.closest('form');
+        if (!batchForm) return;
+        batchForm.addEventListener('submit', () => {
+            document.querySelectorAll('select[name^="mapping_"], select[name^="date_format_"]').forEach((select) => {
+                const hidden = batchForm.querySelector(`input[name="${select.name}"]`);
+                if (hidden) hidden.value = select.value;
+            });
         });
     })();
 </script>

@@ -1,0 +1,153 @@
+{% extends "partials/base.html" %}
+{% block title %}Data {{ selected_form.name if selected_form else 'Submission' }}{% endblock title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='libs/gridjs/dist/theme/mermaid.min.css') }}">
+<link href="{{ url_for('static', filename='libs/@formio/js/dist/formio.form.min.css') }}" rel="stylesheet" type="text/css" />
+{% endblock extra_css %}
+
+{% block content %}
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="mb-sm-0">{{ selected_form.name if selected_form else 'Data Submission' }}</h4>
+                            <p class="text-muted mb-0">Tabel data submission mengikuti kolom field schema form.</p>
+                        </div>
+                        <div class="page-title-right">
+                            <ol class="breadcrumb m-0">
+                                <li class="breadcrumb-item"><a href="{{ url_for('user.dashboard') }}">Dashboard</a></li>
+                                <li class="breadcrumb-item"><a href="{{ url_for('form.submissions_index') }}">Form Submissions</a></li>
+                                <li class="breadcrumb-item active">Detail</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if error_message %}
+            <div class="alert alert-warning"><i class="ri-alert-line me-1 align-middle"></i>{{ error_message }}</div>
+            {% endif %}
+
+            <div class="row">
+                <div class="col-xl-3">
+                    <div class="card">
+                        <div class="card-header"><h5 class="card-title mb-0">Konteks Form</h5></div>
+                        <div class="card-body">
+                            {% if selected_form %}
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Nama Form</p>
+                                <h6 class="mb-0">{{ selected_form.name }}</h6>
+                                <code>{{ selected_form.code }}</code>
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">Published Version</p>
+                                {% if published_version %}
+                                <span class="badge bg-success-subtle text-success">v{{ published_version.version_number }}</span>
+                                {% else %}
+                                <span class="badge bg-warning-subtle text-warning">Belum Published</span>
+                                {% endif %}
+                            </div>
+                            <div class="mb-3">
+                                <p class="text-muted mb-1 fs-13">ABAC Capability</p>
+                                {% if permissions.can_view %}<span class="badge bg-secondary-subtle text-secondary me-1">view</span>{% endif %}
+                                {% if permissions.can_submit %}<span class="badge bg-info-subtle text-info me-1">submit/edit</span>{% endif %}
+                                {% if permissions.can_manage %}<span class="badge bg-warning-subtle text-warning me-1">manage form</span>{% endif %}
+                            </div>
+                            <div class="d-grid gap-2">
+                                <a href="{{ url_for('form.submission_new', form_id=selected_form.id) }}" class="btn btn-success {% if not published_version %}disabled{% endif %}"><i class="ri-add-line me-1"></i> +Tambah</a>
+                                <a href="{{ url_for('form.import_mapping', form_id=selected_form.id) }}" class="btn btn-soft-info {% if not published_version %}disabled{% endif %}"><i class="ri-upload-cloud-2-line me-1"></i> Import Excel</a>
+                                <a href="{{ url_for('form.export_template', form_id=selected_form.id) }}" class="btn btn-soft-primary {% if not published_version %}disabled{% endif %}"><i class="ri-file-excel-2-line me-1"></i> Template Excel</a>
+                                <a href="{{ url_for('form.submissions_index') }}" class="btn btn-light"><i class="ri-arrow-left-line me-1"></i> Kembali</a>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header"><h5 class="card-title mb-0">Freshness Source</h5></div>
+                        <div class="card-body">
+                            <p class="text-muted fs-13 mb-2">Freshness dataset submission-backed membaca <code>submissions.submitted_at</code>.</p>
+                            <div id="submissionFreshnessPanel" class="border rounded p-3 bg-light-subtle">
+                                <div class="text-muted fs-13">Menunggu data...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-9">
+                    <div class="card">
+                        <div class="card-header border-0 align-items-center d-flex">
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-0">Data Submissions</h5>
+                                <p class="text-muted mb-0 fs-13">Kolom payload diekstrak menjadi kolom data sesuai schema form.</p>
+                            </div>
+                            <div class="flex-shrink-0 d-flex gap-2">
+                                <a href="{{ url_for('form.submission_new', form_id=selected_form.id) if selected_form else '#' }}" class="btn btn-success btn-sm {% if not published_version %}disabled{% endif %}">
+                                    <i class="ri-add-line me-1"></i> +Tambah
+                                </a>
+                                <button type="button" class="btn btn-soft-primary btn-sm" id="refreshSubmissionGridBtn"><i class="ri-refresh-line me-1"></i> Refresh</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            {% if selected_form %}
+                            <div id="submissions-table-data"></div>
+                            {% else %}
+                            <div class="text-center py-5 text-muted">Form tidak ditemukan.</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="submissionEditModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title">Edit Data</h5>
+                        <div class="text-muted fs-12" id="submissionEditSubtitle">-</div>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="submissionEditAlert" class="alert d-none" role="alert"></div>
+                    <div id="submissionEditFormio" style="min-height: 360px;"></div>
+                </div>
+                <div class="modal-footer">
+                    <div class="text-muted fs-12 me-auto">Simpan Perubahan memperbarui payload dan <code>submitted_at</code> untuk freshness dataset.</div>
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Tutup</button>
+                    <button type="button" class="btn btn-primary" id="submissionEditSaveBtn" {% if not permissions.can_submit %}disabled{% endif %}>Simpan Perubahan</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% block footer %}
+    {% include "partials/footer.html" %}
+    {% endblock footer %}
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+    window.submissionsPageConfig = {
+        formId: {{ selected_form.id|tojson if selected_form else 'null' }},
+        schema: {{ schema|tojson }},
+        fields: {{ fields|tojson }},
+        permissions: {{ permissions|tojson }},
+        listUrl: {{ url_for('api_submission_v1.list_submissions')|tojson }},
+        detailUrlTemplate: {{ url_for('api_submission_v1.get_submission', submission_id=0)|tojson }},
+        updateUrlTemplate: {{ url_for('api_submission_v1.update_submission', submission_id=0)|tojson }},
+        freshnessUrl: {{ url_for('api_submission_v1.get_submission_freshness')|tojson }},
+    };
+</script>
+<script src="{{ url_for('static', filename='libs/gridjs/dist/gridjs.umd.js') }}"></script>
+<script src="{{ url_for('static', filename='libs/@formio/js/dist/formio.full.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/submissions.js') }}"></script>
+{% endblock extra_js %}

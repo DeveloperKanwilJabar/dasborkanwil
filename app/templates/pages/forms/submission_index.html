@@ -1,5 +1,5 @@
 {% extends "partials/base.html" %}
-{% block title %}Daftar Form{% endblock title %}
+{% block title %}Form Submissions{% endblock title %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='libs/gridjs/dist/theme/mermaid.min.css') }}">
@@ -13,37 +13,42 @@
                 <div class="col-12">
                     <div class="page-title-box d-sm-flex align-items-center justify-content-between">
                         <div>
-                            <h4 class="mb-sm-0">Daftar Form</h4>
-                            <p class="text-muted mb-0">Kelola form dinamis, buka builder, dan akses preview form published.</p>
+                            <h4 class="mb-sm-0">Form Submissions</h4>
+                            <p class="text-muted mb-0">Pilih form untuk membuka data submissions seperti tabel CRUD.</p>
                         </div>
                         <div class="page-title-right">
                             <ol class="breadcrumb m-0">
                                 <li class="breadcrumb-item"><a href="{{ url_for('user.dashboard') }}">Dashboard</a></li>
-                                <li class="breadcrumb-item active">Daftar Form</li>
+                                <li class="breadcrumb-item"><a href="{{ url_for('form.index') }}">Daftar Form</a></li>
+                                <li class="breadcrumb-item active">Submissions</li>
                             </ol>
                         </div>
                     </div>
                 </div>
             </div>
 
+            {% if error_message %}
+            <div class="alert alert-warning">
+                <i class="ri-alert-line me-1 align-middle"></i>{{ error_message }}
+            </div>
+            {% endif %}
+
             <div class="row">
                 <div class="col-12">
                     <div class="card">
                         <div class="card-header border-0 align-items-center d-flex">
                             <div class="flex-grow-1">
-                                <h4 class="card-title mb-0">Form Registry</h4>
+                                <h5 class="card-title mb-0">Katalog Form Submission</h5>
+                                <p class="text-muted mb-0 fs-13">Tabel ini adalah entry point data CRUD per form. Klik Lihat/Detail untuk membuka submissions form tersebut.</p>
                             </div>
                             <div class="flex-shrink-0">
-                                <a href="{{ url_for('form.submissions_index') }}" class="btn btn-soft-primary me-2">
-                                    <i class="ri-database-2-line align-bottom me-1"></i> Form Submissions
-                                </a>
-                                <a href="{{ url_for('form.builder') }}" class="btn btn-success">
-                                    <i class="ri-add-line align-bottom me-1"></i> Buat Form Baru
+                                <a href="{{ url_for('form.builder') }}" class="btn btn-success btn-sm">
+                                    <i class="ri-add-line align-bottom me-1"></i> Buat Form
                                 </a>
                             </div>
                         </div>
                         <div class="card-body">
-                            <div id="forms-table-data"></div>
+                            <div id="submission-forms-table-data"></div>
                         </div>
                     </div>
                 </div>
@@ -59,12 +64,13 @@
 
 {% block extra_js %}
 <script>
-    const formsDataUrl = "{{ url_for('form.forms_data') }}";
-    const builderUrlTemplate = "{{ url_for('form.builder') }}?form_id=0";
-    const previewUrlTemplate = "{{ url_for('form.preview', form_id=0) }}";
-    const templateUrlTemplate = "{{ url_for('form.export_template', form_id=0) }}";
-    const importMappingUrlTemplate = "{{ url_for('form.import_mapping', form_id=0) }}";
+    window.submissionCatalogConfig = {
+        forms: {{ form_options|tojson }},
+        detailUrlTemplate: {{ url_for('form.submission_detail', form_id=0)|tojson }},
+        newUrlTemplate: {{ url_for('form.submission_new', form_id=0)|tojson }},
+        importUrlTemplate: {{ url_for('form.import_mapping', form_id=0)|tojson }},
+    };
 </script>
 <script src="{{ url_for('static', filename='libs/gridjs/dist/gridjs.umd.js') }}"></script>
-<script src="{{ url_for('static', filename='js/pages/forms.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pages/submissions-catalog.js') }}"></script>
 {% endblock extra_js %}

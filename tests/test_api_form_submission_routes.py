@@ -104,6 +104,8 @@ def test_submission_api_routes_are_registered():
 
     expected_routes = [
         '/api/v1/forms/<int:form_id>/submissions',
+        '/api/v1/submissions',
+        '/api/v1/submissions/<int:submission_id>',
         '/api/v1/submissions/freshness',
     ]
 
@@ -298,6 +300,47 @@ def test_submit_form_returns_submission_payload(monkeypatch):
     assert payload['data']['submission']['status'] == 'submitted'
     assert payload['data']['submission']['reporting_year'] == 2026
     assert payload['data']['submission_number']
+
+
+def test_list_submissions_returns_grid_payload(monkeypatch):
+    app = create_app('testing')
+    client = app.test_client()
+
+    class StubSubmissionService:
+        def list_submissions(self, actor=None, form_id=None, reporting_year=None, reporting_period_id=None, statuses=None):
+            assert form_id == 1
+            return [make_submission(id=9, form_id=form_id)]
+
+    monkeypatch.setattr('app.api.v1.submissions.routes.SubmissionService', StubSubmissionService)
+
+    response = client.get('/api/v1/submissions?form_id=1')
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['data'][0]['id'] == 9
+    assert payload['data'][0]['permissions']['can_edit'] is True
+
+
+def test_update_submission_calls_service_and_returns_freshness_ready_payload(monkeypatch):
+    app = create_app('testing')
+    client = app.test_client()
+
+    class StubSubmissionService:
+        def update_submission(self, submission_id, payload, actor=None, refresh_submitted_at=True):
+            assert submission_id == 9
+            assert payload == {'nama': 'Siti'}
+            assert refresh_submitted_at is True
+            return make_submission(id=submission_id, payload=payload)
+
+    monkeypatch.setattr('app.api.v1.submissions.routes.SubmissionService', StubSubmissionService)
+
+    response = client.put('/api/v1/submissions/9', json={'payload': {'nama': 'Siti'}, 'refresh_submitted_at': True})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['data']['submission']['payload'] == {'nama': 'Siti'}
 
 
 @pytest.mark.parametrize(

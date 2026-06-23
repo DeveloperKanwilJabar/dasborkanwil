@@ -43,6 +43,120 @@ def test_form_list_page_smoke_returns_grid_contract():
     assert 'previewUrlTemplate' in html
     assert 'templateUrlTemplate' in html
     assert 'importMappingUrlTemplate' in html
+    assert 'Form Submissions' in html
+
+
+def test_form_submissions_page_smoke_returns_form_catalog(monkeypatch):
+    app = create_app('testing')
+    form = SimpleNamespace(
+        id=1,
+        uuid='form-uuid',
+        code='FORM-SUB',
+        slug='form-sub',
+        name='Form Sub',
+        description=None,
+        status='published',
+        visibility='internal',
+        created_at=None,
+        updated_at=None,
+    )
+    version = SimpleNamespace(id=3, uuid='version-uuid', version_number=1, schema={'components': [{'key': 'nama'}]})
+
+    class StubFormService:
+        repository = SimpleNamespace(get_all=lambda: [form])
+
+    class StubFormVersionService:
+        def get_draft_version(self, form_id):
+            return None
+
+        def get_published_version(self, form_id):
+            return version
+
+    monkeypatch.setattr('app.modules.form.routes_web.FormService', StubFormService)
+    monkeypatch.setattr('app.modules.form.routes_web.FormVersionService', StubFormVersionService)
+
+    client = app.test_client()
+    response = client.get('/forms/submissions')
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'Katalog Form Submission' in html
+    assert 'id="submission-forms-table-data"' in html
+    assert 'js/pages/submissions-catalog.js' in html
+    assert 'detailUrlTemplate' in html
+    assert '/forms/submissions/0' in html
+    assert 'FORM-SUB' in html
+
+
+def test_form_submission_detail_page_uses_schema_fields_as_grid_columns(monkeypatch):
+    app = create_app('testing')
+    form = SimpleNamespace(id=1, uuid='form-uuid', code='FORM-SUB', slug='form-sub', name='Form Sub', description=None)
+    version = SimpleNamespace(
+        id=3,
+        version_number=1,
+        is_published=True,
+        status='published',
+        schema={'display': 'form', 'components': [{'type': 'textfield', 'key': 'nama', 'label': 'Nama'}]},
+    )
+
+    class StubFormService:
+        def get_form_detail(self, form_id):
+            return form
+
+    class StubFormVersionService:
+        def get_published_version(self, form_id):
+            return version
+
+    monkeypatch.setattr('app.modules.form.routes_web.FormService', StubFormService)
+    monkeypatch.setattr('app.modules.form.routes_web.FormVersionService', StubFormVersionService)
+
+    client = app.test_client()
+    response = client.get('/forms/submissions/1')
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'Data Submissions' in html
+    assert 'id="submissions-table-data"' in html
+    assert 'submissionEditModal' in html
+    assert 'js/pages/submissions.js' in html
+    assert 'fields:' in html
+    assert '"key": "nama"' in html
+    assert '+Tambah' in html
+    assert 'submissions.submitted_at' in html
+
+
+def test_submission_new_page_is_separate_from_preview_route(monkeypatch):
+    app = create_app('testing')
+    form = SimpleNamespace(id=1, uuid='form-uuid', code='FORM-SUB', slug='form-sub', name='Form Sub', description=None)
+    version = SimpleNamespace(
+        id=3,
+        version_number=1,
+        is_published=True,
+        status='published',
+        schema={'display': 'form', 'components': [{'type': 'textfield', 'key': 'nama', 'label': 'Nama'}]},
+    )
+
+    class StubFormService:
+        def get_form_detail(self, form_id):
+            return form
+
+    class StubFormVersionService:
+        def get_published_version(self, form_id):
+            return version
+
+    monkeypatch.setattr('app.modules.form.routes_web.FormService', StubFormService)
+    monkeypatch.setattr('app.modules.form.routes_web.FormVersionService', StubFormVersionService)
+
+    client = app.test_client()
+    response = client.get('/forms/submissions/1/new')
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'Tambah Submission' in html
+    assert 'id="submissionNewFormio"' in html
+    assert 'js/pages/submission-new.js' in html
+    assert '/api/v1/forms/1/submissions' in html
+    assert '/forms/1/preview' not in html
 
 
 def test_form_builder_page_smoke_returns_velzon_container_and_assets():
@@ -232,6 +346,31 @@ def test_form_import_service_extracts_fields_and_builds_xlsx_template():
         assert 'Jumlah' in sheet
         assert 'nama' in sheet
         assert 'jumlah' in sheet
+
+
+def test_form_import_service_ignores_textarea_rows_integer_when_building_template():
+    service = FormDataImportPipelineService()
+    form = SimpleNamespace(id=1, uuid='form-uuid', code='FORM-TEXTAREA', slug='form-textarea', name='Form Textarea')
+    version = SimpleNamespace(
+        id=2,
+        uuid='version-uuid',
+        version_number=1,
+        is_published=True,
+        status='published',
+        schema={
+            'display': 'form',
+            'components': [
+                {'type': 'textarea', 'key': 'namaRaperdaRaperkada', 'label': 'Nama Raperda/Raperkada', 'rows': 3},
+                {'type': 'datetime', 'key': 'tanggal', 'label': 'Tanggal'},
+            ],
+        },
+    )
+
+    fields = service.extract_importable_fields(version.schema)
+    workbook = service.build_template_workbook(form, version)
+
+    assert [field['key'] for field in fields] == ['namaRaperdaRaperkada', 'tanggal']
+    assert workbook.startswith(b'PK')
 
 
 def test_form_export_template_route_returns_xlsx(monkeypatch):
@@ -592,6 +731,28 @@ def test_import_validation_checks_required_number_email_and_options():
     assert invalid['is_valid'] is False
     assert {error['code'] for error in invalid['errors']} == {'required', 'invalid_number', 'invalid_email', 'invalid_option'}
     assert valid['is_valid'] is True
+
+
+def test_import_mapping_normalizes_date_fields_with_explicit_format():
+    service = FormDataImportPipelineService()
+    fields = [
+        {'key': 'tanggal', 'label': 'Tanggal', 'type': 'datetime', 'required': False, 'options': []},
+        {'key': 'nama', 'label': 'Nama', 'type': 'textfield', 'required': False, 'options': []},
+    ]
+    mapping = service.normalize_mapping_config(
+        {'tanggal': 'Tanggal Laporan', 'nama': 'Nama', 'date_format_tanggal': '%d/%m/%Y'},
+        fields,
+        ['Tanggal Laporan', 'Nama'],
+    )
+    payload = service.map_raw_payload(
+        {'Tanggal Laporan': '23/06/2026', 'Nama': 'Alice'},
+        mapping,
+        fields=fields,
+    )
+
+    assert mapping['__date_formats__']['tanggal'] == '%d/%m/%Y'
+    assert payload['tanggal'].startswith('2026-06-23')
+    assert payload['nama'] == 'Alice'
 
 
 def test_import_service_process_batch_validates_imports_and_marks_duplicates(monkeypatch):

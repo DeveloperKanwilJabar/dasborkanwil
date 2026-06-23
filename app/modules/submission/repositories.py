@@ -182,6 +182,19 @@ class SubmissionRepository(BaseRepository):
             Submission.deleted_at == None,
         ).order_by(Submission.created_at.desc()).all()
 
+    def list_filtered(self, form_id=None, reporting_year=None, reporting_period_id=None, statuses=None):
+        """Mengambil daftar submission untuk tabel operator dengan filter umum."""
+        query = self.model.query.filter(Submission.deleted_at == None)
+        if form_id is not None:
+            query = query.filter(Submission.form_id == form_id)
+        if reporting_year is not None:
+            query = query.filter(Submission.reporting_year == reporting_year)
+        if reporting_period_id is not None:
+            query = query.filter(Submission.reporting_period_id == reporting_period_id)
+        if statuses:
+            query = query.filter(Submission.status.in_(statuses))
+        return query.order_by(Submission.submitted_at.desc(), Submission.created_at.desc()).all()
+
     def list_by_reporting_period(self, reporting_period_id):
         """Mengambil submission untuk reporting period tertentu.
 

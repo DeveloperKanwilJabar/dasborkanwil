@@ -6,7 +6,7 @@ respons yang dipakai dashboard dan integrasi eksternal.
 """
 
 from flask import Blueprint, current_app, request
-from flask_login import current_user
+from flask_login import current_user, login_required
 from flasgger import swag_from
 
 from app.api.docs import (
@@ -17,6 +17,7 @@ from app.api.docs import (
     query_parameter,
     standard_responses,
 )
+from app.core.access import can_update_submission, can_view_submission
 from app.core.extensions import db
 from app.core.utils import json_response
 from app.modules.submission.services import SubmissionService
@@ -189,6 +190,15 @@ def parse_optional_int(value):
 
 
 
+def serialize_submission_permissions(submission, actor=None):
+    """Serialisasi capability ABAC per submission untuk UI."""
+    return {
+        'can_view': can_view_submission(actor, submission) if actor else True,
+        'can_edit': can_update_submission(actor, submission) if actor else True,
+    }
+
+
+
 def serialize_submission(submission):
     """Serialisasi model Submission ke dict JSON-friendly."""
     if not submission:
@@ -222,7 +232,68 @@ def serialize_submission(submission):
         'source_ref': submission.source_ref,
         'created_at': submission.created_at.isoformat() if submission.created_at else None,
         'updated_at': submission.updated_at.isoformat() if submission.updated_at else None,
+        'permissions': serialize_submission_permissions(submission, current_actor()),
     }
+
+
+@api_submission_bp.route('/submissions', methods=['GET'])
+@login_required
+def list_submissions():
+    """List submission untuk UI Grid.js dengan filter ABAC di service layer."""
+    try:
+        statuses = request.args.getlist('status') or None
+        submissions = SubmissionService().list_submissions(
+            actor=current_actor(),
+            form_id=parse_optional_int(request.args.get('form_id')),
+            reporting_year=parse_optional_int(request.args.get('reporting_year')),
+            reporting_period_id=parse_optional_int(request.args.get('reporting_period_id')),
+            statuses=statuses,
+        )
+        return json_response(True, 'Submissions berhasil diambil.', [serialize_submission(item) for item in submissions])
+    except ValueError as error:
+        return validation_error_response(error)
+    except Exception as error:
+        current_app.logger.error(f'List submissions API error: {str(error)}')
+        return json_response(False, 'Gagal mengambil daftar submission.', status=500)
+
+
+@api_submission_bp.route('/submissions/<int:submission_id>', methods=['GET'])
+@login_required
+def get_submission(submission_id):
+    """Ambil detail submission untuk modal edit."""
+    try:
+        submission = SubmissionService().get_submission(submission_id, actor=current_actor())
+        return json_response(True, 'Submission berhasil diambil.', {'submission': serialize_submission(submission)})
+    except ValueError as error:
+        return validation_error_response(error)
+    except PermissionError as error:
+        return authorization_error_response(error)
+    except Exception as error:
+        current_app.logger.error(f'Get submission API error: {str(error)}')
+        return json_response(False, 'Gagal mengambil submission.', status=500)
+
+
+@api_submission_bp.route('/submissions/<int:submission_id>', methods=['PUT'])
+@login_required
+def update_submission(submission_id):
+    """Update payload submission dan refresh submitted_at untuk freshness dataset."""
+    data = request.get_json(silent=True) or {}
+    try:
+        submission = SubmissionService().update_submission(
+            submission_id,
+            payload=data.get('payload'),
+            actor=current_actor(),
+            refresh_submitted_at=data.get('refresh_submitted_at', True),
+        )
+        return json_response(True, 'Submission berhasil diupdate.', {'submission': serialize_submission(submission)})
+    except ValueError as error:
+        return validation_error_response(error)
+    except PermissionError as error:
+        return authorization_error_response(error)
+    except Exception as error:
+        db.session.rollback()
+        current_app.logger.error(f'Update submission API error: {str(error)}')
+        return json_response(False, 'Gagal mengupdate submission.', status=500)
 
 
 @api_submission_bp.route('/forms/<int:form_id>/submissions', methods=['POST'])

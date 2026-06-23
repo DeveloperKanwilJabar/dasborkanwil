@@ -4,7 +4,14 @@ Modul ini mengorkestrasi lifecycle submission form, mulai dari draft, submit fin
 
 import uuid
 
-from app.core.access import build_actor_context, can_submit_form, derive_submission_policy_key, enrich_scope
+from app.core.access import (
+    build_actor_context,
+    can_submit_form,
+    can_update_submission,
+    can_view_submission,
+    derive_submission_policy_key,
+    enrich_scope,
+)
 from app.core.extensions import db
 from app.core.services.base import BaseService
 from app.core.utils import now_utc
@@ -355,6 +362,60 @@ class SubmissionService(BaseService):
             'reporting_year': reporting_year,
             'reporting_period_id': reporting_period_id,
         }
+
+    def list_submissions(self, actor=None, form_id=None, reporting_year=None, reporting_period_id=None, statuses=None):
+        """Mengambil submission yang boleh dilihat actor untuk UI tabel submission."""
+        submissions = self.repository.list_filtered(
+            form_id=form_id,
+            reporting_year=reporting_year,
+            reporting_period_id=reporting_period_id,
+            statuses=statuses,
+        )
+        if actor is None:
+            return submissions
+        return [submission for submission in submissions if can_view_submission(actor, submission)]
+
+    def get_submission(self, submission_id, actor=None):
+        """Mengambil satu submission dengan guard ABAC detail."""
+        submission = self.repository.get_by_id(submission_id)
+        if not submission or getattr(submission, 'deleted_at', None) is not None:
+            raise ValueError('Submission tidak ditemukan.')
+        if actor is not None and not can_view_submission(actor, submission):
+            raise PermissionError('Actor tidak memiliki izin melihat submission ini.')
+        return submission
+
+    def update_submission(self, submission_id, payload, actor=None, refresh_submitted_at=True):
+        """Mengubah payload submission resmi dan menggeser submitted_at untuk freshness."""
+        submission = self.get_submission(submission_id, actor=actor)
+        if actor is not None and not can_update_submission(actor, submission):
+            raise PermissionError('Actor tidak memiliki izin mengubah submission ini.')
+        if payload is None or not isinstance(payload, dict):
+            raise ValueError('Payload submission wajib berupa object/dict.')
+
+        form_version = getattr(submission, 'form_version', None) or self.version_repository.get_by_id(submission.form_version_id)
+        validation_snapshot = self.validate_payload(payload, form_version)
+
+        try:
+            submission.payload = payload
+            submission.validation_snapshot = validation_snapshot
+            if refresh_submitted_at and submission.status == 'submitted':
+                submission.submitted_at = now_utc()
+            self._apply_actor_audit(submission, actor, action='update')
+            submission = self.repository.save(submission)
+            self.add_event(
+                submission,
+                'updated',
+                actor=actor,
+                context={
+                    'refresh_submitted_at': bool(refresh_submitted_at),
+                    'freshness_source': 'submissions.submitted_at',
+                    'validation_snapshot': validation_snapshot,
+                },
+            )
+            return submission
+        except Exception:
+            db.session.rollback()
+            raise
 
     def resolve_submission_scope(self, form=None, actor=None, context=None):
         """Menentukan scope owner submission dari context, actor, atau konfigurasi form.

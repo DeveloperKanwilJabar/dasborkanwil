@@ -167,6 +167,11 @@ def actor_allows_action(actor: Any, action: str) -> bool:
     if not actor:
         return False
 
+    context = build_actor_context(actor)
+    explicit_permissions = context.get('permissions') or []
+    if '*' in explicit_permissions or action in explicit_permissions:
+        return True
+
     roles = get_actor_roles(actor)
     if not roles:
         return False
@@ -442,6 +447,17 @@ def can_view_submission(actor: Any, submission: Any) -> bool:
         return is_exact_scope_match(actor_scope, owner_scope)
 
     return is_resource_within_actor_scope(actor_scope, owner_scope)
+
+
+def can_update_submission(actor: Any, submission: Any) -> bool:
+    """Periksa apakah actor boleh mengubah payload submission tertentu."""
+    if actor is None:
+        return True
+    if actor_allows_action(actor, 'submission:update'):
+        return can_view_submission(actor, submission)
+    if not actor_allows_action(actor, 'submission:create'):
+        return False
+    return can_view_submission(actor, submission)
 
 
 def ensure_known_policy(policy_key: str | None) -> bool:

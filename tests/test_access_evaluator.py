@@ -5,6 +5,7 @@ import pytest
 
 from app.core.access import derive_submission_policy_key
 from app.core.access.evaluator import (
+    actor_allows_action,
     can_publish_form,
     can_submit_form,
     can_view_submission,
@@ -91,6 +92,12 @@ def test_can_submit_form_rejects_actor_outside_target_scope(actor_unit_jdih):
     )
 
     assert can_submit_form(actor_unit_jdih, form) is False
+
+
+def test_actor_allows_action_honors_explicit_user_permissions():
+    actor = SimpleNamespace(roles=['pegawai_unit'], permissions=['submission:update'])
+
+    assert actor_allows_action(actor, 'submission:update') is True
 
 
 def test_can_publish_form_allows_admin_lintas_bagian(actor_admin_kanwil):

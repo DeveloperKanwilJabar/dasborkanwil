@@ -7,6 +7,7 @@ import json
 import re
 import uuid
 from collections import defaultdict
+from datetime import date, datetime
 from io import BytesIO
 
 from openpyxl import Workbook, load_workbook
@@ -222,6 +223,7 @@ class FormDataImportPipelineService:
             mapping_config=normalized_mapping,
             actor=actor,
             start_row_number=3 if dropped_template_key_row else 2,
+            fields=fields,
             meta={
                 'form_uuid': getattr(form, 'uuid', None),
                 'form_version_uuid': getattr(form_version, 'uuid', None),
@@ -285,7 +287,7 @@ class FormDataImportPipelineService:
             },
         )
 
-    def _create_import_batch_records(self, form, form_version, filename, headers, data_rows, mapping_config, actor=None, start_row_number=2, meta=None):
+    def _create_import_batch_records(self, form, form_version, filename, headers, data_rows, mapping_config, actor=None, start_row_number=2, meta=None, fields=None):
         """Helper internal untuk membentuk batch staging dan row import dari data workbook.
 
         Args:
@@ -306,6 +308,7 @@ class FormDataImportPipelineService:
             >>> service._create_import_batch_records(form=..., form_version=..., filename=...)
         """
 
+        fields = fields or self.extract_importable_fields(form_version.schema or {})
         import_batch = ImportBatch(
             uuid=str(uuid.uuid4()),
             form_id=form.id,
@@ -330,7 +333,7 @@ class FormDataImportPipelineService:
             mapped_count = 0
             for offset, row in enumerate(data_rows, start=0):
                 raw_payload = self._row_to_payload(row, headers)
-                mapped_payload = self.map_raw_payload(raw_payload, mapping_config)
+                mapped_payload = self.map_raw_payload(raw_payload, mapping_config, fields=fields)
                 if any(value not in [None, ''] for value in mapped_payload.values()):
                     mapped_count += 1
                 import_row = ImportBatchRow(
@@ -370,13 +373,19 @@ class FormDataImportPipelineService:
         mapping_config = mapping_config or {}
         header_set = set(headers or [])
         normalized = {}
+        raw_date_formats = mapping_config.get('__date_formats__') if isinstance(mapping_config, dict) else None
+        date_formats = {}
         for field in fields:
             field_key = field.get('key')
             header = mapping_config.get(field_key) or ''
             normalized[field_key] = header if header in header_set else ''
+            if field.get('type') in ['datetime', 'day']:
+                date_formats[field_key] = (raw_date_formats or {}).get(field_key) or mapping_config.get(f'date_format_{field_key}') or 'auto'
+        if date_formats:
+            normalized['__date_formats__'] = date_formats
         return normalized
 
-    def map_raw_payload(self, raw_payload, mapping_config):
+    def map_raw_payload(self, raw_payload, mapping_config, fields=None):
         """Memetakan payload mentah spreadsheet ke key field schema.
 
         Args:
@@ -391,8 +400,15 @@ class FormDataImportPipelineService:
         """
 
         mapped = {}
+        field_map = {field.get('key'): field for field in fields or []}
+        date_formats = (mapping_config or {}).get('__date_formats__') or {}
         for field_key, header in (mapping_config or {}).items():
+            if str(field_key).startswith('__'):
+                continue
             mapped[field_key] = raw_payload.get(header, '') if header else ''
+            field = field_map.get(field_key) or {}
+            if field.get('type') in ['datetime', 'day'] and not self._is_empty_value(mapped[field_key]):
+                mapped[field_key] = self._normalize_date_value(mapped[field_key], date_formats.get(field_key))
         return mapped
 
     def process_import_batch(self, import_batch_id, actor=None):
@@ -969,6 +985,29 @@ class FormDataImportPipelineService:
             return True
         return False
 
+    def _normalize_date_value(self, value, date_format=None):
+        """Normalisasi tanggal import menjadi ISO date/datetime string dengan error eksplisit."""
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        raw = str(value or '').strip()
+        if not raw:
+            return ''
+        candidates = []
+        if date_format and date_format != 'auto':
+            candidates.append(date_format)
+        candidates.extend(['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%m/%d/%Y', '%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S'])
+        for fmt in candidates:
+            try:
+                return datetime.strptime(raw, fmt).isoformat()
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(raw).isoformat()
+        except ValueError as error:
+            raise ValueError(f'Nilai tanggal tidak valid: {raw}. Pilih format tanggal mapping yang sesuai.') from error
+
     def _is_number(self, value):
         """Helper internal untuk is number.
 
@@ -1099,9 +1138,14 @@ class FormDataImportPipelineService:
             for column in component.get('columns') or []:
                 self._collect_components((column or {}).get('components') or [], fields, current_path)
 
-            for row in component.get('rows') or []:
-                for cell in row or []:
-                    self._collect_components((cell or {}).get('components') or [], fields, current_path)
+            table_rows = component.get('rows') or []
+            if isinstance(table_rows, list):
+                for row in table_rows:
+                    if not isinstance(row, list):
+                        continue
+                    for cell in row:
+                        if isinstance(cell, dict):
+                            self._collect_components(cell.get('components') or [], fields, current_path)
 
     def _extract_component_options(self, component):
         """Helper internal untuk extract component options.
