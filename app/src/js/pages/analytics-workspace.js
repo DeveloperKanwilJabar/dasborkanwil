@@ -28,6 +28,7 @@
     const datasetRunsRefreshButton = document.getElementById('analyticsDatasetRunsRefreshButton');
     const datasetExecutionStatus = document.getElementById('analyticsDatasetExecutionStatus');
     const datasetExecutionSource = document.getElementById('analyticsDatasetExecutionSource');
+    const datasetFreshnessStatus = document.getElementById('analyticsDatasetFreshnessStatus');
 
     const state = {
         datasets: [],
@@ -897,6 +898,13 @@
         return status || '-';
     }
 
+    function freshnessStatusLabel(status) {
+        if (status === 'stale') return 'Perlu Refresh';
+        if (status === 'fresh') return 'Sinkron';
+        if (status === 'failed') return 'Gagal Dicek';
+        return 'Belum Diketahui';
+    }
+
     function renderExecutionBridge(detail, latestRun) {
         if (!datasetExecutionSource || !datasetExecutionStatus) {
             return;
@@ -929,17 +937,38 @@
 
         const latestStatus = latestRun ? runStatusLabel(latestRun.status) : 'Belum pernah dijalankan';
         const latestRows = latestRun ? formatNumber(latestRun.result_row_count || 0) : '0';
+        const latestWatermark = latestRun && latestRun.source_watermark ? latestRun.source_watermark : '-';
         const alertClass = latestRun && latestRun.status === 'succeeded'
             ? 'alert alert-success mb-0'
             : latestRun && latestRun.status === 'failed'
                 ? 'alert alert-danger mb-0'
                 : 'alert alert-light border mb-0';
         datasetExecutionStatus.className = alertClass;
-        datasetExecutionStatus.innerHTML = `Status terakhir: <strong>${escapeHtml(latestStatus)}</strong><br />Rows materialized: <strong>${escapeHtml(latestRows)}</strong>`;
+        datasetExecutionStatus.innerHTML = `Status terakhir: <strong>${escapeHtml(latestStatus)}</strong><br />Rows materialized: <strong>${escapeHtml(latestRows)}</strong><br />Run watermark: <code>${escapeHtml(latestWatermark)}</code>`;
+
+        const freshness = (detail && detail.freshness) || {};
+        if (datasetFreshnessStatus) {
+            const isStale = Boolean(freshness.is_stale);
+            datasetFreshnessStatus.className = isStale
+                ? 'alert alert-warning mb-0'
+                : freshness.status === 'fresh'
+                    ? 'alert alert-success mb-0'
+                    : 'alert alert-light border mb-0';
+            datasetFreshnessStatus.innerHTML = `
+                <div class="fw-semibold">Freshness source: ${escapeHtml(freshnessStatusLabel(freshness.status))}</div>
+                <div class="small">${escapeHtml(freshness.message || 'Freshness source belum tersedia.')}</div>
+                <div class="small text-muted mt-1">Source watermark: <code>${escapeHtml(freshness.source_watermark || '-')}</code></div>
+                <div class="small text-muted">Latest update: ${escapeHtml(freshness.latest_updated_at || freshness.latest_submitted_at || '-')}</div>
+            `;
+        }
 
         if (datasetRunButton) {
             datasetRunButton.disabled = !(dataset && dataset.id && activeVersion && activeVersion.id);
-            datasetRunButton.textContent = latestRun && latestRun.status === 'running' ? 'Run Sedang Berjalan' : 'Jalankan Dataset Sekarang';
+            datasetRunButton.textContent = latestRun && latestRun.status === 'running'
+                ? 'Run Sedang Berjalan'
+                : freshness.is_stale
+                    ? 'Refresh Dataset dari Source Terbaru'
+                    : 'Jalankan Dataset Sekarang';
         }
     }
 

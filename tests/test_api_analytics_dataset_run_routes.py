@@ -266,6 +266,12 @@ def test_get_analytics_dataset_detail_returns_versions_and_runs(monkeypatch):
                 'published_version': make_dataset_version(),
                 'versions': [make_dataset_version()],
                 'runs': [make_dataset_run(status='failed', error_code='QUERY_TIMEOUT')],
+                'freshness': {
+                    'status': 'stale',
+                    'is_stale': True,
+                    'source_watermark': '2026-06-24T10:00:00+00:00',
+                    'run_watermark': '2026-06-24T09:00:00+00:00',
+                },
             }
 
     monkeypatch.setattr('app.api.v1.analytics.routes.AnalyticsQueryService', StubAnalyticsQueryService)
@@ -278,6 +284,8 @@ def test_get_analytics_dataset_detail_returns_versions_and_runs(monkeypatch):
     assert payload['data']['dataset']['id'] == 11
     assert payload['data']['versions'][0]['version_number'] == 2
     assert payload['data']['runs'][0]['error_code'] == 'QUERY_TIMEOUT'
+    assert payload['data']['freshness']['is_stale'] is True
+    assert payload['data']['freshness']['source_watermark'] == '2026-06-24T10:00:00+00:00'
 
 
 def test_get_analytics_dataset_runs_returns_run_history(monkeypatch):

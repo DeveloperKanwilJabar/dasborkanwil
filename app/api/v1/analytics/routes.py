@@ -618,6 +618,7 @@ def get_dataset_workspace(dataset_id):
                 'published_version': serialize_dataset_version(workspace.get('published_version')),
                 'versions': [serialize_dataset_version(version) for version in workspace.get('versions', [])],
                 'runs': [serialize_dataset_run(run) for run in workspace.get('runs', [])],
+                'freshness': workspace.get('freshness') or {},
             },
         )
     except ValueError as error:

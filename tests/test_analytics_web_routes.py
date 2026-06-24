@@ -513,6 +513,8 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'id="analyticsDatasetRunsList"' in html
     assert 'id="analyticsDatasetRunButton"' in html
     assert 'id="analyticsDatasetExecutionStatus"' in html
+    assert 'id="analyticsDatasetFreshnessStatus"' in html
+    assert 'Mengecek freshness source data' in html
     assert 'Jembatan Source ke Analytics' in html
     assert 'libs/plotly.js-dist-min/plotly.min.js' in html
     assert 'libs/leaflet/dist/leaflet.js' in html
@@ -775,6 +777,9 @@ def test_analytics_workspace_static_js_is_served():
     assert 'analyticsDatasetMap' in body
     assert 'analyticsDatasetRunButton' in body
     assert 'analyticsDatasetExecutionStatus' in body
+    assert 'analyticsDatasetFreshnessStatus' in body
+    assert 'Freshness source' in body
+    assert 'Refresh Dataset dari Source Terbaru' in body
     assert 'analyticsDatasetExecuteUrlTemplate' in body
     assert 'Gagal memuat dataset runs.' in body
 

@@ -772,7 +772,7 @@ class AnalyticsDatasetRunService(BaseService):
 
         rows, source_snapshot = self._load_submission_rows(dataset, dataset_version, run)
         summary = self._build_submission_summary(rows, run, dataset, dataset_version, source_snapshot)
-        source_watermark = source_snapshot.get('latest_submitted_at')
+        source_watermark = source_snapshot.get('source_watermark') or source_snapshot.get('latest_updated_at') or source_snapshot.get('latest_submitted_at')
         freshness_status = AnalyticsDatasetRun.FRESHNESS_FRESH if rows else AnalyticsDatasetRun.FRESHNESS_STALE
 
         return {
@@ -828,6 +828,19 @@ class AnalyticsDatasetRunService(BaseService):
             for submission in submissions
         ]
 
+        latest_submitted_at = max(
+            (submission.submitted_at for submission in submissions if submission.submitted_at),
+            default=None,
+        )
+        latest_updated_at = max(
+            (submission.updated_at for submission in submissions if submission.updated_at),
+            default=None,
+        )
+        source_watermark = max(
+            [value for value in (latest_submitted_at, latest_updated_at) if value],
+            default=None,
+        )
+
         source_snapshot = {
             'form_ids': form_ids,
             'form_codes': [getattr(form, 'code', None) for form in forms],
@@ -835,10 +848,67 @@ class AnalyticsDatasetRunService(BaseService):
             'requested_reporting_year': requested_reporting_year,
             'requested_filters_json': requested_filters,
             'submission_count': len(submissions),
-            'latest_submitted_at': submissions[-1].submitted_at.isoformat() if submissions and submissions[-1].submitted_at else None,
+            'latest_submitted_at': latest_submitted_at.isoformat() if latest_submitted_at else None,
+            'latest_updated_at': latest_updated_at.isoformat() if latest_updated_at else None,
+            'source_watermark': source_watermark.isoformat() if source_watermark else None,
         }
 
         return rows, source_snapshot
+
+    def evaluate_source_freshness(self, dataset, dataset_version, latest_run=None, requested_filters=None):
+        """Mengecek apakah source submission lebih baru dari latest materialized run."""
+
+        if not dataset or not dataset_version:
+            return {
+                'status': AnalyticsDatasetRun.FRESHNESS_UNKNOWN,
+                'is_stale': False,
+                'message': 'Dataset/version belum tersedia.',
+            }
+        if dataset.source_domain != AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION:
+            return {
+                'status': AnalyticsDatasetRun.FRESHNESS_UNKNOWN,
+                'is_stale': False,
+                'message': 'Freshness otomatis saat ini baru mendukung source submission.',
+            }
+
+        source_contract = getattr(dataset_version, 'source_contract_json', None) or {}
+        forms = self._resolve_forms(self._resolve_dataset_form_refs(dataset, dataset_version))
+        if not forms:
+            return {
+                'status': AnalyticsDatasetRun.FRESHNESS_UNKNOWN,
+                'is_stale': False,
+                'message': 'Dataset belum terhubung ke form submission.',
+            }
+
+        requested_filters = requested_filters or {}
+        requested_reporting_year = requested_filters.get('reporting_year') or source_contract.get('reporting_year')
+        query = Submission.query.filter(
+            Submission.deleted_at.is_(None),
+            Submission.form_id.in_([form.id for form in forms]),
+            Submission.status == 'submitted',
+        )
+        if requested_reporting_year:
+            query = query.filter(Submission.reporting_year == requested_reporting_year)
+
+        submissions = query.all()
+        latest_submitted_at = max((submission.submitted_at for submission in submissions if submission.submitted_at), default=None)
+        latest_updated_at = max((submission.updated_at for submission in submissions if submission.updated_at), default=None)
+        source_watermark_dt = max([value for value in (latest_submitted_at, latest_updated_at) if value], default=None)
+        source_watermark = source_watermark_dt.isoformat() if source_watermark_dt else None
+        run_watermark = getattr(latest_run, 'source_watermark', None) if latest_run else None
+        is_stale = bool(source_watermark and (not run_watermark or source_watermark > str(run_watermark)))
+        status = AnalyticsDatasetRun.FRESHNESS_STALE if is_stale else AnalyticsDatasetRun.FRESHNESS_FRESH if latest_run else AnalyticsDatasetRun.FRESHNESS_UNKNOWN
+        return {
+            'status': status,
+            'is_stale': is_stale,
+            'source': 'submissions.updated_at_or_submitted_at',
+            'source_watermark': source_watermark,
+            'run_watermark': run_watermark,
+            'latest_submitted_at': latest_submitted_at.isoformat() if latest_submitted_at else None,
+            'latest_updated_at': latest_updated_at.isoformat() if latest_updated_at else None,
+            'submission_count': len(submissions),
+            'message': 'Source data lebih baru dari dataset run terakhir.' if is_stale else 'Dataset run masih sinkron dengan source data.',
+        }
 
     def _resolve_submission_source_type_filter(self, requested_filters=None, source_contract=None, settings_json=None):
         """Ambil filter ingestion source_type hanya dari key eksplisit.
@@ -2436,6 +2506,17 @@ class AnalyticsQueryService(BaseService):
         published_version = self.dataset_version_repository.get_published_version(dataset_id)
         versions = self.dataset_version_repository.list_versions(dataset_id)
         runs = self.dataset_run_repository.list_by_dataset(dataset_id)
+        active_version = published_version or draft_version
+        latest_succeeded_run = next((run for run in runs if getattr(run, 'status', None) == AnalyticsDatasetRun.STATUS_SUCCEEDED), runs[0] if runs else None)
+        freshness = AnalyticsDatasetRunService().evaluate_source_freshness(
+            dataset,
+            active_version,
+            latest_run=latest_succeeded_run,
+        ) if active_version else {
+            'status': AnalyticsDatasetRun.FRESHNESS_UNKNOWN,
+            'is_stale': False,
+            'message': 'Dataset belum memiliki version aktif.',
+        }
 
         return {
             'dataset': dataset,
@@ -2443,6 +2524,7 @@ class AnalyticsQueryService(BaseService):
             'published_version': published_version,
             'versions': versions,
             'runs': runs,
+            'freshness': freshness,
         }
 
     def list_dataset_runs(self, dataset_id):
