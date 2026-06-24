@@ -297,7 +297,10 @@ def _serialize_dataset_run_for_report_builder(run):
         'id': getattr(run, 'id', None),
         'status': getattr(run, 'status', None),
         'result_row_count': getattr(run, 'result_row_count', None),
-        'row_snapshots': row_snapshots[:50],
+        # Report item KPI builder menghitung distinct value dan count dari rows ini.
+        # Jangan dipotong seperti preview tabel, agar count field/value tetap sesuai
+        # latest run materialized rows (contoh harmon-2026 punya 104 row).
+        'row_snapshots': row_snapshots,
         'summary': {
             'row_count': result_summary.get('row_count'),
             'completion': result_summary.get('completion') or {},
@@ -353,29 +356,39 @@ def _extract_formio_fields(schema):
 
     fields = []
 
+    def collect_nested_components(value):
+        """Normalisasi nested Form.io containers tanpa menganggap `rows` selalu layout iterable."""
+
+        nested = []
+        if isinstance(value, dict):
+            components = value.get('components')
+            if isinstance(components, list):
+                nested.extend(components)
+            else:
+                nested.append(value)
+            return nested
+        if isinstance(value, list):
+            for item in value:
+                nested.extend(collect_nested_components(item))
+        return nested
+
     def walk(components):
         for component in components or []:
             if not isinstance(component, dict):
                 continue
             nested = []
-            nested.extend(component.get('components') or [])
-            for column in component.get('columns') or []:
+            nested.extend(collect_nested_components(component.get('components')))
+            columns = component.get('columns')
+            for column in columns if isinstance(columns, list) else []:
                 if isinstance(column, dict):
-                    nested.extend(column.get('components') or [])
-            nested.extend((component.get('rows') or []))
+                    nested.extend(collect_nested_components(column.get('components')))
+            rows = component.get('rows')
+            if isinstance(rows, list):
+                # `rows` pada layout/table Form.io bisa list dua dimensi, sedangkan
+                # `rows` pada textarea adalah integer konfigurasi tinggi input.
+                nested.extend(collect_nested_components(rows))
             if nested:
-                # rows pada Form.io bisa list dua dimensi; flatten konservatif.
-                flat_nested = []
-                for item in nested:
-                    if isinstance(item, list):
-                        for subitem in item:
-                            if isinstance(subitem, list):
-                                flat_nested.extend(subitem)
-                            elif isinstance(subitem, dict):
-                                flat_nested.extend(subitem.get('components') or [subitem])
-                    elif isinstance(item, dict):
-                        flat_nested.extend(item.get('components') or [item])
-                walk(flat_nested)
+                walk(nested)
             key = component.get('key')
             component_type = component.get('type')
             if not key or component_type in {'button', 'htmlelement', 'content'}:

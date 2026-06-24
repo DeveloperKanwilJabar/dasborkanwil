@@ -167,6 +167,9 @@ class StubDatasetRepository:
     def __init__(self, datasets=None):
         self.datasets = {item.id: item for item in (datasets or []) if getattr(item, 'id', None) is not None}
 
+    def get_all(self):
+        return list(self.datasets.values())
+
     def get_by_id(self, dataset_id):
         return self.datasets.get(dataset_id)
 
@@ -189,6 +192,14 @@ class StubDatasetVersionRepository:
             if getattr(version, 'dataset_id', None) == dataset_id and getattr(version, 'is_current_draft', False):
                 return version
         return None
+
+
+class StubDatasetRunRepository:
+    def __init__(self, runs_by_version=None):
+        self.runs_by_version = runs_by_version or {}
+
+    def get_latest_for_dataset_version(self, dataset_version_id):
+        return self.runs_by_version.get(dataset_version_id)
 
 
 class StubResultRepository(SaveMixin):
@@ -241,6 +252,34 @@ class StubProgressEntryRepository(SaveMixin):
             if entry.id == progress_entry_id:
                 return entry
         return None
+
+
+def test_query_service_list_datasets_falls_back_to_published_run_when_draft_has_no_run():
+    from app.modules.analytics.services import AnalyticsQueryService
+
+    dataset = SimpleNamespace(id=4, dataset_key='harmon-2026', name='Harmonisasi 2026')
+    draft_version = SimpleNamespace(id=8, dataset_id=4, is_current_draft=True, is_current_published=False)
+    published_version = SimpleNamespace(id=7, dataset_id=4, is_current_draft=False, is_current_published=True)
+    published_run = SimpleNamespace(id=15, dataset_version_id=7, status='succeeded', result_row_count=104)
+
+    service = AnalyticsQueryService(
+        report_definition_repository=StubReportDefinitionRepository([]),
+        report_version_repository=StubReportVersionRepository([]),
+        indicator_definition_repository=StubIndicatorDefinitionRepository([]),
+        indicator_version_repository=StubIndicatorVersionRepository([]),
+        report_version_indicator_repository=StubReportVersionIndicatorRepository(),
+        result_repository=StubResultRepository([]),
+        progress_entry_repository=StubProgressEntryRepository([]),
+        dataset_repository=StubDatasetRepository([dataset]),
+        dataset_version_repository=StubDatasetVersionRepository([draft_version, published_version]),
+        dataset_run_repository=StubDatasetRunRepository({7: published_run}),
+    )
+
+    items = service.list_datasets()
+
+    assert items[0]['draft_version'] == draft_version
+    assert items[0]['published_version'] == published_version
+    assert items[0]['latest_run'] == published_run
 
 
 def test_create_dataset_bundle_rejects_invalid_contract_without_persisting_dataset():

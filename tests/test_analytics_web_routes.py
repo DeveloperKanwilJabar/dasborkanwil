@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app import create_app
+from app.modules.analytics.routes_web import _extract_formio_fields, _serialize_dataset_run_for_report_builder
 
 
 def _make_registry(registry_id=1, name='Registry Wilayah'):
@@ -392,6 +393,39 @@ def test_analytics_dataset_create_page_renders_stage_shell(monkeypatch):
     assert 'createUrl' in html
 
 
+def test_extract_formio_fields_ignores_textarea_rows_integer_for_dataset_builder():
+    schema = {
+        'display': 'form',
+        'components': [
+            {'type': 'textarea', 'key': 'namaRaperdaRaperkada', 'label': 'Nama Raperda/Raperkada', 'rows': 3},
+            {'type': 'datetime', 'key': 'tanggal', 'label': 'Tanggal'},
+        ],
+    }
+
+    fields = _extract_formio_fields(schema)
+
+    assert [field['key'] for field in fields] == ['namaRaperdaRaperkada', 'tanggal']
+
+
+def test_extract_formio_fields_reads_nested_datagrid_rows_for_dataset_builder():
+    schema = {
+        'display': 'form',
+        'components': [
+            {
+                'type': 'datagrid',
+                'key': 'items',
+                'label': 'Items',
+                'components': [{'type': 'textfield', 'key': 'nama_item', 'label': 'Nama Item'}],
+                'rows': [[{'components': [{'type': 'number', 'key': 'jumlah', 'label': 'Jumlah'}]}]],
+            },
+        ],
+    }
+
+    fields = _extract_formio_fields(schema)
+
+    assert [field['key'] for field in fields] == ['nama_item', 'jumlah', 'items']
+
+
 def test_analytics_dataset_workspace_page_renders_operational_shell(monkeypatch):
     app = create_app('testing')
 
@@ -569,6 +603,23 @@ def test_analytics_report_edit_page_renders_builder(monkeypatch):
     assert 'Tambah Dataset' not in html
     assert '/analytics/reports/${reportId || \'new\'}/items/' in html
     assert 'showFormMessage' in html
+
+
+def test_serialize_dataset_run_for_report_builder_keeps_all_row_snapshots_for_counts():
+    rows = [{'jenis': 'Raperda (Pemda)', 'index': index} for index in range(104)]
+    run = SimpleNamespace(
+        id=15,
+        status='succeeded',
+        result_row_count=104,
+        summary_json={'row_snapshots': rows, 'row_count': 104},
+        result_preview_json=rows[:10],
+    )
+
+    payload = _serialize_dataset_run_for_report_builder(run)
+
+    assert payload is not None
+    assert payload['result_row_count'] == 104
+    assert len(payload['row_snapshots']) == 104
 
 
 def test_analytics_report_item_edit_page_renders_dataset_and_manual_input_builder(monkeypatch):

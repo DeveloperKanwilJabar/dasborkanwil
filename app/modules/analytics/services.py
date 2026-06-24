@@ -2397,10 +2397,16 @@ class AnalyticsQueryService(BaseService):
         for dataset in self.dataset_repository.get_all():
             draft_version = self.dataset_version_repository.get_draft_version(dataset.id)
             published_version = self.dataset_version_repository.get_published_version(dataset.id)
-            active_version = draft_version or published_version
-            latest_run = None
-            if active_version:
-                latest_run = self.dataset_run_repository.get_latest_for_dataset_version(active_version.id)
+            draft_run = None
+            published_run = None
+            if draft_version:
+                draft_run = self.dataset_run_repository.get_latest_for_dataset_version(draft_version.id)
+            if published_version:
+                published_run = self.dataset_run_repository.get_latest_for_dataset_version(published_version.id)
+            # Draft contract sering dibuat/diubah setelah published version sudah pernah dirun.
+            # Report item builder tetap membutuhkan row snapshot agar selector value kategorikal
+            # (mis. jenis/status_realisasi) bisa muncul saat user memilih draft version.
+            latest_run = draft_run or published_run
             items.append({
                 'dataset': dataset,
                 'draft_version': draft_version,
