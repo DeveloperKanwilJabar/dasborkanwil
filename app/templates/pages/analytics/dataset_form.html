@@ -221,6 +221,49 @@
                   </div>
                 </div>
                 <div class="col-12">
+                  <div class="card border border-success-subtle shadow-none mb-0" id="datasetDerivedMetricBuilderCard">
+                    <div class="card-header">
+                      <h5 class="card-title mb-1">Derived Metrics / KPI Turunan</h5>
+                      <p class="text-muted mb-0 small">Buat KPI dari field dimensi/filter tanpa menulis JSON. Contoh: <code>jumlah_realisasi</code> menghitung baris dengan <code>hasil = selesai</code>.</p>
+                    </div>
+                    <div class="card-body">
+                      <div class="row g-2 align-items-end mb-3">
+                        <div class="col-lg-3">
+                          <label class="form-label small mb-1" for="derivedMetricKeyInput">Key Metric</label>
+                          <input type="text" class="form-control form-control-sm" id="derivedMetricKeyInput" placeholder="jumlah_realisasi">
+                        </div>
+                        <div class="col-lg-3">
+                          <label class="form-label small mb-1" for="derivedMetricLabelInput">Label</label>
+                          <input type="text" class="form-control form-control-sm" id="derivedMetricLabelInput" placeholder="Jumlah Realisasi">
+                        </div>
+                        <div class="col-lg-2">
+                          <label class="form-label small mb-1" for="derivedMetricSourceFieldSelect">Source Field</label>
+                          <select class="form-select form-select-sm" id="derivedMetricSourceFieldSelect">
+                            <option value="">Pilih field...</option>
+                          </select>
+                        </div>
+                        <div class="col-lg-2">
+                          <label class="form-label small mb-1" for="derivedMetricAggregationSelect">Agregasi</label>
+                          <select class="form-select form-select-sm" id="derivedMetricAggregationSelect">
+                            <option value="count_matching_value">count matching value</option>
+                            <option value="count">count semua record</option>
+                            <option value="count_non_empty">count non-empty</option>
+                          </select>
+                        </div>
+                        <div class="col-lg-1">
+                          <label class="form-label small mb-1" for="derivedMetricMatchValueInput">Value</label>
+                          <input type="text" class="form-control form-control-sm" id="derivedMetricMatchValueInput" placeholder="selesai">
+                        </div>
+                        <div class="col-lg-1 d-grid">
+                          <button type="button" class="btn btn-success btn-sm" id="addDerivedMetricButton">Tambah</button>
+                        </div>
+                      </div>
+                      <div class="alert alert-light border small mb-3">Tips HRM: pilih <strong>Source Field = hasil</strong>, agregasi <strong>count matching value</strong>, value <strong>selesai</strong>, key <code>jumlah_realisasi</code>.</div>
+                      <div id="datasetDerivedMetricList" class="vstack gap-2"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12">
                   <div class="d-flex align-items-center justify-content-between mt-2">
                     <div>
                       <h5 class="mb-1">Advanced JSON Contract</h5>
@@ -424,6 +467,14 @@
   const fieldAddButton = document.getElementById('datasetFieldAddButton');
   const buildContractButton = document.getElementById('buildDatasetContractButton');
   const metricHint = document.getElementById('datasetMetricHint');
+  const derivedMetricList = document.getElementById('datasetDerivedMetricList');
+  const derivedMetricKeyInput = document.getElementById('derivedMetricKeyInput');
+  const derivedMetricLabelInput = document.getElementById('derivedMetricLabelInput');
+  const derivedMetricSourceFieldSelect = document.getElementById('derivedMetricSourceFieldSelect');
+  const derivedMetricAggregationSelect = document.getElementById('derivedMetricAggregationSelect');
+  const derivedMetricMatchValueInput = document.getElementById('derivedMetricMatchValueInput');
+  const addDerivedMetricButton = document.getElementById('addDerivedMetricButton');
+  let derivedMetricRows = [];
   const fieldRoleOptions = [
     ['dimension', 'Dimensi / Filter'],
     ['metric', 'Metric / Angka KPI'],
@@ -528,6 +579,7 @@
 
   function getFieldRowsFromCsv() {
     const existingMeta = collectExistingFieldMeta();
+    const derivedMetricKeys = new Set(parseJson('metric_definitions_json', []).filter(isDerivedMetric).map((metric) => metric.key).filter(Boolean));
     return parseCsv(form.elements.selected_fields_csv.value).map((key) => {
       const meta = existingMeta.get(key) || {};
       return {
@@ -536,7 +588,116 @@
         type: meta.type || 'string',
         role: meta.role || inferFieldRole({ key, type: meta.type })
       };
-    });
+    }).filter((field) => !derivedMetricKeys.has(field.key));
+  }
+
+  function isDerivedMetric(metric) {
+    const aggregation = String(metric?.aggregation || metric?.aggregation_mode || '').toLowerCase();
+    return Boolean(metric?.source_field || ['count', 'count_non_empty', 'count_matching_value', 'count_match', 'count_equals'].includes(aggregation));
+  }
+
+  function normalizeMetricDefinition(metric) {
+    const key = String(metric?.key || metric?.field_key || metric?.name || '').trim();
+    const aggregation = metric?.aggregation || metric?.aggregation_mode || 'count_matching_value';
+    return {
+      ...metric,
+      key,
+      label: metric?.label || metric?.title || titleizeField(key),
+      type: metric?.type || metric?.data_type || 'integer',
+      aggregation,
+      source_field: metric?.source_field || metric?.field_key || metric?.source_key || '',
+      match_value: metric?.match_value ?? metric?.value ?? metric?.equals ?? ''
+    };
+  }
+
+  function hydrateDerivedMetricRowsFromJson() {
+    derivedMetricRows = parseJson('metric_definitions_json', [])
+      .filter(isDerivedMetric)
+      .map(normalizeMetricDefinition)
+      .filter((metric) => metric.key);
+  }
+
+  function getFieldCardRows() {
+    if (!fieldPickerList) return [];
+    return Array.from(fieldPickerList.querySelectorAll('.js-dataset-field-card')).map((card) => {
+      const key = card.dataset.fieldKey;
+      const label = card.dataset.fieldLabel || titleizeField(key);
+      const type = card.querySelector('.js-dataset-field-type')?.value?.trim() || card.dataset.fieldType || 'string';
+      const role = card.querySelector('.js-dataset-field-role')?.value || inferFieldRole({ key, type });
+      return { key, label, type, role };
+    }).filter((field) => field.key && field.role !== 'skip');
+  }
+
+  function updateDerivedMetricSourceOptions() {
+    if (!derivedMetricSourceFieldSelect) return;
+    const selectedValue = derivedMetricSourceFieldSelect.value;
+    const fields = getFieldCardRows();
+    derivedMetricSourceFieldSelect.innerHTML = '<option value="">Pilih field...</option>' + fields.map((field) => {
+      return `<option value="${escapeHtml(field.key)}"${field.key === selectedValue ? ' selected' : ''}>${escapeHtml(field.label || field.key)} · ${escapeHtml(field.key)}</option>`;
+    }).join('');
+  }
+
+  function renderDerivedMetricList() {
+    if (!derivedMetricList) return;
+    updateDerivedMetricSourceOptions();
+    if (!derivedMetricRows.length) {
+      derivedMetricList.innerHTML = '<div class="text-muted small border rounded p-3">Belum ada KPI turunan. Tambahkan metric seperti jumlah_realisasi dari field hasil.</div>';
+      return;
+    }
+    derivedMetricList.innerHTML = derivedMetricRows.map((metric, index) => {
+      const source = metric.source_field ? `<code>${escapeHtml(metric.source_field)}</code>` : '<span class="text-muted">semua row</span>';
+      const value = metric.aggregation === 'count_matching_value' || metric.aggregation === 'count_match' || metric.aggregation === 'count_equals'
+        ? ` = <code>${escapeHtml(metric.match_value)}</code>`
+        : '';
+      return `
+        <div class="border rounded p-3 js-derived-metric-row" data-derived-metric-index="${index}">
+          <div class="d-flex flex-wrap justify-content-between gap-2">
+            <div>
+              <div class="fw-semibold">${escapeHtml(metric.label || metric.key)}</div>
+              <div class="small text-muted"><code>${escapeHtml(metric.key)}</code> · ${escapeHtml(metric.aggregation || 'count')} · ${source}${value}</div>
+            </div>
+            <button type="button" class="btn btn-sm btn-light js-remove-derived-metric"><i class="ri-close-line"></i></button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function resetDerivedMetricInputs() {
+    if (derivedMetricKeyInput) derivedMetricKeyInput.value = '';
+    if (derivedMetricLabelInput) derivedMetricLabelInput.value = '';
+    if (derivedMetricSourceFieldSelect) derivedMetricSourceFieldSelect.value = '';
+    if (derivedMetricAggregationSelect) derivedMetricAggregationSelect.value = 'count_matching_value';
+    if (derivedMetricMatchValueInput) derivedMetricMatchValueInput.value = '';
+  }
+
+  function addDerivedMetricFromInputs() {
+    const key = derivedMetricKeyInput?.value?.trim();
+    const label = derivedMetricLabelInput?.value?.trim() || titleizeField(key);
+    const aggregation = derivedMetricAggregationSelect?.value || 'count_matching_value';
+    const sourceField = derivedMetricSourceFieldSelect?.value || '';
+    const matchValue = derivedMetricMatchValueInput?.value?.trim() || '';
+    if (!key) {
+      showFormMessage('Key metric turunan wajib diisi, contoh: jumlah_realisasi.', 'warning');
+      return;
+    }
+    if (['count_matching_value', 'count_match', 'count_equals', 'count_non_empty'].includes(aggregation) && !sourceField) {
+      showFormMessage('Source Field wajib dipilih untuk metric turunan ini.', 'warning');
+      return;
+    }
+    if (aggregation === 'count_matching_value' && !matchValue) {
+      showFormMessage('Value wajib diisi untuk count matching value, contoh: selesai.', 'warning');
+      return;
+    }
+    const metric = normalizeMetricDefinition({ key, label, type: 'integer', aggregation, source_field: sourceField, match_value: matchValue });
+    const existingIndex = derivedMetricRows.findIndex((item) => item.key === key);
+    if (existingIndex >= 0) {
+      derivedMetricRows[existingIndex] = metric;
+    } else {
+      derivedMetricRows.push(metric);
+    }
+    renderDerivedMetricList();
+    syncContractFromFieldCards({ silent: true });
+    resetDerivedMetricInputs();
   }
 
   function renderDatasetFieldCards(fields = null) {
@@ -585,29 +746,32 @@
 
   function syncContractFromFieldCards(options = {}) {
     if (!fieldPickerList) return;
-    const cards = Array.from(fieldPickerList.querySelectorAll('.js-dataset-field-card'));
     const selectedFields = [];
     const dimensions = [];
     const metrics = [];
     const outputSchema = [];
-    cards.forEach((card) => {
-      const key = card.dataset.fieldKey;
-      const label = card.dataset.fieldLabel || titleizeField(key);
-      const type = card.querySelector('.js-dataset-field-type')?.value?.trim() || card.dataset.fieldType || 'string';
-      const role = card.querySelector('.js-dataset-field-role')?.value || inferFieldRole({ key, type });
-      if (!key || role === 'skip') return;
-      selectedFields.push(key);
-      const field = { key, label, type, role };
+    getFieldCardRows().forEach((field) => {
+      selectedFields.push(field.key);
       outputSchema.push(field);
-      if (role === 'metric') metrics.push({ key, label, type });
-      if (['dimension', 'date', 'geo_latitude', 'geo_longitude', 'narrative'].includes(role)) dimensions.push({ key, label, type, role });
+      if (field.role === 'metric') metrics.push({ key: field.key, label: field.label, type: field.type });
+      if (['dimension', 'date', 'geo_latitude', 'geo_longitude', 'narrative'].includes(field.role)) {
+        dimensions.push({ key: field.key, label: field.label, type: field.type, role: field.role });
+      }
+    });
+    derivedMetricRows.forEach((metric) => {
+      const normalized = normalizeMetricDefinition(metric);
+      if (!normalized.key) return;
+      metrics.push(normalized);
+      if (!outputSchema.some((field) => field.key === normalized.key)) {
+        outputSchema.push({ key: normalized.key, label: normalized.label, type: normalized.type, role: 'metric' });
+      }
     });
     form.elements.selected_fields_csv.value = selectedFields.join(', ');
     form.elements.dimension_definitions_json.value = JSON.stringify(dimensions, null, 2);
     form.elements.metric_definitions_json.value = JSON.stringify(metrics, null, 2);
     form.elements.output_schema_json.value = JSON.stringify(outputSchema, null, 2);
     if (metricHint) metricHint.classList.toggle('d-none', metrics.length > 0);
-    if (!options.silent) showFormMessage('Dataset contract sudah dibangun dari Field Picker.', 'success');
+    if (!options.silent) showFormMessage('Dataset contract sudah dibangun dari Field Picker dan Derived Metrics.', 'success');
   }
 
   function addDatasetField(field) {
@@ -693,7 +857,9 @@
   }
 
   function wireDatasetFieldPicker() {
+    hydrateDerivedMetricRowsFromJson();
     renderDatasetFieldCards();
+    renderDerivedMetricList();
 
     if (sourceFormPicker) {
       sourceFormPicker.addEventListener('change', function () {
@@ -725,7 +891,9 @@
           null,
           2
         );
+        derivedMetricRows = [];
         renderDatasetFieldCards(fieldRows);
+        renderDerivedMetricList();
         showFormMessage(`Source form ${selected.value} dipilih. Field sudah ditarik ke Field Picker.`, 'success');
       });
     }
@@ -748,6 +916,7 @@
     if (fieldPickerList) {
       fieldPickerList.addEventListener('change', function (event) {
         if (event.target.matches('.js-dataset-field-role, .js-dataset-field-type')) {
+          updateDerivedMetricSourceOptions();
           syncContractFromFieldCards({ silent: true });
         }
       });
@@ -755,7 +924,34 @@
         const removeButton = event.target.closest('.js-remove-dataset-field');
         if (!removeButton) return;
         removeButton.closest('.js-dataset-field-card')?.remove();
+        updateDerivedMetricSourceOptions();
         syncContractFromFieldCards({ silent: true });
+      });
+    }
+
+    if (addDerivedMetricButton) {
+      addDerivedMetricButton.addEventListener('click', addDerivedMetricFromInputs);
+    }
+
+    if (derivedMetricAggregationSelect && derivedMetricMatchValueInput) {
+      derivedMetricAggregationSelect.addEventListener('change', function () {
+        const needsMatchValue = derivedMetricAggregationSelect.value === 'count_matching_value';
+        derivedMetricMatchValueInput.disabled = !needsMatchValue;
+        if (!needsMatchValue) derivedMetricMatchValueInput.value = '';
+      });
+    }
+
+    if (derivedMetricList) {
+      derivedMetricList.addEventListener('click', function (event) {
+        const removeButton = event.target.closest('.js-remove-derived-metric');
+        if (!removeButton) return;
+        const row = removeButton.closest('.js-derived-metric-row');
+        const index = Number(row?.dataset?.derivedMetricIndex);
+        if (!Number.isNaN(index)) {
+          derivedMetricRows.splice(index, 1);
+          renderDerivedMetricList();
+          syncContractFromFieldCards({ silent: true });
+        }
       });
     }
 

@@ -2,7 +2,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app import create_app
-from app.modules.analytics.routes_web import _extract_formio_fields, _serialize_dataset_run_for_report_builder
+from app.modules.analytics.routes_web import (
+    _extract_formio_fields,
+    _serialize_dataset_run_for_report_builder,
+    _serialize_dataset_statistics_config,
+)
 
 
 def _make_registry(registry_id=1, name='Registry Wilayah'):
@@ -380,10 +384,21 @@ def test_analytics_dataset_create_page_renders_stage_shell(monkeypatch):
     assert 'Dataset Wizard Manusiawi' in html
     assert 'Pilih Source Form' in html
     assert 'Field Picker' in html
+    assert 'Derived Metrics / KPI Turunan' in html
+    assert 'datasetDerivedMetricBuilderCard' in html
+    assert 'derivedMetricSourceFieldSelect' in html
+    assert 'count matching value' in html
+    assert 'jumlah_realisasi' in html
     assert 'Bangun Contract Otomatis' in html
     assert 'Role Field' in html
     assert 'js-dataset-field-role' in html
     assert 'renderDatasetFieldCards' in html
+    assert 'renderDerivedMetricList' in html
+    assert 'addDerivedMetricFromInputs' in html
+    assert 'source_field' in html
+    assert 'match_value' in html
+    assert 'updateDerivedMetricSourceOptions' in html
+    assert 'derivedMetricRows.forEach' in html
     assert 'syncContractFromFieldCards' in html
     assert 'inferFieldRole' in html
     assert 'Advanced JSON Contract' in html
@@ -482,6 +497,9 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'id="analyticsDatasetTimeseriesSplit"' in html
     assert 'id="analyticsDatasetDimensionPieChart"' in html
     assert 'id="analyticsDatasetDetailTable"' in html
+    assert 'libs/gridjs/dist/theme/mermaid.min.css' in html
+    assert 'libs/gridjs/dist/gridjs.umd.js' in html
+    assert 'Preview ringkas memakai Grid.js' in html
     assert 'data-analytics-export="csv"' in html
     assert 'data-analytics-export="json"' in html
     assert 'data-analytics-export="xlsx"' in html
@@ -645,6 +663,49 @@ def test_serialize_dataset_run_for_report_builder_keeps_all_row_snapshots_for_co
     assert len(payload['row_snapshots']) == 104
 
 
+def test_dataset_statistics_config_keeps_derived_count_metric_contract():
+    dataset = SimpleNamespace(id=4, dataset_key='harmon-2026', name='Harmonisasi 2026')
+    version = SimpleNamespace(
+        id=9,
+        version_number=3,
+        output_schema_json=[
+            {'key': 'tanggal', 'label': 'Tanggal', 'type': 'date'},
+            {'key': 'hasil', 'label': 'Hasil', 'type': 'select'},
+        ],
+        dimension_definitions_json=[
+            {'key': 'hasil', 'label': 'Hasil', 'type': 'select'},
+        ],
+        metric_definitions_json=[
+            {
+                'key': 'jumlah_realisasi',
+                'label': 'Jumlah Realisasi',
+                'type': 'integer',
+                'source_field': 'hasil',
+                'aggregation': 'count_matching_value',
+                'match_value': 'selesai',
+            },
+            {
+                'key': 'total_data',
+                'label': 'Total Data',
+                'type': 'integer',
+                'aggregation': 'count',
+            },
+        ],
+    )
+
+    config = _serialize_dataset_statistics_config(dataset, version)
+
+    metric_block = next(block for block in config['blocks'] if block['type'] == 'metric_cards')
+    chart_block = next(block for block in config['blocks'] if block['type'] == 'plotly_timeseries')
+    dimension_block = next(block for block in config['blocks'] if block['type'] == 'dimension_distribution')
+    assert 'hasil' in dimension_block['config']['dimension_keys']
+    assert metric_block['config']['metric_keys'] == ['jumlah_realisasi', 'total_data']
+    assert metric_block['config']['metric_definitions'][0]['source_field'] == 'hasil'
+    assert metric_block['config']['metric_definitions'][0]['aggregation'] == 'count_matching_value'
+    assert chart_block['config']['series'][0]['key'] == 'jumlah_realisasi'
+    assert chart_block['config']['series'][0]['match_value'] == 'selesai'
+
+
 def test_analytics_report_item_edit_page_renders_dataset_and_manual_input_builder(monkeypatch):
     app = create_app('testing')
 
@@ -772,6 +833,20 @@ def test_analytics_workspace_source_js_contains_expected_fetch_and_filter_contra
     assert 'analyticsDatasetDimensionPieChart' in content
     assert 'aggregateRowsByPeriodAndDimension' in content
     assert 'splitTimeseriesByDimension' in content
+    assert 'metric_definitions' in content
+    assert 'count_matching_value' in content
+    assert 'source_field' in content
+    assert 'rowMatchesMetricValue' in content
+    assert 'summarizeMetricSeriesValue' in content
+    assert 'getPlotlyRenderOptions' in content
+    assert 'displayModeBar: true' in content
+    assert 'toImageButtonOptions' in content
+    assert 'scrollZoom: true' in content
+    assert 'window.gridjs' in content
+    assert 'new Grid.Grid' in content
+    assert 'pagination' in content
+    assert 'limit: 10' in content
+    assert 'Export CSV/XLSX/JSON tetap mengambil seluruh baris aktif' in content
 
 
 def test_analytics_dataset_report_shortcut_opens_multi_dataset_builder(monkeypatch):

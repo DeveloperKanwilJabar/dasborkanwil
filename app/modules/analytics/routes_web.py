@@ -608,6 +608,21 @@ def _serialize_dataset_statistics_config(dataset, active_version):
     chart_dimension_keys = selectable_dimension_keys or dimension_keys
     date_key = (date_fields[0].get('key') if date_fields else None) or ''
     series_keys = metric_keys[:3] or ['total']
+    metric_definition_by_key = {
+        (field.get('key') or field.get('field_key') or field.get('name')): {
+            **field,
+            'key': field.get('key') or field.get('field_key') or field.get('name'),
+            'label': field.get('label') or field.get('title') or str(field.get('key') or field.get('field_key') or field.get('name') or '').replace('_', ' ').title(),
+            'type': field.get('type') or field.get('data_type') or 'number',
+            'aggregation': field.get('aggregation') or field.get('aggregation_mode') or 'sum',
+        }
+        for field in (getattr(active_version, 'metric_definitions_json', None) or [])
+        if isinstance(field, dict) and (field.get('key') or field.get('field_key') or field.get('name'))
+    }
+    metric_definitions = [
+        metric_definition_by_key.get(key) or {'key': key, 'label': key.replace('_', ' ').title(), 'type': 'number', 'aggregation': 'sum'}
+        for key in metric_keys
+    ]
     table_columns = all_field_keys[:8]
     return {
         'report_id': None,
@@ -664,8 +679,8 @@ def _serialize_dataset_statistics_config(dataset, active_version):
         'selected_indicator_keys': sorted(set(all_field_keys)),
         'selected_indicator_count': len(set(all_field_keys)),
         'blocks': [
-            {'type': 'metric_cards', 'title': 'KPI Statistik Dataset', 'data_source_alias': 'primary', 'order': 1, 'config': {'metric_keys': metric_keys[:4] or ['total']}},
-            {'type': 'plotly_timeseries', 'title': 'Chart Waktu Dataset', 'data_source_alias': 'primary', 'order': 2, 'config': {'x_key': date_key, 'series': [{'key': key, 'label': key.replace('_', ' ').title(), 'aggregation': 'sum'} for key in series_keys], 'dimension_keys': chart_dimension_keys}},
+            {'type': 'metric_cards', 'title': 'KPI Statistik Dataset', 'data_source_alias': 'primary', 'order': 1, 'config': {'metric_keys': metric_keys[:4] or ['total'], 'metric_definitions': metric_definitions}},
+            {'type': 'plotly_timeseries', 'title': 'Chart Waktu Dataset', 'data_source_alias': 'primary', 'order': 2, 'config': {'x_key': date_key, 'series': [metric_definition_by_key.get(key) or {'key': key, 'label': key.replace('_', ' ').title(), 'aggregation': 'sum'} for key in series_keys], 'metric_definitions': metric_definitions, 'dimension_keys': chart_dimension_keys}},
             {'type': 'dimension_pie', 'title': 'Chart Persentase Dimensi', 'data_source_alias': 'primary', 'order': 3, 'config': {'dimension_keys': chart_dimension_keys, 'measure_key': 'total', 'top_n': 20}},
             {'type': 'dimension_distribution', 'title': 'Chart Dimensi Select', 'data_source_alias': 'primary', 'order': 4, 'config': {'dimension_keys': chart_dimension_keys, 'measure_key': 'total', 'top_n': 20}},
             {'type': 'detail_table', 'title': 'Tabel Data Hasil Run', 'data_source_alias': 'primary', 'order': 5, 'config': {'column_keys': table_columns}},

@@ -3,6 +3,7 @@
     const reportConfig = window.analyticsReportConfig || {};
     const Plotly = window.Plotly;
     const L = window.L;
+    const Grid = window.gridjs;
 
     const datasetSelect = document.getElementById('analyticsDetailDatasetSelect');
     const datasetRunsList = document.getElementById('analyticsDatasetRunsList');
@@ -38,6 +39,7 @@
         currentFilteredRowsByBlock: {},
         chartRendered: false,
         lastChartType: '',
+        detailGrid: null,
         map: null,
         mapLayer: null,
         filters: {
@@ -119,6 +121,24 @@
 
     function replaceTemplate(urlTemplate, placeholder, value) {
         return String(urlTemplate || '').replace(placeholder, String(value));
+    }
+
+    function getPlotlyRenderOptions(filename) {
+        return {
+            responsive: true,
+            displayModeBar: true,
+            displaylogo: false,
+            scrollZoom: true,
+            toImageButtonOptions: {
+                format: 'png',
+                filename: filename || 'statistik-dataset-chart',
+                height: 720,
+                width: 1280,
+                scale: 2,
+            },
+            modeBarButtonsToAdd: ['drawline', 'drawopenpath', 'eraseshape'],
+            modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+        };
     }
 
     function datasetMatchesRegistry(item) {
@@ -366,7 +386,11 @@
         const curatedFieldKeys = getBlockCuratedFields(block).map(function (field) {
             return field.key;
         }).filter(Boolean);
-        const allowlist = curatedFieldKeys.length ? new Set(curatedFieldKeys) : null;
+        const metricDefinitionKeys = getMetricDefinitions(block).map(function (field) {
+            return field.key;
+        }).filter(Boolean);
+        const allowedKeys = curatedFieldKeys.concat(metricDefinitionKeys);
+        const allowlist = allowedKeys.length ? new Set(allowedKeys) : null;
         const requested = Array.isArray(requestedKeys) ? requestedKeys.filter(Boolean) : [];
         const selected = requested.filter(function (key) {
             return !allowlist || allowlist.has(key);
@@ -385,13 +409,17 @@
         const curatedFieldKeys = new Set(getBlockCuratedFields(block).map(function (field) {
             return field.key;
         }).filter(Boolean));
+        const metricDefinitionKeys = new Set(getMetricDefinitions(block).map(function (field) {
+            return field.key;
+        }).filter(Boolean));
         const normalized = requestedSeries.filter(function (series) {
-            return series && series.key && (!curatedFieldKeys.size || curatedFieldKeys.has(series.key));
+            return series && series.key && (!curatedFieldKeys.size || curatedFieldKeys.has(series.key) || metricDefinitionKeys.has(series.key));
         }).map(function (series) {
             return {
+                ...series,
                 key: series.key,
                 label: series.label || series.key,
-                aggregation: series.aggregation || 'sum',
+                aggregation: series.aggregation || series.aggregation_mode || 'sum',
             };
         });
         if (normalized.length) {
@@ -429,7 +457,25 @@
         }) || '';
     }
 
-    function summarizeFieldMetric(rows, key) {
+    function summarizeFieldMetric(rows, key, block) {
+        const metricDefinition = findMetricDefinition(key, block);
+        const aggregation = String((metricDefinition && (metricDefinition.aggregation || metricDefinition.aggregation_mode)) || '').toLowerCase();
+        const sourceField = (metricDefinition && (metricDefinition.source_field || metricDefinition.field_key || metricDefinition.source_key)) || key;
+        const matchValue = metricDefinition && (metricDefinition.match_value ?? metricDefinition.value ?? metricDefinition.equals);
+        if (aggregation === 'count') {
+            return rows.length;
+        }
+        if (aggregation === 'count_non_empty') {
+            return rows.filter(function (row) {
+                const value = row && row[sourceField];
+                return value !== null && value !== undefined && value !== '';
+            }).length;
+        }
+        if (aggregation === 'count_matching_value' || aggregation === 'count_match' || aggregation === 'count_equals') {
+            return rows.filter(function (row) {
+                return rowMatchesMetricValue(row, sourceField, matchValue);
+            }).length;
+        }
         if (key === 'total') {
             return rows.length;
         }
@@ -451,6 +497,66 @@
             return numericValues.reduce(function (acc, value) { return acc + value; }, 0) / numericValues.length;
         }
         return numericValues.reduce(function (acc, value) { return acc + value; }, 0);
+    }
+
+    function normalizeMetricCompareValue(value) {
+        return String(value ?? '').trim().toLowerCase();
+    }
+
+    function rowMatchesMetricValue(row, sourceField, matchValue) {
+        const rawValue = row && row[sourceField];
+        const allowedValues = Array.isArray(matchValue) ? matchValue : [matchValue];
+        const normalizedAllowed = allowedValues.map(normalizeMetricCompareValue);
+        const rowValues = Array.isArray(rawValue) ? rawValue : [rawValue];
+        return rowValues.some(function (value) {
+            return normalizedAllowed.includes(normalizeMetricCompareValue(value));
+        });
+    }
+
+    function getMetricDefinitions(block) {
+        const blockConfig = (block && block.config) || {};
+        const fromBlock = Array.isArray(blockConfig.metric_definitions) ? blockConfig.metric_definitions : [];
+        const contractFields = getBlockCuratedFields(block).filter(function (field) {
+            return field && field.role === 'metric';
+        });
+        return fromBlock.concat(contractFields).filter(function (field, index, array) {
+            const key = field && field.key;
+            return key && array.findIndex(function (item) { return item && item.key === key; }) === index;
+        });
+    }
+
+    function findMetricDefinition(key, block) {
+        return getMetricDefinitions(block).find(function (field) {
+            return field && field.key === key;
+        }) || null;
+    }
+
+    function summarizeMetricSeriesValue(row, seriesItem) {
+        const key = seriesItem && seriesItem.key;
+        const aggregation = String((seriesItem && (seriesItem.aggregation || seriesItem.aggregation_mode)) || '').toLowerCase();
+        const sourceField = (seriesItem && (seriesItem.source_field || seriesItem.field_key || seriesItem.source_key)) || key;
+        const matchValue = seriesItem && (seriesItem.match_value ?? seriesItem.value ?? seriesItem.equals);
+        if (key === 'total' || aggregation === 'count') {
+            return 1;
+        }
+        if (aggregation === 'count_non_empty') {
+            const rawValue = row && row[sourceField];
+            return rawValue === null || rawValue === undefined || rawValue === '' ? 0 : 1;
+        }
+        if (aggregation === 'count_matching_value' || aggregation === 'count_match' || aggregation === 'count_equals') {
+            return rowMatchesMetricValue(row, sourceField, matchValue) ? 1 : 0;
+        }
+        if (key === 'selesai') {
+            return String(row.hasil || '').toLowerCase() === 'selesai' ? 1 : 0;
+        }
+        if (key === 'dikembalikan') {
+            return String(row.hasil || '').toLowerCase() === 'dikembalikan' ? 1 : 0;
+        }
+        const rawValue = row && row[key];
+        const numeric = Number(rawValue);
+        return Number.isNaN(numeric)
+            ? (rawValue === null || rawValue === undefined || rawValue === '' ? 0 : 1)
+            : numeric;
     }
 
     function formatMetricValue(key, value) {
@@ -479,12 +585,19 @@
         const yearSummary = state.filters.reportingYear || ((summaryJson && summaryJson.filter_dimensions && summaryJson.filter_dimensions.reporting_years || []).join(', ') || 'Semua tahun');
         const metricBlock = getReportBlock('metric_cards');
         const metricConfig = (metricBlock && metricBlock.config) || {};
+        const metricDefinitions = getMetricDefinitions(metricBlock);
+        const fallbackMetricKeys = metricDefinitions.map(function (field) { return field.key; }).filter(Boolean);
         const configuredMetricKeys = resolveConfiguredFieldKeys(
             metricBlock,
             metricConfig.metric_keys,
-            ['total', 'selesai', 'dikembalikan', 'achievement_pct']
+            fallbackMetricKeys.length ? fallbackMetricKeys : ['total', 'selesai', 'dikembalikan', 'achievement_pct']
         );
         const fieldLabels = getFieldLabelMap(metricBlock);
+        metricDefinitions.forEach(function (field) {
+            if (field && field.key && field.label) {
+                fieldLabels[field.key] = field.label;
+            }
+        });
         const metricCards = configuredMetricKeys.map(function (key) {
             if (key === 'selesai') {
                 const value = rows.filter((row) => String(row.hasil || '').toLowerCase() === 'selesai').length;
@@ -495,11 +608,11 @@
                 return buildMetricCard(fieldLabels[key] || 'Dikembalikan', formatNumber(value), 'Jumlah status dikembalikan setelah filter diterapkan.', 'text-danger');
             }
             if (key === 'achievement_pct') {
-                const metricValue = summarizeFieldMetric(rows, key);
+                const metricValue = summarizeFieldMetric(rows, key, metricBlock);
                 const fallbackValue = rows.length ? (rows.filter((row) => String(row.hasil || '').toLowerCase() === 'selesai').length / rows.length) * 100 : 0;
                 return buildMetricCard(fieldLabels[key] || 'Achievement', formatMetricValue(key, metricValue === null ? fallbackValue : metricValue), `Snapshot aktif untuk ${yearSummary}.`, 'text-primary');
             }
-            const metricValue = summarizeFieldMetric(rows, key);
+            const metricValue = summarizeFieldMetric(rows, key, metricBlock);
             return buildMetricCard(fieldLabels[key] || key, formatMetricValue(key, metricValue), `Snapshot aktif untuk ${yearSummary}.`, '');
         });
 
@@ -547,6 +660,11 @@
         if (!detailTableContainer) {
             return;
         }
+        if (state.detailGrid && state.detailGrid.destroy) {
+            state.detailGrid.destroy();
+            state.detailGrid = null;
+        }
+        detailTableContainer.innerHTML = '';
         if (!rows.length) {
             detailTableContainer.innerHTML = '<div class="alert alert-light border mb-0">Belum ada baris yang cocok dengan filter aktif.</div>';
             return;
@@ -560,7 +678,54 @@
             ['tanggal', 'daerah', 'jenis', 'hasil', 'reporting_year']
         );
         const fieldLabels = getFieldLabelMap(tableBlock);
-        const previewRows = rows;
+        if (!configuredColumns.length) {
+            detailTableContainer.innerHTML = '<div class="alert alert-light border mb-0">Belum ada kolom detail yang terkonfigurasi.</div>';
+            return;
+        }
+        const gridRows = rows.map(function (row) {
+            return configuredColumns.map(function (columnKey) {
+                return resolveRowDisplayValue(row, columnKey);
+            });
+        });
+        if (Grid && Grid.Grid) {
+            state.detailGrid = new Grid.Grid({
+                columns: configuredColumns.map(function (columnKey) {
+                    return {
+                        id: columnKey,
+                        name: fieldLabels[columnKey] || columnKey,
+                    };
+                }),
+                data: gridRows,
+                search: true,
+                sort: true,
+                pagination: {
+                    enabled: true,
+                    limit: 10,
+                    summary: true,
+                },
+                fixedHeader: true,
+                height: '420px',
+                language: {
+                    search: { placeholder: 'Cari dalam preview...' },
+                    pagination: {
+                        previous: 'Sebelumnya',
+                        next: 'Berikutnya',
+                        showing: 'Menampilkan',
+                        results: function () { return 'baris'; },
+                    },
+                    noRecordsFound: 'Tidak ada data yang cocok.',
+                    error: 'Gagal memuat tabel.',
+                },
+                className: {
+                    table: 'table table-sm align-middle mb-0',
+                    th: 'text-muted',
+                },
+            }).render(detailTableContainer);
+            detailTableContainer.insertAdjacentHTML('beforeend', `<div class="text-muted fs-12 mt-3">Preview Grid.js menampilkan ${escapeHtml(formatNumber(rows.length))} baris aktif dengan pagination 10 baris/halaman. Export CSV/XLSX/JSON tetap mengambil seluruh baris aktif.</div>`);
+            return;
+        }
+
+        const previewRows = rows.slice(0, 10);
         detailTableContainer.innerHTML = `
             <table class="table table-sm align-middle mb-0">
                 <thead>
@@ -582,7 +747,7 @@
                     }).join('')}
                 </tbody>
             </table>
-            <div class="text-muted fs-12 mt-3">Menampilkan semua ${escapeHtml(formatNumber(rows.length))} baris aktif hasil run/filter.</div>
+            <div class="text-muted fs-12 mt-3">Grid.js belum termuat, jadi preview dibatasi 10 dari ${escapeHtml(formatNumber(rows.length))} baris aktif. Export tetap mengambil seluruh baris aktif.</div>
         `;
     }
 
@@ -842,19 +1007,7 @@
             (seriesConfig || []).forEach(function (seriesItem) {
                 const key = seriesItem.key;
                 let value = 0;
-                if (key === 'total') {
-                    value = 1;
-                } else if (key === 'selesai') {
-                    value = String(row.hasil || '').toLowerCase() === 'selesai' ? 1 : 0;
-                } else if (key === 'dikembalikan') {
-                    value = String(row.hasil || '').toLowerCase() === 'dikembalikan' ? 1 : 0;
-                } else {
-                    const rawValue = row && row[key];
-                    const numeric = Number(rawValue);
-                    value = Number.isNaN(numeric)
-                        ? (rawValue === null || rawValue === undefined || rawValue === '' ? 0 : 1)
-                        : numeric;
-                }
+                value = summarizeMetricSeriesValue(row, seriesItem);
                 current.values[key] = (current.values[key] || 0) + value;
             });
             current.sortValue = date ? Math.min(current.sortValue, date.getTime()) : current.sortValue;
@@ -937,7 +1090,7 @@
                 title: 'Belum ada data pada filter aktif',
                 paper_bgcolor: 'transparent',
                 plot_bgcolor: 'transparent',
-            }, { responsive: true });
+            }, getPlotlyRenderOptions('chart-waktu-dataset-empty'));
             return;
         }
 
@@ -1004,10 +1157,7 @@
             layout.yaxis = { title: dimensionSeries ? 'Jumlah Record' : 'Nilai' };
         }
 
-        Plotly.react(chartContainer, traces, layout, {
-            responsive: true,
-            displayModeBar: false,
-        });
+        Plotly.react(chartContainer, traces, layout, getPlotlyRenderOptions('chart-waktu-dataset'));
     }
 
     function isDimensionChartField(field) {
@@ -1072,7 +1222,7 @@
                 title: 'Belum ada field dimensi/select yang dipilih pada dataset ini.',
                 paper_bgcolor: 'transparent',
                 plot_bgcolor: 'transparent',
-            }, { responsive: true, displayModeBar: false });
+            }, getPlotlyRenderOptions('chart-persentase-dimensi-empty'));
             return;
         }
         const buckets = summarizeDimensionValues(rows, field.key, topN);
@@ -1081,7 +1231,7 @@
                 title: 'Belum ada data pada filter aktif',
                 paper_bgcolor: 'transparent',
                 plot_bgcolor: 'transparent',
-            }, { responsive: true, displayModeBar: false });
+            }, getPlotlyRenderOptions('chart-persentase-dimensi-empty'));
             return;
         }
         Plotly.react(dimensionPieChartContainer, [{
@@ -1097,10 +1247,7 @@
             legend: { orientation: 'h' },
             paper_bgcolor: 'transparent',
             plot_bgcolor: 'transparent',
-        }, {
-            responsive: true,
-            displayModeBar: false,
-        });
+        }, getPlotlyRenderOptions(`chart-persentase-${field.key || 'dimensi'}`));
     }
 
     function renderDimensionCharts(rows) {
@@ -1147,7 +1294,7 @@
                     title: 'Belum ada data pada filter aktif',
                     paper_bgcolor: 'transparent',
                     plot_bgcolor: 'transparent',
-                }, { responsive: true, displayModeBar: false });
+                }, getPlotlyRenderOptions(`chart-dimensi-${field.key || 'empty'}`));
                 return;
             }
             Plotly.react(target, [{
@@ -1162,10 +1309,7 @@
                 yaxis: { title: 'Jumlah Record' },
                 paper_bgcolor: 'transparent',
                 plot_bgcolor: 'transparent',
-            }, {
-                responsive: true,
-                displayModeBar: false,
-            });
+            }, getPlotlyRenderOptions(`chart-dimensi-${field.key || index}`));
         });
     }
 
