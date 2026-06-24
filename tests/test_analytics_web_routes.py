@@ -464,11 +464,13 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'Field Dataset Terkurasi' in html
     assert 'metric_cards' in html
     assert 'plotly_timeseries' in html
+    assert 'dimension_pie' in html
     assert 'dimension_distribution' in html
     assert 'detail_table' in html
     assert 'narrative' in html
     assert 'KPI Statistik Dataset' in html
     assert 'Chart Waktu Dataset' in html
+    assert 'Chart Persentase Dimensi' in html
     assert 'Chart Dimensi Select' in html
     assert 'Tabel Data Hasil Run' in html
     assert 'Narasi Statistik Otomatis' in html
@@ -476,6 +478,9 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'id="analyticsDetailDatasetSelect"' in html
     assert 'id="analyticsDatasetMetricCards"' in html
     assert 'id="analyticsDatasetChart"' in html
+    assert 'id="analyticsDatasetDimensionSelect"' in html
+    assert 'id="analyticsDatasetTimeseriesSplit"' in html
+    assert 'id="analyticsDatasetDimensionPieChart"' in html
     assert 'id="analyticsDatasetDetailTable"' in html
     assert 'data-analytics-export="csv"' in html
     assert 'data-analytics-export="json"' in html
@@ -503,7 +508,13 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'Minggu Ini' in html
     assert 'Bulan Ini' in html
     assert 'Triwulan Ini' in html
+    assert 'Triwulan I' in html
+    assert 'Triwulan II' in html
+    assert 'Triwulan III' in html
+    assert 'Triwulan IV' in html
     assert 'Semester Ini' in html
+    assert 'Semester 1' in html
+    assert 'Semester 2' in html
     assert 'Tahun Ini' in html
     assert 'Semua Range' in html
     assert 'latest_succeeded_run' in html
@@ -539,7 +550,7 @@ def test_analytics_dataset_statistics_page_follows_block_order_from_builder(monk
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     insight_html = html.split('id="detailReportInsightSection"', 1)[1]
-    assert insight_html.index('KPI Statistik Dataset') < insight_html.index('Chart Waktu Dataset') < insight_html.index('Chart Dimensi Select') < insight_html.index('Tabel Data Hasil Run')
+    assert insight_html.index('KPI Statistik Dataset') < insight_html.index('Chart Waktu Dataset') < insight_html.index('Chart Persentase Dimensi') < insight_html.index('Chart Dimensi Select') < insight_html.index('Tabel Data Hasil Run')
 
 
 def test_analytics_report_index_page_renders_catalog(monkeypatch):
@@ -747,10 +758,20 @@ def test_analytics_workspace_source_js_contains_expected_fetch_and_filter_contra
     assert 'analyticsDatasetChart' in content
     assert 'analyticsDatasetMap' in content
     assert 'current_quarter' in content
+    assert 'quarter_1' in content
+    assert 'quarter_2' in content
+    assert 'quarter_3' in content
+    assert 'quarter_4' in content
     assert 'current_semester' in content
+    assert 'semester_1' in content
+    assert 'semester_2' in content
     assert 'current_year' in content
     assert 'full_range' in content
     assert "series.key === 'total'" in content
+    assert 'analyticsDatasetDimensionSelect' in content
+    assert 'analyticsDatasetDimensionPieChart' in content
+    assert 'aggregateRowsByPeriodAndDimension' in content
+    assert 'splitTimeseriesByDimension' in content
 
 
 def test_analytics_dataset_report_shortcut_opens_multi_dataset_builder(monkeypatch):

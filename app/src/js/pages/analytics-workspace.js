@@ -11,10 +11,13 @@
     const datasetFilterReportingYear = document.getElementById('analyticsDatasetFilterReportingYear');
     const datasetFilterDateStart = document.getElementById('analyticsDatasetFilterDateStart');
     const datasetFilterDateEnd = document.getElementById('analyticsDatasetFilterDateEnd');
+    const datasetDimensionSelect = document.getElementById('analyticsDatasetDimensionSelect');
+    const datasetTimeseriesSplit = document.getElementById('analyticsDatasetTimeseriesSplit');
     const datasetMetricPeriodMode = document.getElementById('analyticsDatasetMetricPeriodMode');
     const datasetChartType = document.getElementById('analyticsDatasetChartType');
     const datasetQuickRanges = document.getElementById('analyticsDatasetQuickRanges');
     const chartContainer = document.getElementById('analyticsDatasetChart');
+    const dimensionPieChartContainer = document.getElementById('analyticsDatasetDimensionPieChart');
     const dimensionChartsContainer = document.getElementById('analyticsDatasetDimensionCharts');
     const detailTableContainer = document.getElementById('analyticsDatasetDetailTable');
     const narrativeContainer = document.getElementById('analyticsDatasetNarrative');
@@ -41,6 +44,8 @@
             reportingYear: '',
             dateStart: '',
             dateEnd: '',
+            dimensionKey: '',
+            splitTimeseriesByDimension: true,
             metricPeriodMode: reportConfig.default_period_mode || 'monthly',
             chartType: 'bar',
         },
@@ -185,8 +190,26 @@
             start.setDate(1);
         } else if (presetKey === 'current_quarter') {
             start.setMonth(Math.floor(today.getMonth() / 3) * 3, 1);
+        } else if (presetKey === 'quarter_1') {
+            start.setMonth(0, 1);
+            end.setMonth(2, 31);
+        } else if (presetKey === 'quarter_2') {
+            start.setMonth(3, 1);
+            end.setMonth(5, 30);
+        } else if (presetKey === 'quarter_3') {
+            start.setMonth(6, 1);
+            end.setMonth(8, 30);
+        } else if (presetKey === 'quarter_4') {
+            start.setMonth(9, 1);
+            end.setMonth(11, 31);
         } else if (presetKey === 'current_semester') {
             start.setMonth(today.getMonth() < 6 ? 0 : 6, 1);
+        } else if (presetKey === 'semester_1') {
+            start.setMonth(0, 1);
+            end.setMonth(5, 30);
+        } else if (presetKey === 'semester_2') {
+            start.setMonth(6, 1);
+            end.setMonth(11, 31);
         } else if (presetKey === 'current_year') {
             start.setMonth(0, 1);
         } else {
@@ -219,6 +242,29 @@
             })
         );
         selectEl.innerHTML = optionHtml.join('');
+    }
+
+    function getDimensionFilterFields() {
+        const dimensionBlock = getReportBlock('dimension_pie') || getReportBlock('dimension_distribution') || getReportBlock('plotly_timeseries');
+        return resolveDimensionChartFields(dimensionBlock);
+    }
+
+    function populateDimensionFilterOptions() {
+        if (!datasetDimensionSelect) {
+            return;
+        }
+        const fields = getDimensionFilterFields();
+        const optionHtml = ['<option value="">Semua Dimensi</option>'].concat(
+            fields.map(function (field) {
+                const selectedAttr = String(field.key) === String(state.filters.dimensionKey || '') ? ' selected' : '';
+                return `<option value="${escapeHtml(field.key)}"${selectedAttr}>${escapeHtml(field.label || field.key)}</option>`;
+            })
+        );
+        datasetDimensionSelect.innerHTML = optionHtml.join('');
+        if (state.filters.dimensionKey && !fields.some(function (field) { return field.key === state.filters.dimensionKey; })) {
+            state.filters.dimensionKey = '';
+            datasetDimensionSelect.value = '';
+        }
     }
 
     function buildMetricCard(label, value, helper, toneClass) {
@@ -820,6 +866,55 @@
         });
     }
 
+    function aggregateRowsByPeriodAndDimension(rows, periodMode, xKey, dimensionKey, block) {
+        const bucketMap = new Map();
+        rows.forEach(function (row, rowIndex) {
+            const date = resolveRowDate(row, block);
+            const rawXValue = xKey ? row[xKey] : null;
+            const dateFieldKeys = getDateFieldKeys(block);
+            const shouldBucketByDate = Boolean(date && xKey && dateFieldKeys.includes(xKey));
+            let label = shouldBucketByDate ? '' : (rawXValue || row.tanggal || row.period_date || row.submitted_at || `Baris ${rowIndex + 1}`);
+            if ((!rawXValue || shouldBucketByDate) && date) {
+                if (periodMode === 'weekly') {
+                    const weekStart = new Date(date);
+                    const day = weekStart.getDay();
+                    const diffToMonday = day === 0 ? -6 : 1 - day;
+                    weekStart.setDate(weekStart.getDate() + diffToMonday);
+                    label = `Minggu ${formatDateInputValue(weekStart)}`;
+                } else if (periodMode === 'monthly') {
+                    label = `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}`;
+                } else if (periodMode === 'quarterly') {
+                    label = row.quarter_label || `${date.getFullYear()}-Q${Math.floor(date.getMonth() / 3) + 1}`;
+                } else if (periodMode === 'four_monthly') {
+                    label = `${date.getFullYear()}-C${Math.floor(date.getMonth() / 4) + 1}`;
+                } else if (periodMode === 'semesterly' || periodMode === 'semester') {
+                    label = row.semester_label || `${date.getFullYear()}-S${date.getMonth() < 6 ? 1 : 2}`;
+                } else if (periodMode === 'yearly') {
+                    label = String(date.getFullYear());
+                }
+            }
+
+            const rawDimensionValue = row && row[dimensionKey];
+            const dimensionValues = Array.isArray(rawDimensionValue) ? rawDimensionValue : [rawDimensionValue];
+            dimensionValues.forEach(function (dimensionValue) {
+                const dimensionLabel = dimensionValue === null || dimensionValue === undefined || dimensionValue === '' ? '(Kosong)' : String(dimensionValue);
+                const bucketKey = `${label}|||${dimensionLabel}`;
+                const current = bucketMap.get(bucketKey) || { label, dimensionLabel, sortValue: date ? date.getTime() : bucketMap.size, value: 0 };
+                current.value += 1;
+                current.sortValue = date ? Math.min(current.sortValue, date.getTime()) : current.sortValue;
+                bucketMap.set(bucketKey, current);
+            });
+        });
+        const buckets = Array.from(bucketMap.values()).sort(function (left, right) {
+            return left.sortValue - right.sortValue || left.dimensionLabel.localeCompare(right.dimensionLabel);
+        });
+        return {
+            buckets,
+            periodLabels: Array.from(new Set(buckets.map(function (bucket) { return bucket.label; }))),
+            dimensionLabels: Array.from(new Set(buckets.map(function (bucket) { return bucket.dimensionLabel; }))),
+        };
+    }
+
     function renderChart(rows) {
         if (!chartContainer || !Plotly) {
             return;
@@ -829,8 +924,15 @@
         const fallbackSeriesKeys = ['total', 'selesai', 'dikembalikan'];
         const configuredSeries = resolveConfiguredSeries(chartBlock, fallbackSeriesKeys);
         const xKey = resolveChartXKey(chartBlock, rows, chartConfig.x_key || 'tanggal');
-        const series = aggregateRows(rows, state.filters.metricPeriodMode || 'monthly', xKey, configuredSeries, chartBlock);
-        if (!series.length) {
+        const activeDimensionKey = state.filters.dimensionKey || '';
+        const shouldSplitByDimension = Boolean(activeDimensionKey && state.filters.splitTimeseriesByDimension);
+        const series = shouldSplitByDimension
+            ? []
+            : aggregateRows(rows, state.filters.metricPeriodMode || 'monthly', xKey, configuredSeries, chartBlock);
+        const dimensionSeries = shouldSplitByDimension
+            ? aggregateRowsByPeriodAndDimension(rows, state.filters.metricPeriodMode || 'monthly', xKey, activeDimensionKey, chartBlock)
+            : null;
+        if (!series.length && (!dimensionSeries || !dimensionSeries.buckets.length)) {
             Plotly.react(chartContainer, [], {
                 title: 'Belum ada data pada filter aktif',
                 paper_bgcolor: 'transparent',
@@ -846,7 +948,25 @@
         }
         state.lastChartType = chartType;
         let traces = [];
-        if (chartType === 'pie') {
+        if (dimensionSeries && dimensionSeries.buckets.length) {
+            const bucketLookup = dimensionSeries.buckets.reduce(function (acc, bucket) {
+                acc[`${bucket.label}|||${bucket.dimensionLabel}`] = bucket.value;
+                return acc;
+            }, {});
+            traces = dimensionSeries.dimensionLabels.slice(0, 20).map(function (dimensionLabel, index) {
+                return {
+                    x: dimensionSeries.periodLabels,
+                    y: dimensionSeries.periodLabels.map(function (periodLabel) {
+                        return bucketLookup[`${periodLabel}|||${dimensionLabel}`] || 0;
+                    }),
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: dimensionLabel,
+                    line: { color: palette[index % palette.length], width: 3 },
+                    marker: { color: palette[index % palette.length], opacity: 0.85 },
+                };
+            });
+        } else if (chartType === 'pie') {
             const firstSeries = configuredSeries[0] || { key: 'total', label: 'Total' };
             traces = [{
                 labels: series.map((item) => item.label),
@@ -878,10 +998,10 @@
             paper_bgcolor: 'transparent',
             plot_bgcolor: 'transparent',
         };
-        if (chartType !== 'pie') {
+        if (chartType !== 'pie' || dimensionSeries) {
             layout.barmode = 'group';
             layout.xaxis = { title: xKey || 'Kategori/Periode' };
-            layout.yaxis = { title: 'Nilai' };
+            layout.yaxis = { title: dimensionSeries ? 'Jumlah Record' : 'Nilai' };
         }
 
         Plotly.react(chartContainer, traces, layout, {
@@ -928,12 +1048,69 @@
             .slice(0, topN || 20);
     }
 
+    function resolveActiveDimensionField(block) {
+        const fields = resolveDimensionChartFields(block);
+        if (state.filters.dimensionKey) {
+            const selected = fields.find(function (field) { return field.key === state.filters.dimensionKey; });
+            if (selected) {
+                return selected;
+            }
+        }
+        return fields[0] || null;
+    }
+
+    function renderDimensionPieChart(rows) {
+        if (!dimensionPieChartContainer || !Plotly) {
+            return;
+        }
+        const pieBlock = getReportBlock('dimension_pie') || getReportBlock('dimension_distribution');
+        const field = resolveActiveDimensionField(pieBlock);
+        const config = (pieBlock && pieBlock.config) || getBlockConfig('dimension_pie') || getBlockConfig('dimension_distribution');
+        const topN = Number(config.top_n || 20);
+        if (!field) {
+            Plotly.react(dimensionPieChartContainer, [], {
+                title: 'Belum ada field dimensi/select yang dipilih pada dataset ini.',
+                paper_bgcolor: 'transparent',
+                plot_bgcolor: 'transparent',
+            }, { responsive: true, displayModeBar: false });
+            return;
+        }
+        const buckets = summarizeDimensionValues(rows, field.key, topN);
+        if (!buckets.length) {
+            Plotly.react(dimensionPieChartContainer, [], {
+                title: 'Belum ada data pada filter aktif',
+                paper_bgcolor: 'transparent',
+                plot_bgcolor: 'transparent',
+            }, { responsive: true, displayModeBar: false });
+            return;
+        }
+        Plotly.react(dimensionPieChartContainer, [{
+            labels: buckets.map(function (bucket) { return bucket.label; }),
+            values: buckets.map(function (bucket) { return bucket.value; }),
+            type: 'pie',
+            hole: 0.48,
+            name: field.label || field.key,
+            textinfo: 'label+percent',
+            hovertemplate: '%{label}<br>Jumlah: %{value}<br>Persentase: %{percent}<extra></extra>',
+        }], {
+            margin: { l: 20, r: 20, t: 16, b: 20 },
+            legend: { orientation: 'h' },
+            paper_bgcolor: 'transparent',
+            plot_bgcolor: 'transparent',
+        }, {
+            responsive: true,
+            displayModeBar: false,
+        });
+    }
+
     function renderDimensionCharts(rows) {
         if (!dimensionChartsContainer || !Plotly) {
             return;
         }
         const dimensionBlock = getReportBlock('dimension_distribution');
-        const dimensionFields = resolveDimensionChartFields(dimensionBlock);
+        const dimensionFields = resolveDimensionChartFields(dimensionBlock).filter(function (field) {
+            return !state.filters.dimensionKey || field.key === state.filters.dimensionKey;
+        });
         const config = (dimensionBlock && dimensionBlock.config) || getBlockConfig('dimension_distribution');
         const topN = Number(config.top_n || 20);
 
@@ -1119,10 +1296,12 @@
         const narrativeBlock = getReportBlock('narrative');
         const mapBlock = getReportBlock('geo_map');
         const dimensionBlock = getReportBlock('dimension_distribution');
+        const pieBlock = getReportBlock('dimension_pie');
 
         state.currentFilteredRowsByBlock = {
             metric_cards: filterRowsForBlock(metricBlock, currentRows),
             plotly_timeseries: filterRowsForBlock(chartBlock, currentRows),
+            dimension_pie: filterRowsForBlock(pieBlock, currentRows),
             dimension_distribution: filterRowsForBlock(dimensionBlock, currentRows),
             detail_table: filterRowsForBlock(tableBlock, currentRows),
             narrative: filterRowsForBlock(narrativeBlock, currentRows),
@@ -1133,6 +1312,7 @@
         renderDatasetSummary(dataset, activeVersion, latestRun, filteredRows);
         renderExecutionBridge(detail, latestRun);
         renderChart(state.currentFilteredRowsByBlock.plotly_timeseries);
+        renderDimensionPieChart(state.currentFilteredRowsByBlock.dimension_pie || state.currentFilteredRowsByBlock.dimension_distribution);
         renderDimensionCharts(state.currentFilteredRowsByBlock.dimension_distribution);
         renderDetailTable(state.currentFilteredRowsByBlock.detail_table);
         renderNarrative(state.currentFilteredRowsByBlock.narrative, summaryJson);
@@ -1145,6 +1325,7 @@
         const options = collectFilterOptions(summaryJson);
 
         populateSelectOptions(datasetFilterReportingYear, options.reportingYears, state.filters.reportingYear, 'Semua Tahun');
+        populateDimensionFilterOptions();
     }
 
     function fetchDatasetRunsForSource(datasetId) {
@@ -1321,6 +1502,7 @@
             [datasetFilterReportingYear, 'reportingYear'],
             [datasetFilterDateStart, 'dateStart'],
             [datasetFilterDateEnd, 'dateEnd'],
+            [datasetDimensionSelect, 'dimensionKey'],
             [datasetMetricPeriodMode, 'metricPeriodMode'],
             [datasetChartType, 'chartType'],
         ].forEach(function (entry) {
@@ -1334,6 +1516,14 @@
                 rerenderDatasetView();
             });
         });
+
+        if (datasetTimeseriesSplit) {
+            state.filters.splitTimeseriesByDimension = datasetTimeseriesSplit.checked;
+            datasetTimeseriesSplit.addEventListener('change', function () {
+                state.filters.splitTimeseriesByDimension = datasetTimeseriesSplit.checked;
+                rerenderDatasetView();
+            });
+        }
 
         if (datasetQuickRanges) {
             datasetQuickRanges.querySelectorAll('[data-quick-range]').forEach(function (button) {

@@ -216,6 +216,19 @@
                                     <label class="form-label small text-muted" for="analyticsDatasetFilterDateEnd">Tanggal Selesai</label>
                                     <input class="form-control form-control-sm" id="analyticsDatasetFilterDateEnd" type="date" />
                                 </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small text-muted" for="analyticsDatasetDimensionSelect">Dimensi / Filter Chart</label>
+                                    <select class="form-select form-select-sm" id="analyticsDatasetDimensionSelect">
+                                        <option value="">Semua Dimensi</option>
+                                    </select>
+                                    <div class="form-text">Dipakai bersama oleh chart waktu, pie/donut, dan chart dimensi.</div>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-end">
+                                    <div class="form-check form-switch mb-1">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="analyticsDatasetTimeseriesSplit" checked>
+                                        <label class="form-check-label small text-muted" for="analyticsDatasetTimeseriesSplit">Legend multi dimensi</label>
+                                    </div>
+                                </div>
                                 <div class="col-md-6 d-flex align-items-end">
                                     <div class="d-flex flex-wrap gap-2 analytics-preset-toolbar" id="analyticsDatasetQuickRanges">
                                         {% for preset in report_quick_presets %}
@@ -253,13 +266,26 @@
                                 <div class="card border mb-3" id="detailReportChartSection">
                                     <div class="card-header border-0">
                                         <h6 class="card-title mb-1">{{ block.get('title') or 'Chart Waktu Dataset' }}</h6>
-                                        <p class="text-muted mb-0">Chart waktu selalu membaca field tanggal/submitted_at bila tersedia dan ikut berubah sesuai Tahun serta preset waktu aktif.</p>
+                                        <p class="text-muted mb-0">Chart waktu membaca field tanggal/submitted_at bila tersedia, lalu bisa dipecah per dimensi/filter terpilih agar legend dapat diklik sesuai kebutuhan.</p>
                                         {% if block.get('config', {}).get('series') %}
                                         <div class="text-muted small mt-2">Series: {{ block.get('config', {}).get('series', []) | map(attribute='key') | list | join(', ') }} · X: {{ block.get('config', {}).get('x_key') or '-' }}</div>
                                         {% endif %}
                                     </div>
                                     <div class="card-body">
                                         <div id="analyticsDatasetChart" class="analytics-chart-box"></div>
+                                    </div>
+                                </div>
+                                {% elif block.get('type') == 'dimension_pie' %}
+                                <div class="card border mb-3" id="analyticsDatasetDimensionPieSection">
+                                    <div class="card-header border-0">
+                                        <h6 class="card-title mb-1">{{ block.get('title') or 'Chart Persentase Dimensi' }}</h6>
+                                        <p class="text-muted mb-0">Pie/donut menghitung komposisi persentase dari field dimensi/filter terpilih. Gunakan dropdown dimensi di atas untuk mengganti basis komparasi.</p>
+                                        {% if block.get('config', {}).get('dimension_keys') %}
+                                        <div class="text-muted small mt-2">Dimensi: {{ block.get('config', {}).get('dimension_keys', []) | join(', ') }}</div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="analyticsDatasetDimensionPieChart" class="analytics-chart-box"></div>
                                     </div>
                                 </div>
                                 {% elif block.get('type') == 'dimension_distribution' %}
