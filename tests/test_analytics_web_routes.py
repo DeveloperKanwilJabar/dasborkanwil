@@ -464,10 +464,12 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'Field Dataset Terkurasi' in html
     assert 'metric_cards' in html
     assert 'plotly_timeseries' in html
+    assert 'dimension_distribution' in html
     assert 'detail_table' in html
     assert 'narrative' in html
     assert 'KPI Statistik Dataset' in html
-    assert 'Chart Dataset' in html
+    assert 'Chart Waktu Dataset' in html
+    assert 'Chart Dimensi Select' in html
     assert 'Tabel Data Hasil Run' in html
     assert 'Narasi Statistik Otomatis' in html
     assert 'Ke Chart' in html
@@ -478,7 +480,11 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'data-analytics-export="csv"' in html
     assert 'data-analytics-export="json"' in html
     assert 'data-analytics-export="xlsx"' in html
-    assert 'id="analyticsDatasetChartType"' in html
+    assert 'id="analyticsDatasetDimensionCharts"' in html
+    assert 'id="analyticsDatasetFilterStatus"' not in html
+    assert 'id="analyticsDatasetFilterJenis"' not in html
+    assert 'id="analyticsDatasetMetricPeriodMode"' not in html
+    assert 'id="analyticsDatasetChartType"' not in html
     assert 'libs/xlsx/dist/xlsx.full.min.js' in html
     assert 'id="analyticsDatasetNarrative"' in html
     assert 'id="analyticsDatasetRunsList"' in html
@@ -494,13 +500,19 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'analyticsReportConfig' in html
     assert 'supported_period_modes' in html
     assert 'quick_presets' in html
+    assert 'Minggu Ini' in html
+    assert 'Bulan Ini' in html
     assert 'Triwulan Ini' in html
+    assert 'Semester Ini' in html
+    assert 'Tahun Ini' in html
+    assert 'Semua Range' in html
     assert 'latest_succeeded_run' in html
     assert 'Field Statistik' in html
     assert 'field/metric terkurasi dari dataset aktif' in html
     assert 'reportViewerOptions' in html
     assert 'Kontrak Field Terkurasi' in html
     assert 'Metric: capaian_total, achievement_pct' in html
+    assert 'Dimensi: nama_indikator' in html
     assert 'Kolom: tanggal, nama_indikator, latitude, longitude' in html
 
 
@@ -527,7 +539,7 @@ def test_analytics_dataset_statistics_page_follows_block_order_from_builder(monk
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     insight_html = html.split('id="detailReportInsightSection"', 1)[1]
-    assert insight_html.index('KPI Statistik Dataset') < insight_html.index('Chart Dataset') < insight_html.index('Tabel Data Hasil Run')
+    assert insight_html.index('KPI Statistik Dataset') < insight_html.index('Chart Waktu Dataset') < insight_html.index('Chart Dimensi Select') < insight_html.index('Tabel Data Hasil Run')
 
 
 def test_analytics_report_index_page_renders_catalog(monkeypatch):

@@ -189,7 +189,7 @@
                         </div>
                         <div class="card-body">
                             <div class="row g-3 mb-3">
-                                <div class="col-md-4">
+                                <div class="col-md-8">
                                     <label class="form-label small text-muted" for="analyticsDetailDatasetSelect">Dataset Statistik</label>
                                     <select class="form-select form-select-sm" id="analyticsDetailDatasetSelect">
                                         {% if related_dataset_items %}
@@ -202,39 +202,10 @@
                                         {% endif %}
                                     </select>
                                 </div>
-                                <div class="col-md-2">
+                                <div class="col-md-4">
                                     <label class="form-label small text-muted" for="analyticsDatasetFilterReportingYear">Tahun</label>
                                     <select class="form-select form-select-sm" id="analyticsDatasetFilterReportingYear">
                                         <option value="">Semua Tahun</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label small text-muted" for="analyticsDatasetFilterStatus">Status/Hasil</label>
-                                    <select class="form-select form-select-sm" id="analyticsDatasetFilterStatus">
-                                        <option value="">Semua Status</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label small text-muted" for="analyticsDatasetFilterJenis">Jenis</label>
-                                    <select class="form-select form-select-sm" id="analyticsDatasetFilterJenis">
-                                        <option value="">Semua Jenis</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label small text-muted" for="analyticsDatasetMetricPeriodMode">Mode Chart</label>
-                                    <select class="form-select form-select-sm" id="analyticsDatasetMetricPeriodMode">
-                                        {% for mode in report_period_modes %}
-                                        <option value="{{ mode }}" {% if report_config and report_config.default_period_mode == mode %}selected{% endif %}>{{ report_viewer_options.period_mode_labels.get(mode, mode|replace('_', ' ')|title) }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label small text-muted" for="analyticsDatasetChartType">Jenis Chart</label>
-                                    <select class="form-select form-select-sm" id="analyticsDatasetChartType">
-                                        <option value="bar">Bar</option>
-                                        <option value="line">Line</option>
-                                        <option value="pie">Pie</option>
-                                        <option value="scatter">Scatter</option>
                                     </select>
                                 </div>
                                 <div class="col-md-3">
@@ -281,14 +252,27 @@
                                 {% elif block.get('type') == 'plotly_timeseries' %}
                                 <div class="card border mb-3" id="detailReportChartSection">
                                     <div class="card-header border-0">
-                                        <h6 class="card-title mb-1">{{ block.get('title') or 'Chart Timeseries' }}</h6>
-                                        <p class="text-muted mb-0">Chart akan ikut berubah sesuai preset dan filter aktif. Jika dataset tidak punya field tanggal, chart otomatis memakai kategori/dimensi yang tersedia.</p>
+                                        <h6 class="card-title mb-1">{{ block.get('title') or 'Chart Waktu Dataset' }}</h6>
+                                        <p class="text-muted mb-0">Chart waktu selalu membaca field tanggal/submitted_at bila tersedia dan ikut berubah sesuai Tahun serta preset waktu aktif.</p>
                                         {% if block.get('config', {}).get('series') %}
                                         <div class="text-muted small mt-2">Series: {{ block.get('config', {}).get('series', []) | map(attribute='key') | list | join(', ') }} · X: {{ block.get('config', {}).get('x_key') or '-' }}</div>
                                         {% endif %}
                                     </div>
                                     <div class="card-body">
                                         <div id="analyticsDatasetChart" class="analytics-chart-box"></div>
+                                    </div>
+                                </div>
+                                {% elif block.get('type') == 'dimension_distribution' %}
+                                <div class="card border mb-3" id="analyticsDatasetDimensionChartsSection">
+                                    <div class="card-header border-0">
+                                        <h6 class="card-title mb-1">{{ block.get('title') or 'Chart Dimensi Select' }}</h6>
+                                        <p class="text-muted mb-0">Setiap field dimensi/select yang dipilih saat membuat dataset akan dibuatkan chart distribusi otomatis, misalnya kabupaten, metode, jenis, status, atau kategori lain.</p>
+                                        {% if block.get('config', {}).get('dimension_keys') %}
+                                        <div class="text-muted small mt-2">Dimensi: {{ block.get('config', {}).get('dimension_keys', []) | join(', ') }}</div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="analyticsDatasetDimensionCharts" class="row g-3"></div>
                                     </div>
                                 </div>
                                 {% elif block.get('type') == 'detail_table' %}

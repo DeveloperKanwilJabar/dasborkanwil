@@ -529,6 +529,7 @@ def _build_report_viewer_options():
         'block_type_labels': {
             'metric_cards': 'Metric Cards',
             'plotly_timeseries': 'Plotly Timeseries',
+            'dimension_distribution': 'Dimension Distribution',
             'detail_table': 'Detail Table',
             'geo_map': 'Geo Map',
             'narrative': 'Narrative',
@@ -593,7 +594,12 @@ def _serialize_dataset_statistics_config(dataset, active_version):
     all_field_keys = [field.get('key') for field in curated_fields if field.get('key')]
     metric_keys = [field.get('key') for field in metric_fields if field.get('key')]
     dimension_keys = [field.get('key') for field in dimension_fields if field.get('key')]
-    x_key = (date_fields[0].get('key') if date_fields else None) or (dimension_keys[0] if dimension_keys else None) or (all_field_keys[0] if all_field_keys else '')
+    selectable_dimension_keys = [
+        field.get('key') for field in dimension_fields
+        if field.get('key') and str(field.get('type') or '').lower() in {'select', 'radio', 'checkbox', 'selectboxes'}
+    ]
+    chart_dimension_keys = selectable_dimension_keys or dimension_keys
+    date_key = (date_fields[0].get('key') if date_fields else None) or ''
     series_keys = metric_keys[:3] or ['total']
     table_columns = all_field_keys[:8]
     return {
@@ -604,7 +610,7 @@ def _serialize_dataset_statistics_config(dataset, active_version):
         'report_version_id': None,
         'report_version_title': 'Statistik Dataset',
         'meta_description': 'Statistik dataset menampilkan chart, tabel data hasil run, preset waktu, dan export tanpa bergantung pada report semi-CMS.',
-        'default_period_mode': 'quarterly',
+        'default_period_mode': 'monthly',
         'supported_period_modes': ['weekly', 'monthly', 'quarterly', 'semester', 'yearly'],
         'quick_presets': ['current_week', 'current_month', 'current_quarter', 'current_semester', 'current_year', 'full_range'],
         'dataset_contract': {
@@ -635,13 +641,14 @@ def _serialize_dataset_statistics_config(dataset, active_version):
             }
         ] if dataset and active_version else [],
         'narrative_guidance': {},
-        'selected_indicator_keys': sorted(set(metric_keys or all_field_keys)),
-        'selected_indicator_count': len(set(metric_keys or all_field_keys)),
+        'selected_indicator_keys': sorted(set(all_field_keys)),
+        'selected_indicator_count': len(set(all_field_keys)),
         'blocks': [
             {'type': 'metric_cards', 'title': 'KPI Statistik Dataset', 'data_source_alias': 'primary', 'order': 1, 'config': {'metric_keys': metric_keys[:4] or ['total']}},
-            {'type': 'plotly_timeseries', 'title': 'Chart Dataset', 'data_source_alias': 'primary', 'order': 2, 'config': {'x_key': x_key, 'series': [{'key': key, 'label': key.replace('_', ' ').title(), 'aggregation': 'sum'} for key in series_keys]}},
-            {'type': 'detail_table', 'title': 'Tabel Data Hasil Run', 'data_source_alias': 'primary', 'order': 3, 'config': {'column_keys': table_columns}},
-            {'type': 'narrative', 'title': 'Narasi Statistik Otomatis', 'data_source_alias': 'primary', 'order': 4, 'config': {'focus_field_keys': metric_keys[:3] or ['total'], 'source_mode': 'auto_summary'}},
+            {'type': 'plotly_timeseries', 'title': 'Chart Waktu Dataset', 'data_source_alias': 'primary', 'order': 2, 'config': {'x_key': date_key, 'series': [{'key': key, 'label': key.replace('_', ' ').title(), 'aggregation': 'sum'} for key in series_keys]}},
+            {'type': 'dimension_distribution', 'title': 'Chart Dimensi Select', 'data_source_alias': 'primary', 'order': 3, 'config': {'dimension_keys': chart_dimension_keys, 'measure_key': 'total', 'top_n': 20}},
+            {'type': 'detail_table', 'title': 'Tabel Data Hasil Run', 'data_source_alias': 'primary', 'order': 4, 'config': {'column_keys': table_columns}},
+            {'type': 'narrative', 'title': 'Narasi Statistik Otomatis', 'data_source_alias': 'primary', 'order': 5, 'config': {'focus_field_keys': metric_keys[:3] or ['total'], 'source_mode': 'auto_summary'}},
         ],
     }
 
