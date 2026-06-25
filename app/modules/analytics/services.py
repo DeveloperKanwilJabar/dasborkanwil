@@ -601,7 +601,7 @@ class AnalyticsDatasetRunService(BaseService):
         self.dataset_version_repository = dataset_version_repository or AnalyticsDatasetVersionRepository()
 
     def start_run(self, dataset_id, dataset_version_id, data=None, actor=None):
-        """Membuka run dataset analytics baru dengan status running.
+        """Membuka run dataset analytics baru dengan status running secara default.
 
         Args:
             dataset_id (Any): Primary key internal dataset analytics target.
@@ -627,6 +627,17 @@ class AnalyticsDatasetRunService(BaseService):
         if getattr(dataset_version, 'status', None) != AnalyticsDatasetVersion.STATUS_PUBLISHED:
             raise ValueError('Hanya dataset version published yang boleh menjalankan run.')
 
+        requested_status = data.get('status') or AnalyticsDatasetRun.STATUS_RUNNING
+        if requested_status not in {
+            AnalyticsDatasetRun.STATUS_QUEUED,
+            AnalyticsDatasetRun.STATUS_RUNNING,
+        }:
+            raise ValueError('Status awal dataset run tidak valid.')
+
+        started_at = data.get('started_at')
+        if requested_status == AnalyticsDatasetRun.STATUS_RUNNING:
+            started_at = started_at or now_utc()
+
         run = AnalyticsDatasetRun(
             uuid=str(uuid.uuid4()),
             dataset_id=dataset_id,
@@ -637,13 +648,88 @@ class AnalyticsDatasetRunService(BaseService):
             requested_reporting_year=data.get('requested_reporting_year'),
             requested_reporting_period_id=data.get('requested_reporting_period_id'),
             requested_filters_json=data.get('requested_filters_json') or {},
-            status=AnalyticsDatasetRun.STATUS_RUNNING,
-            started_at=data.get('started_at') or now_utc(),
+            status=requested_status,
+            started_at=started_at,
             freshness_status=data.get('freshness_status', AnalyticsDatasetRun.FRESHNESS_UNKNOWN),
             source_snapshot_json=data.get('source_snapshot_json') or {},
         )
         self._apply_actor_audit(run, actor, action='create')
         return self.repository.save(run)
+
+    def queue_run(self, dataset_id, dataset_version_id, data=None, actor=None):
+        """Membuat run queued untuk dieksekusi background worker."""
+
+        payload = dict(data or {})
+        payload['status'] = AnalyticsDatasetRun.STATUS_QUEUED
+        return self.start_run(dataset_id, dataset_version_id, payload, actor=actor)
+
+    def mark_run_running(self, run_id, actor=None):
+        """Mengubah run queued menjadi running saat worker mulai memproses."""
+
+        run = self.repository.get_by_id(run_id)
+        if not run:
+            raise ValueError('Analytics dataset run tidak ditemukan.')
+        if run.status not in {AnalyticsDatasetRun.STATUS_QUEUED, AnalyticsDatasetRun.STATUS_RUNNING}:
+            raise ValueError('Hanya dataset run queued/running yang bisa diproses worker.')
+        run.status = AnalyticsDatasetRun.STATUS_RUNNING
+        run.started_at = run.started_at or now_utc()
+        self._apply_actor_audit(run, actor, action='update')
+        return self.repository.save(run)
+
+    def execute_queued_run(self, run_id, actor=None):
+        """Menjalankan materialization untuk run queued dari Celery worker."""
+
+        run = self.mark_run_running(run_id, actor=actor)
+        try:
+            materialized = self._materialize_run_payload(run)
+            return self.complete_run(run.id, materialized, actor=actor)
+        except Exception as error:
+            db.session.rollback()
+            return self.fail_run(
+                run.id,
+                {
+                    'error_code': 'DATASET_RUN_EXECUTION_FAILED',
+                    'error_message': str(error),
+                    'error_detail_json': {
+                        'dataset_id': run.dataset_id,
+                        'dataset_version_id': run.dataset_version_id,
+                        'trigger': 'celery_worker',
+                    },
+                },
+                actor=actor,
+            )
+
+    def attach_task_reference(self, run_id, task_id, actor=None):
+        """Menyimpan Celery task id sebagai trigger_ref untuk observability polling."""
+
+        run = self.repository.get_by_id(run_id)
+        if not run:
+            raise ValueError('Analytics dataset run tidak ditemukan.')
+        run.trigger_ref = task_id
+        self._apply_actor_audit(run, actor, action='update')
+        return self.repository.save(run)
+
+    def enqueue_run(self, dataset_id, dataset_version_id, data=None, actor=None):
+        """Membuat run queued lalu mengirim task refresh ke queue bila tersedia."""
+
+        run = self.queue_run(dataset_id, dataset_version_id, data=data, actor=actor)
+        dispatch_result = {'queued': False, 'task_id': None, 'error': None}
+        try:
+            from app.tasks.analytics import refresh_dataset_run
+            async_result = refresh_dataset_run.delay(run.id)
+            task_id = getattr(async_result, 'id', None)
+            if task_id:
+                run = self.attach_task_reference(run.id, task_id, actor=actor)
+            dispatch_result = {'queued': True, 'task_id': task_id, 'error': None}
+        except ImportError as error:
+            dispatch_result = {'queued': False, 'task_id': None, 'error': str(error)}
+        except Exception as error:
+            dispatch_result = {'queued': False, 'task_id': None, 'error': str(error)}
+
+        return {
+            'run': run,
+            'dispatch': dispatch_result,
+        }
 
     def complete_run(self, run_id, data=None, actor=None):
         """Menutup dataset run sebagai sukses dan menyimpan preview hasilnya.

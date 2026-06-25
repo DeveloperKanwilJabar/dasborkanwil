@@ -32,6 +32,26 @@ services:
       - project_network
 
   # ----------------------------------------------------
+  # 1B. BACKGROUND WORKER ANALYTICS / QUEUE
+  # ----------------------------------------------------
+  flask_worker:
+    image: python3-base:latest
+    container_name: dasborkanwil_worker
+    working_dir: /usr/src/app
+    volumes:
+      - .:/usr/src/app
+    command: >
+      bash -c "celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-1}"
+    env_file:
+      - .env
+    environment:
+      - FLASK_CONFIG=development
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://global_redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://global_redis:6379/0}
+    networks:
+      - project_network
+
+  # ----------------------------------------------------
   # 2. LAYANAN MANAJEMEN ASET
   # ----------------------------------------------------
   flask_asset:

@@ -242,6 +242,108 @@ def test_start_and_complete_dataset_run_persists_preview_and_summary_payloads():
         assert completed_run.materialization_ref == 'mat-run-001'
 
 
+def test_queue_run_persists_queued_status_without_started_at():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsDatasetRunService
+
+        dataset = AnalyticsDataset(
+            id=11,
+            uuid='dataset-uuid',
+            dataset_key='submission-ringkas',
+            name='Submission Ringkas',
+            source_domain=AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION,
+            source_type=AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT,
+            status=AnalyticsDataset.STATUS_ACTIVE,
+        )
+        published_version = AnalyticsDatasetVersion(
+            id=22,
+            uuid='dataset-version-2',
+            dataset_id=11,
+            version_number=2,
+            status=AnalyticsDatasetVersion.STATUS_PUBLISHED,
+            is_current_draft=False,
+            is_current_published=True,
+            grain_key=AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR,
+            freshness_source_type=AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT,
+            freshness_strategy=AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP,
+        )
+
+        service = AnalyticsDatasetRunService(
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([published_version]),
+            dataset_run_repository=StubDatasetRunRepository(),
+        )
+
+        run = service.queue_run(
+            dataset.id,
+            published_version.id,
+            {
+                'trigger_type': AnalyticsDatasetRun.TRIGGER_MANUAL,
+                'requested_reporting_year': 2026,
+            },
+        )
+
+        assert run.status == AnalyticsDatasetRun.STATUS_QUEUED
+        assert run.started_at is None
+        assert run.requested_reporting_year == 2026
+
+
+def test_execute_queued_run_transitions_to_succeeded():
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsDatasetRunService
+
+        dataset = AnalyticsDataset(
+            id=11,
+            uuid='dataset-uuid',
+            dataset_key='submission-ringkas',
+            name='Submission Ringkas',
+            source_domain=AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION,
+            source_type=AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT,
+            status=AnalyticsDataset.STATUS_ACTIVE,
+        )
+        published_version = AnalyticsDatasetVersion(
+            id=22,
+            uuid='dataset-version-2',
+            dataset_id=11,
+            version_number=2,
+            status=AnalyticsDatasetVersion.STATUS_PUBLISHED,
+            is_current_draft=False,
+            is_current_published=True,
+            grain_key=AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR,
+            output_schema_json=[{'key': 'total', 'type': 'integer'}],
+            freshness_source_type=AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT,
+            freshness_strategy=AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP,
+        )
+        service = AnalyticsDatasetRunService(
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([published_version]),
+            dataset_run_repository=StubDatasetRunRepository(),
+        )
+        queued_run = service.queue_run(dataset.id, published_version.id, {'trigger_type': AnalyticsDatasetRun.TRIGGER_MANUAL})
+
+        service._materialize_run_payload = lambda run: {
+            'freshness_status': AnalyticsDatasetRun.FRESHNESS_FRESH,
+            'source_watermark': '2026-06-25T10:00:00+00:00',
+            'source_snapshot_json': {'form_codes': ['FORM-A']},
+            'result_row_count': 1,
+            'result_schema_json': [{'key': 'total', 'type': 'integer'}],
+            'result_preview_json': [{'total': 1}],
+            'materialization_ref': 'analytics://dataset-runs/1',
+            'summary_json': {'row_count': 1},
+        }
+
+        completed_run = service.execute_queued_run(queued_run.id)
+
+        assert completed_run.status == AnalyticsDatasetRun.STATUS_SUCCEEDED
+        assert completed_run.started_at is not None
+        assert completed_run.finished_at is not None
+        assert completed_run.result_row_count == 1
+
+
 
 def test_fail_dataset_run_persists_error_payload():
     app = create_app('testing')

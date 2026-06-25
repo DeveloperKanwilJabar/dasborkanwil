@@ -1154,6 +1154,7 @@ def analytics_dataset_statistics(dataset_id):
         'analyticsDatasetsUrl': url_for('api_analytics_v1.list_dataset_definitions'),
         'analyticsDatasetDetailUrlTemplate': '/api/v1/analytics/datasets/__DATASET_ID__',
         'analyticsDatasetRunsUrlTemplate': '/api/v1/analytics/datasets/__DATASET_ID__/runs',
+        'analyticsDatasetRunDetailUrlTemplate': '/api/v1/analytics/runs/__RUN_ID__',
         'analyticsDatasetExecuteUrlTemplate': '/api/v1/analytics/datasets/__DATASET_ID__/versions/__DATASET_VERSION_ID__/runs',
         'initialRegistry': _serialize_registry_summary(primary_registry, primary_registry_published_version),
         'initialDatasetId': getattr(dataset, 'id', None),

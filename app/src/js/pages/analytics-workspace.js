@@ -38,6 +38,7 @@
         reportSourceDetails: {},
         reportSourceRuns: {},
         currentFilteredRowsByBlock: {},
+        activeRunPollTimer: null,
         chartRendered: false,
         lastChartType: '',
         detailGrid: null,
@@ -895,6 +896,9 @@
         if (status === 'running') {
             return 'Sedang Berjalan';
         }
+        if (status === 'queued') {
+            return 'Masuk Antrean';
+        }
         return status || '-';
     }
 
@@ -942,7 +946,9 @@
             ? 'alert alert-success mb-0'
             : latestRun && latestRun.status === 'failed'
                 ? 'alert alert-danger mb-0'
-                : 'alert alert-light border mb-0';
+                : latestRun && ['queued', 'running'].includes(latestRun.status)
+                    ? 'alert alert-warning mb-0'
+                    : 'alert alert-light border mb-0';
         datasetExecutionStatus.className = alertClass;
         datasetExecutionStatus.innerHTML = `Status terakhir: <strong>${escapeHtml(latestStatus)}</strong><br />Rows materialized: <strong>${escapeHtml(latestRows)}</strong><br />Run watermark: <code>${escapeHtml(latestWatermark)}</code>`;
 
@@ -963,9 +969,10 @@
         }
 
         if (datasetRunButton) {
-            datasetRunButton.disabled = !(dataset && dataset.id && activeVersion && activeVersion.id);
-            datasetRunButton.textContent = latestRun && latestRun.status === 'running'
-                ? 'Run Sedang Berjalan'
+            const runIsActive = latestRun && ['queued', 'running'].includes(latestRun.status);
+            datasetRunButton.disabled = runIsActive || !(dataset && dataset.id && activeVersion && activeVersion.id);
+            datasetRunButton.textContent = runIsActive
+                ? runStatusLabel(latestRun.status)
                 : freshness.is_stale
                     ? 'Refresh Dataset dari Source Terbaru'
                     : 'Jalankan Dataset Sekarang';
@@ -985,7 +992,7 @@
                 ? 'bg-success-subtle text-success'
                 : run.status === 'failed'
                     ? 'bg-danger-subtle text-danger'
-                    : run.status === 'running'
+                    : ['queued', 'running'].includes(run.status)
                         ? 'bg-warning-subtle text-warning'
                         : 'bg-secondary-subtle text-secondary';
             return `
@@ -1616,14 +1623,15 @@
             '__DATASET_VERSION_ID__',
             activeVersion.id
         );
+        let activeRunQueued = false;
 
         if (datasetRunButton) {
             datasetRunButton.disabled = true;
-            datasetRunButton.textContent = 'Menjalankan Dataset...';
+            datasetRunButton.textContent = 'Mengantrekan Dataset...';
         }
         if (datasetExecutionStatus) {
             datasetExecutionStatus.className = 'alert alert-warning mb-0';
-            datasetExecutionStatus.textContent = 'Dataset run sedang dieksekusi. Tunggu sebentar...';
+            datasetExecutionStatus.textContent = 'Dataset run sedang dimasukkan ke antrean worker...';
         }
 
         return postJson(executeUrl, {
@@ -1638,6 +1646,10 @@
             if (data && data.run) {
                 state.currentDatasetRuns = [data.run].concat((state.currentDatasetRuns || []).filter((item) => String(item.id) !== String(data.run.id)));
                 renderRunsList(state.currentDatasetRuns);
+                if (['queued', 'running'].includes(data.run.status)) {
+                    activeRunQueued = true;
+                    pollDatasetRunUntilFinished(data.run.id, dataset.id);
+                }
             }
             return loadDatasetDetail(dataset.id);
         }).catch(function (error) {
@@ -1647,10 +1659,49 @@
             }
         }).finally(function () {
             if (datasetRunButton) {
-                datasetRunButton.disabled = false;
-                datasetRunButton.textContent = 'Jalankan Dataset Sekarang';
+                datasetRunButton.disabled = activeRunQueued;
+                datasetRunButton.textContent = activeRunQueued ? 'Menunggu Worker...' : 'Jalankan Dataset Sekarang';
             }
         });
+    }
+
+    function pollDatasetRunUntilFinished(runId, datasetId) {
+        if (!runId || !config.analyticsDatasetRunDetailUrlTemplate) {
+            return;
+        }
+        if (state.activeRunPollTimer) {
+            clearTimeout(state.activeRunPollTimer);
+            state.activeRunPollTimer = null;
+        }
+        const runUrl = replaceTemplate(config.analyticsDatasetRunDetailUrlTemplate, '__RUN_ID__', runId);
+        const poll = function () {
+            fetchJson(runUrl).then(function (data) {
+                const run = data.run || null;
+                if (run) {
+                    state.currentDatasetRuns = [run].concat((state.currentDatasetRuns || []).filter((item) => String(item.id) !== String(run.id)));
+                    renderRunsList(state.currentDatasetRuns);
+                    if (datasetExecutionStatus) {
+                        datasetExecutionStatus.className = ['queued', 'running'].includes(run.status)
+                            ? 'alert alert-warning mb-0'
+                            : run.status === 'succeeded'
+                                ? 'alert alert-success mb-0'
+                                : run.status === 'failed'
+                                    ? 'alert alert-danger mb-0'
+                                    : 'alert alert-light border mb-0';
+                        datasetExecutionStatus.textContent = `Status refresh: ${runStatusLabel(run.status)}`;
+                    }
+                    if (['queued', 'running'].includes(run.status)) {
+                        state.activeRunPollTimer = setTimeout(poll, 5000);
+                        return;
+                    }
+                }
+                state.activeRunPollTimer = null;
+                loadDatasetDetail(datasetId);
+            }).catch(function () {
+                state.activeRunPollTimer = setTimeout(poll, 8000);
+            });
+        };
+        state.activeRunPollTimer = setTimeout(poll, 3000);
     }
 
     function bindFilters() {

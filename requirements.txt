@@ -11,6 +11,7 @@ Flask-RESTful
 Flask-Session
 Flask-SQLAlchemy
 Flask-WTF
+celery
 flask-jwt-extended
 flask-marshmallow
 flasgger
