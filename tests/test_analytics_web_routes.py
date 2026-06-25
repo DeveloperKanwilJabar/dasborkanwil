@@ -519,6 +519,7 @@ def test_analytics_dataset_statistics_page_renders_humanized_focus_layout(monkey
     assert 'libs/plotly.js-dist-min/plotly.min.js' in html
     assert 'libs/leaflet/dist/leaflet.js' in html
     assert 'js/pages/analytics-workspace.js' in html
+    assert '20260625-near-realtime-refresh' in html
     assert 'analyticsDatasetsUrl' in html
     assert 'analyticsDatasetDetailUrlTemplate' in html
     assert 'analyticsDatasetRunsUrlTemplate' in html
@@ -781,6 +782,8 @@ def test_analytics_workspace_static_js_is_served():
     assert 'Freshness source' in body
     assert 'Refresh Dataset dari Source Terbaru' in body
     assert 'analyticsDatasetExecuteUrlTemplate' in body
+    assert 'auto_refresh_on_view' in body
+    assert 'Auto refresh near-realtime sedang berjalan' in body
     assert 'Gagal memuat dataset runs.' in body
 
 
@@ -818,6 +821,9 @@ def test_analytics_workspace_source_js_contains_expected_fetch_and_filter_contra
     assert 'latitude_field' in content
     assert 'loadDatasets' in content
     assert 'loadDatasetDetail' in content
+    assert 'requestDatasetAutoRefresh' in content
+    assert 'shouldAttemptAutoRefresh' in content
+    assert 'auto_refresh_on_view' in content
     assert 'loadDatasetRuns' in content
     assert 'getCalendarPresetRange' in content
     assert 'analyticsDatasetMetricCards' in content

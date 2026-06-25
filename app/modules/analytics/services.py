@@ -650,8 +650,10 @@ class AnalyticsDatasetRunService(BaseService):
             requested_filters_json=data.get('requested_filters_json') or {},
             status=requested_status,
             started_at=started_at,
+            source_watermark=data.get('source_watermark'),
             freshness_status=data.get('freshness_status', AnalyticsDatasetRun.FRESHNESS_UNKNOWN),
             source_snapshot_json=data.get('source_snapshot_json') or {},
+            freshness_evaluated_at=data.get('freshness_evaluated_at'),
         )
         self._apply_actor_audit(run, actor, action='create')
         return self.repository.save(run)
@@ -710,26 +712,97 @@ class AnalyticsDatasetRunService(BaseService):
         return self.repository.save(run)
 
     def enqueue_run(self, dataset_id, dataset_version_id, data=None, actor=None):
-        """Membuat run queued lalu mengirim task refresh ke queue bila tersedia."""
+        """Membuat run queued lalu mengirim task refresh ke queue bila tersedia.
+
+        Guard idempotency awal:
+        - jika run queued/running untuk version yang sama masih ada, reuse run itu;
+        - jika source watermark yang sama sudah pernah succeeded, skip enqueue.
+        """
+
+        data = dict(data or {})
+        force_refresh = bool(data.pop('force_refresh', False) or data.pop('force', False))
+        active_run = self._get_active_run(dataset_version_id)
+        if active_run and not force_refresh:
+            return {
+                'run': active_run,
+                'dispatch': {
+                    'queued': False,
+                    'task_id': getattr(active_run, 'trigger_ref', None),
+                    'error': None,
+                    'reused': True,
+                    'reason': 'active_run_exists',
+                },
+            }
+
+        data = self._enrich_run_payload_with_source_freshness(dataset_id, dataset_version_id, data)
+        succeeded_run = self._get_succeeded_run_for_watermark(
+            dataset_version_id,
+            data.get('source_watermark'),
+        )
+        if succeeded_run and not force_refresh:
+            return {
+                'run': succeeded_run,
+                'dispatch': {
+                    'queued': False,
+                    'task_id': getattr(succeeded_run, 'trigger_ref', None),
+                    'error': None,
+                    'reused': True,
+                    'reason': 'source_watermark_already_materialized',
+                },
+            }
 
         run = self.queue_run(dataset_id, dataset_version_id, data=data, actor=actor)
-        dispatch_result = {'queued': False, 'task_id': None, 'error': None}
+        dispatch_result = {'queued': False, 'task_id': None, 'error': None, 'reused': False, 'reason': None}
         try:
             from app.tasks.analytics import refresh_dataset_run
             async_result = refresh_dataset_run.delay(run.id)
             task_id = getattr(async_result, 'id', None)
             if task_id:
                 run = self.attach_task_reference(run.id, task_id, actor=actor)
-            dispatch_result = {'queued': True, 'task_id': task_id, 'error': None}
+            dispatch_result = {'queued': True, 'task_id': task_id, 'error': None, 'reused': False, 'reason': None}
         except ImportError as error:
-            dispatch_result = {'queued': False, 'task_id': None, 'error': str(error)}
+            dispatch_result = {'queued': False, 'task_id': None, 'error': str(error), 'reused': False, 'reason': 'dispatch_import_error'}
         except Exception as error:
-            dispatch_result = {'queued': False, 'task_id': None, 'error': str(error)}
+            dispatch_result = {'queued': False, 'task_id': None, 'error': str(error), 'reused': False, 'reason': 'dispatch_error'}
 
         return {
             'run': run,
             'dispatch': dispatch_result,
         }
+
+    def _get_active_run(self, dataset_version_id):
+        getter = getattr(self.repository, 'get_active_for_dataset_version', None)
+        if callable(getter):
+            return getter(dataset_version_id)
+        return None
+
+    def _get_succeeded_run_for_watermark(self, dataset_version_id, source_watermark):
+        getter = getattr(self.repository, 'get_latest_succeeded_for_watermark', None)
+        if callable(getter):
+            return getter(dataset_version_id, source_watermark)
+        return None
+
+    def _enrich_run_payload_with_source_freshness(self, dataset_id, dataset_version_id, data):
+        dataset = self.dataset_repository.get_by_id(dataset_id)
+        dataset_version = self.dataset_version_repository.get_by_id(dataset_version_id)
+        if not dataset or not dataset_version:
+            return data
+        latest_run = self.repository.get_latest_for_dataset_version(dataset_version_id)
+        freshness = self.evaluate_source_freshness(
+            dataset,
+            dataset_version,
+            latest_run=latest_run,
+            requested_filters=data.get('requested_filters_json') or {},
+        )
+        source_snapshot = dict(data.get('source_snapshot_json') or {})
+        source_snapshot.setdefault('freshness', freshness)
+        if freshness.get('source'):
+            source_snapshot.setdefault('freshness_source', freshness.get('source'))
+        data.setdefault('source_snapshot_json', source_snapshot)
+        data.setdefault('source_watermark', freshness.get('source_watermark'))
+        data.setdefault('freshness_status', freshness.get('status') or AnalyticsDatasetRun.FRESHNESS_UNKNOWN)
+        data.setdefault('freshness_evaluated_at', now_utc())
+        return data
 
     def complete_run(self, run_id, data=None, actor=None):
         """Menutup dataset run sebagai sukses dan menyimpan preview hasilnya.
@@ -1291,6 +1364,99 @@ class AnalyticsDatasetRunService(BaseService):
         obj.updated_by = actor_id
         obj.updated_by_uuid = actor_uuid
         return obj
+
+
+class AnalyticsRefreshPlannerService:
+    """Planner tipis untuk refresh dataset terdampak perubahan submission/import."""
+
+    def __init__(
+        self,
+        dataset_repository=None,
+        dataset_version_repository=None,
+        dataset_run_repository=None,
+        dataset_run_service=None,
+        form_repository=None,
+    ):
+        from app.modules.form.repositories import FormRepository
+
+        self.dataset_repository = dataset_repository or AnalyticsDatasetRepository()
+        self.dataset_version_repository = dataset_version_repository or AnalyticsDatasetVersionRepository()
+        self.dataset_run_repository = dataset_run_repository or AnalyticsDatasetRunRepository()
+        self.dataset_run_service = dataset_run_service or AnalyticsDatasetRunService(
+            dataset_repository=self.dataset_repository,
+            dataset_version_repository=self.dataset_version_repository,
+            dataset_run_repository=self.dataset_run_repository,
+        )
+        self.form_repository = form_repository or FormRepository()
+
+    def enqueue_for_submission(self, submission, trigger='submission_event', actor=None):
+        """Cari dataset submission-backed yang terdampak lalu enqueue refresh async."""
+
+        if not submission or getattr(submission, 'status', None) != 'submitted':
+            return []
+        impacted = self.find_impacted_datasets_for_submission(submission)
+        results = []
+        for item in impacted:
+            dataset = item['dataset']
+            dataset_version = item['dataset_version']
+            requested_filters = {'reporting_year': getattr(submission, 'reporting_year', None)}
+            enqueue_result = self.dataset_run_service.enqueue_run(
+                dataset.id,
+                dataset_version.id,
+                {
+                    'trigger_type': AnalyticsDatasetRun.TRIGGER_SYSTEM,
+                    'trigger_ref': f'{trigger}:{getattr(submission, "id", "unknown")}',
+                    'requested_reporting_year': getattr(submission, 'reporting_year', None),
+                    'requested_reporting_period_id': getattr(submission, 'reporting_period_id', None),
+                    'requested_filters_json': requested_filters,
+                    'source_snapshot_json': {
+                        'trigger': trigger,
+                        'submission_id': getattr(submission, 'id', None),
+                        'submission_uuid': getattr(submission, 'uuid', None),
+                        'form_id': getattr(submission, 'form_id', None),
+                    },
+                },
+                actor=actor,
+            )
+            results.append({
+                'dataset': dataset,
+                'dataset_version': dataset_version,
+                'run': enqueue_result.get('run'),
+                'dispatch': enqueue_result.get('dispatch') or {},
+            })
+        return results
+
+    def find_impacted_datasets_for_submission(self, submission):
+        """Resolve dataset published yang source contract-nya mencakup form submission."""
+
+        form_refs = self._submission_form_refs(submission)
+        impacted = []
+        for dataset in self.dataset_repository.get_all():
+            if getattr(dataset, 'source_domain', None) != AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION:
+                continue
+            dataset_version = self.dataset_version_repository.get_published_version(dataset.id)
+            if not dataset_version:
+                continue
+            dataset_form_refs = {
+                str(ref).strip()
+                for ref in self.dataset_run_service._resolve_dataset_form_refs(dataset, dataset_version)
+                if str(ref).strip()
+            }
+            if dataset_form_refs.intersection(form_refs):
+                impacted.append({'dataset': dataset, 'dataset_version': dataset_version})
+        return impacted
+
+    def _submission_form_refs(self, submission):
+        refs = {str(getattr(submission, 'form_id', '')).strip()}
+        form = getattr(submission, 'form', None)
+        if form is None and getattr(submission, 'form_id', None):
+            form = self.form_repository.get_by_id(submission.form_id)
+        if form:
+            for attr in ('id', 'uuid', 'code', 'slug'):
+                value = getattr(form, attr, None)
+                if value not in (None, ''):
+                    refs.add(str(value).strip())
+        return {item for item in refs if item}
 
 
 class AnalyticsReportService(BaseService):
@@ -2571,17 +2737,11 @@ class AnalyticsQueryService(BaseService):
             })
         return items
 
-    def get_dataset_workspace(self, dataset_id):
+    def get_dataset_workspace(self, dataset_id, auto_enqueue_stale=False, actor=None):
         """Mengambil ringkasan workspace dataset beserta version dan run terkait.
 
-        Args:
-            dataset_id (Any): Primary key internal dataset analytics target.
-
-        Returns:
-            Any: Struktur data hasil olahan service sesuai kebutuhan caller.
-
-        Example:
-            >>> service.get_dataset_workspace(dataset_id=...)
+        Bila `auto_enqueue_stale=True`, stale source akan otomatis mengantrekan refresh
+        selama belum ada run queued/running untuk dataset version aktif.
         """
 
         dataset = self.dataset_repository.get_by_id(dataset_id)
@@ -2594,6 +2754,11 @@ class AnalyticsQueryService(BaseService):
         runs = self.dataset_run_repository.list_by_dataset(dataset_id)
         active_version = published_version or draft_version
         latest_succeeded_run = next((run for run in runs if getattr(run, 'status', None) == AnalyticsDatasetRun.STATUS_SUCCEEDED), runs[0] if runs else None)
+        active_run = None
+        if active_version:
+            getter = getattr(self.dataset_run_repository, 'get_active_for_dataset_version', None)
+            if callable(getter):
+                active_run = getter(active_version.id)
         freshness = AnalyticsDatasetRunService().evaluate_source_freshness(
             dataset,
             active_version,
@@ -2603,6 +2768,47 @@ class AnalyticsQueryService(BaseService):
             'is_stale': False,
             'message': 'Dataset belum memiliki version aktif.',
         }
+        auto_refresh = {
+            'attempted': False,
+            'queued': False,
+            'run_id': None,
+            'reason': None,
+            'dispatch': {},
+        }
+        if auto_enqueue_stale and active_version and freshness.get('is_stale') and not active_run:
+            enqueue_result = AnalyticsDatasetRunService(
+                dataset_repository=self.dataset_repository,
+                dataset_version_repository=self.dataset_version_repository,
+                dataset_run_repository=self.dataset_run_repository,
+            ).enqueue_run(
+                dataset.id,
+                active_version.id,
+                {
+                    'trigger_type': AnalyticsDatasetRun.TRIGGER_SYSTEM,
+                    'requested_filters_json': {},
+                    'source_watermark': freshness.get('source_watermark'),
+                    'freshness_status': freshness.get('status'),
+                    'source_snapshot_json': {'freshness': freshness, 'auto_enqueue': 'stale_on_view'},
+                },
+                actor=actor,
+            )
+            run = enqueue_result.get('run')
+            auto_refresh = {
+                'attempted': True,
+                'queued': bool((enqueue_result.get('dispatch') or {}).get('queued')),
+                'run_id': getattr(run, 'id', None),
+                'reason': (enqueue_result.get('dispatch') or {}).get('reason'),
+                'dispatch': enqueue_result.get('dispatch') or {},
+            }
+            runs = self.dataset_run_repository.list_by_dataset(dataset_id)
+        elif active_run:
+            auto_refresh = {
+                'attempted': False,
+                'queued': False,
+                'run_id': getattr(active_run, 'id', None),
+                'reason': 'active_run_exists',
+                'dispatch': {'reused': True, 'reason': 'active_run_exists'},
+            }
 
         return {
             'dataset': dataset,
@@ -2611,6 +2817,7 @@ class AnalyticsQueryService(BaseService):
             'versions': versions,
             'runs': runs,
             'freshness': freshness,
+            'auto_refresh': auto_refresh,
         }
 
     def list_dataset_runs(self, dataset_id):

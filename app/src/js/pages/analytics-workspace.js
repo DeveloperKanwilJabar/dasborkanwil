@@ -39,6 +39,7 @@
         reportSourceRuns: {},
         currentFilteredRowsByBlock: {},
         activeRunPollTimer: null,
+        autoRefreshAttempts: {},
         chartRendered: false,
         lastChartType: '',
         detailGrid: null,
@@ -1573,18 +1574,123 @@
         });
     }
 
-    function loadDatasetDetail(datasetId) {
+    function getFreshnessWatermark(detail) {
+        return detail && detail.freshness && detail.freshness.source_watermark
+            ? String(detail.freshness.source_watermark)
+            : '';
+    }
+
+    function buildDatasetDetailUrl(datasetId, autoEnqueue) {
+        let url = replaceTemplate(config.analyticsDatasetDetailUrlTemplate, '__DATASET_ID__', datasetId);
+        if (autoEnqueue) {
+            url += `${url.includes('?') ? '&' : '?'}auto_enqueue_stale=1`;
+        }
+        return url;
+    }
+
+    function shouldAttemptAutoRefresh(detail) {
+        if (!detail || !detail.freshness || !detail.freshness.is_stale) {
+            return false;
+        }
+        const activeRun = (state.currentDatasetRuns || []).find(function (run) {
+            return ['queued', 'running'].includes(run.status);
+        });
+        if (activeRun) {
+            return false;
+        }
+        const datasetId = detail.dataset && detail.dataset.id;
+        const attemptKey = `${datasetId || ''}:${getFreshnessWatermark(detail)}`;
+        return !state.autoRefreshAttempts[attemptKey];
+    }
+
+    function rememberAutoRefreshAttempt(detail) {
+        const datasetId = detail && detail.dataset && detail.dataset.id;
+        const attemptKey = `${datasetId || ''}:${getFreshnessWatermark(detail)}`;
+        state.autoRefreshAttempts[attemptKey] = true;
+    }
+
+    function renderAutoRefreshQueued(run, datasetId) {
+        if (run) {
+            state.currentDatasetRuns = [run].concat((state.currentDatasetRuns || []).filter((item) => String(item.id) !== String(run.id)));
+            renderRunsList(state.currentDatasetRuns);
+        }
+        if (datasetExecutionStatus) {
+            datasetExecutionStatus.className = 'alert alert-warning mb-0';
+            datasetExecutionStatus.textContent = 'Auto refresh near-realtime sedang berjalan...';
+        }
+        if (datasetRunButton) {
+            datasetRunButton.disabled = true;
+            datasetRunButton.textContent = run ? runStatusLabel(run.status) : 'Menunggu Worker...';
+        }
+        if (run && ['queued', 'running'].includes(run.status)) {
+            pollDatasetRunUntilFinished(run.id, datasetId);
+        }
+    }
+
+    function requestDatasetAutoRefresh(detail) {
+        const dataset = detail && detail.dataset;
+        const activeVersion = detail && (detail.published_version || detail.draft_version);
+        if (!dataset || !activeVersion || !config.analyticsDatasetExecuteUrlTemplate) {
+            return Promise.resolve(false);
+        }
+        rememberAutoRefreshAttempt(detail);
+        if (datasetExecutionStatus) {
+            datasetExecutionStatus.className = 'alert alert-warning mb-0';
+            datasetExecutionStatus.textContent = 'Dataset stale terdeteksi. Auto refresh near-realtime sedang dimasukkan ke antrean...';
+        }
+        const executeUrl = replaceTemplate(
+            replaceTemplate(config.analyticsDatasetExecuteUrlTemplate, '__DATASET_ID__', dataset.id),
+            '__DATASET_VERSION_ID__',
+            activeVersion.id
+        );
+        return postJson(executeUrl, {
+            trigger_type: 'system',
+            trigger_ref: 'auto_refresh_on_view',
+            requested_reporting_year: state.filters.reportingYear || undefined,
+            requested_filters_json: {
+                reporting_year: state.filters.reportingYear || undefined,
+                date_start: state.filters.dateStart || undefined,
+                date_end: state.filters.dateEnd || undefined,
+            },
+        }).then(function (data) {
+            if (data && data.run) {
+                renderAutoRefreshQueued(data.run, dataset.id);
+                return true;
+            }
+            return false;
+        }).catch(function (error) {
+            if (datasetExecutionStatus) {
+                datasetExecutionStatus.className = 'alert alert-danger mb-0';
+                datasetExecutionStatus.textContent = error.message || 'Auto refresh dataset gagal dimulai.';
+            }
+            return false;
+        });
+    }
+
+    function loadDatasetDetail(datasetId, options) {
         if (!datasetId || !config.analyticsDatasetDetailUrlTemplate) {
             return;
         }
+        const loadOptions = options || {};
         state.selectedDatasetId = datasetId;
-        const url = replaceTemplate(config.analyticsDatasetDetailUrlTemplate, '__DATASET_ID__', datasetId);
+        const url = buildDatasetDetailUrl(datasetId, Boolean(loadOptions.autoEnqueue));
         fetchJson(url).then(function (data) {
             state.currentDatasetDetail = data;
+            if (data.auto_refresh && data.auto_refresh.run_id) {
+                pollDatasetRunUntilFinished(data.auto_refresh.run_id, datasetId);
+            }
             return loadDatasetRuns(datasetId).then(function (runs) {
                 return loadReportDataSources().then(function () {
                     populateFilterControls(data, runs);
                     rerenderDatasetView();
+                    if (shouldAttemptAutoRefresh(data)) {
+                        return requestDatasetAutoRefresh(data).then(function (started) {
+                            if (started) {
+                                rerenderDatasetView();
+                            }
+                        });
+                    }
+                    return null;
                 });
             });
         }).catch(function (error) {

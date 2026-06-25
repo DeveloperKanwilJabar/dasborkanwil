@@ -286,6 +286,35 @@ class AnalyticsDatasetRunRepository(BaseRepository):
             AnalyticsDatasetRun.created_at.desc(),
         ).first()
 
+    def get_active_for_dataset_version(self, dataset_version_id):
+        """Mengambil run queued/running aktif untuk mencegah enqueue ganda."""
+
+        return self.model.query.filter(
+            AnalyticsDatasetRun.dataset_version_id == dataset_version_id,
+            AnalyticsDatasetRun.status.in_([
+                AnalyticsDatasetRun.STATUS_QUEUED,
+                AnalyticsDatasetRun.STATUS_RUNNING,
+            ]),
+            AnalyticsDatasetRun.deleted_at == None,
+        ).order_by(
+            AnalyticsDatasetRun.created_at.desc(),
+        ).first()
+
+    def get_latest_succeeded_for_watermark(self, dataset_version_id, source_watermark):
+        """Mengambil run succeeded terakhir untuk source watermark yang sama."""
+
+        if not source_watermark:
+            return None
+        return self.model.query.filter(
+            AnalyticsDatasetRun.dataset_version_id == dataset_version_id,
+            AnalyticsDatasetRun.status == AnalyticsDatasetRun.STATUS_SUCCEEDED,
+            AnalyticsDatasetRun.source_watermark == source_watermark,
+            AnalyticsDatasetRun.deleted_at == None,
+        ).order_by(
+            AnalyticsDatasetRun.finished_at.desc(),
+            AnalyticsDatasetRun.created_at.desc(),
+        ).first()
+
 
 class AnalyticsReportDefinitionRepository(BaseRepository):
     """Repository query untuk entity AnalyticsReportDefinition.

@@ -222,6 +222,7 @@ class SubmissionService(BaseService):
             submission = self.repository.save(submission)
             self.add_event(submission, 'validation_passed', actor=actor, context=validation_snapshot)
             self.add_event(submission, 'submitted', actor=actor, context=context)
+            self._enqueue_analytics_refresh_for_submission(submission, 'submission_submitted', actor=actor)
             return submission
         except Exception:
             db.session.rollback()
@@ -412,6 +413,7 @@ class SubmissionService(BaseService):
                     'validation_snapshot': validation_snapshot,
                 },
             )
+            self._enqueue_analytics_refresh_for_submission(submission, 'submission_updated', actor=actor)
             return submission
         except Exception:
             db.session.rollback()
@@ -507,6 +509,44 @@ class SubmissionService(BaseService):
         """
 
         return build_actor_context(actor).get('active_year')
+
+    def _enqueue_analytics_refresh_for_submission(self, submission, trigger, actor=None):
+        """Minta analytics refresh planner mengantrekan dataset terdampak submission.
+
+        Planner dipanggil best-effort agar kegagalan queue/worker tidak membatalkan
+        transaksi operasional submission. Kegagalan dicatat sebagai submission event.
+        """
+
+        try:
+            from app.modules.analytics.services import AnalyticsRefreshPlannerService
+            results = AnalyticsRefreshPlannerService().enqueue_for_submission(
+                submission,
+                trigger=trigger,
+                actor=actor,
+            )
+            if results:
+                self.add_event(
+                    submission,
+                    'analytics_refresh_planned',
+                    actor=actor,
+                    context={
+                        'trigger': trigger,
+                        'dataset_count': len(results),
+                        'runs': [
+                            {
+                                'dataset_id': getattr(item.get('dataset'), 'id', None),
+                                'dataset_version_id': getattr(item.get('dataset_version'), 'id', None),
+                                'run_id': getattr(item.get('run'), 'id', None),
+                                'dispatch': item.get('dispatch') or {},
+                            }
+                            for item in results
+                        ],
+                    },
+                )
+        except Exception:
+            # Refresh analytics bersifat best-effort; kegagalan planner/queue tidak boleh
+            # menambah noise event audit submission atau membatalkan transaksi operasional.
+            return None
 
     def _apply_actor_audit(self, obj, actor=None, action='create'):
         """Helper internal untuk apply actor audit.

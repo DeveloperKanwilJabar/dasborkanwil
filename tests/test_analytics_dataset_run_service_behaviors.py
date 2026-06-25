@@ -34,6 +34,9 @@ class StubDatasetRepository(SaveMixin):
     def get_by_id(self, dataset_id):
         return self.datasets.get(dataset_id)
 
+    def get_all(self):
+        return list(self.datasets.values())
+
 
 class StubDatasetVersionRepository(SaveMixin):
     def __init__(self, versions=None):
@@ -52,6 +55,12 @@ class StubDatasetVersionRepository(SaveMixin):
     def get_by_id(self, version_id):
         for version in self.versions:
             if version.id == version_id:
+                return version
+        return None
+
+    def get_published_version(self, dataset_id):
+        for version in self.versions:
+            if version.dataset_id == dataset_id and getattr(version, 'is_current_published', False):
                 return version
         return None
 
@@ -102,6 +111,32 @@ class StubDatasetRunRepository(SaveMixin):
             if run.id == run_id:
                 return run
         return None
+
+    def get_latest_for_dataset_version(self, dataset_version_id):
+        candidates = [run for run in self.runs if run.dataset_version_id == dataset_version_id]
+        return candidates[-1] if candidates else None
+
+    def get_active_for_dataset_version(self, dataset_version_id):
+        for run in reversed(self.runs):
+            if run.dataset_version_id == dataset_version_id and run.status in {
+                AnalyticsDatasetRun.STATUS_QUEUED,
+                AnalyticsDatasetRun.STATUS_RUNNING,
+            }:
+                return run
+        return None
+
+    def get_latest_succeeded_for_watermark(self, dataset_version_id, source_watermark):
+        for run in reversed(self.runs):
+            if (
+                run.dataset_version_id == dataset_version_id
+                and run.status == AnalyticsDatasetRun.STATUS_SUCCEEDED
+                and run.source_watermark == source_watermark
+            ):
+                return run
+        return None
+
+    def list_by_dataset(self, dataset_id, limit=50):
+        return [run for run in reversed(self.runs) if run.dataset_id == dataset_id][:limit]
 
 
 def test_create_publish_dataset_version_archives_previous_versions():
@@ -574,3 +609,173 @@ def test_execute_run_materializes_submission_rows_into_summary():
         assert run.summary_json['row_snapshots'][0]['quarter_label'] == '2026-Q1'
         assert run.summary_json['row_snapshots'][0]['semester_label'] == '2026-S1'
         assert run.source_snapshot_json['form_codes'] == ['FORM-HARMONISASI-TEST']
+
+
+def test_enqueue_run_reuses_active_run_instead_of_dispatching_duplicate(monkeypatch):
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsDatasetRunService
+
+        dataset = AnalyticsDataset(
+            id=11,
+            uuid='dataset-uuid',
+            dataset_key='submission-ringkas',
+            name='Submission Ringkas',
+            source_domain=AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION,
+            source_type=AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT,
+            status=AnalyticsDataset.STATUS_ACTIVE,
+        )
+        published_version = AnalyticsDatasetVersion(
+            id=22,
+            uuid='dataset-version-2',
+            dataset_id=11,
+            version_number=2,
+            status=AnalyticsDatasetVersion.STATUS_PUBLISHED,
+            is_current_draft=False,
+            is_current_published=True,
+            grain_key=AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR,
+            freshness_source_type=AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT,
+            freshness_strategy=AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP,
+        )
+        active_run = AnalyticsDatasetRun(
+            id=44,
+            uuid='run-active',
+            dataset_id=11,
+            dataset_version_id=22,
+            run_key='dataset-run-active',
+            status=AnalyticsDatasetRun.STATUS_QUEUED,
+            trigger_ref='celery-task-1',
+        )
+        service = AnalyticsDatasetRunService(
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([published_version]),
+            dataset_run_repository=StubDatasetRunRepository([active_run]),
+        )
+        monkeypatch.setattr(service, 'queue_run', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('should not create duplicate run')))
+
+        result = service.enqueue_run(dataset.id, published_version.id)
+
+        assert result['run'] is active_run
+        assert result['dispatch']['reused'] is True
+        assert result['dispatch']['reason'] == 'active_run_exists'
+
+
+def test_enqueue_run_reuses_succeeded_run_for_same_source_watermark(monkeypatch):
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsDatasetRunService
+
+        dataset = AnalyticsDataset(
+            id=11,
+            uuid='dataset-uuid',
+            dataset_key='submission-ringkas',
+            name='Submission Ringkas',
+            source_domain=AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION,
+            source_type=AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT,
+            status=AnalyticsDataset.STATUS_ACTIVE,
+        )
+        published_version = AnalyticsDatasetVersion(
+            id=22,
+            uuid='dataset-version-2',
+            dataset_id=11,
+            version_number=2,
+            status=AnalyticsDatasetVersion.STATUS_PUBLISHED,
+            is_current_draft=False,
+            is_current_published=True,
+            grain_key=AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR,
+            freshness_source_type=AnalyticsDatasetVersion.FRESHNESS_SOURCE_SUBMISSIONS_SUBMITTED_AT,
+            freshness_strategy=AnalyticsDatasetVersion.FRESHNESS_STRATEGY_MAX_TIMESTAMP,
+        )
+        succeeded_run = AnalyticsDatasetRun(
+            id=45,
+            uuid='run-succeeded',
+            dataset_id=11,
+            dataset_version_id=22,
+            run_key='dataset-run-succeeded',
+            status=AnalyticsDatasetRun.STATUS_SUCCEEDED,
+            source_watermark='2026-06-25T10:00:00+00:00',
+        )
+        service = AnalyticsDatasetRunService(
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([published_version]),
+            dataset_run_repository=StubDatasetRunRepository([succeeded_run]),
+        )
+        monkeypatch.setattr(service, 'queue_run', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('should not create duplicate run')))
+
+        result = service.enqueue_run(
+            dataset.id,
+            published_version.id,
+            {'source_watermark': '2026-06-25T10:00:00+00:00'},
+        )
+
+        assert result['run'] is succeeded_run
+        assert result['dispatch']['reused'] is True
+        assert result['dispatch']['reason'] == 'source_watermark_already_materialized'
+
+
+def test_refresh_planner_enqueues_submission_backed_dataset(monkeypatch):
+    app = create_app('testing')
+
+    with app.app_context():
+        from app.modules.analytics.services import AnalyticsRefreshPlannerService
+
+        dataset = AnalyticsDataset(
+            id=11,
+            uuid='dataset-uuid',
+            dataset_key='submission-ringkas',
+            name='Submission Ringkas',
+            source_domain=AnalyticsDataset.SOURCE_DOMAIN_SUBMISSION,
+            source_type=AnalyticsDataset.SOURCE_TYPE_AGGREGATED_SUBMISSION_FACT,
+            status=AnalyticsDataset.STATUS_ACTIVE,
+        )
+        published_version = AnalyticsDatasetVersion(
+            id=22,
+            uuid='dataset-version-2',
+            dataset_id=11,
+            version_number=2,
+            status=AnalyticsDatasetVersion.STATUS_PUBLISHED,
+            is_current_draft=False,
+            is_current_published=True,
+            source_contract_json={'form_codes': ['FORM-API']},
+            grain_key=AnalyticsDatasetVersion.GRAIN_PER_SCOPE_PER_YEAR,
+        )
+        calls = []
+
+        class StubRunService:
+            def _resolve_dataset_form_refs(self, dataset_arg, version_arg):
+                assert dataset_arg is dataset
+                assert version_arg is published_version
+                return ['FORM-API']
+
+            def enqueue_run(self, dataset_id, dataset_version_id, data=None, actor=None):
+                calls.append((dataset_id, dataset_version_id, data))
+                return {
+                    'run': SimpleNamespace(id=99),
+                    'dispatch': {'queued': True, 'task_id': 'task-99'},
+                }
+
+        submission = SimpleNamespace(
+            id=7,
+            uuid='submission-uuid',
+            status='submitted',
+            form_id=1,
+            form=SimpleNamespace(id=1, uuid='form-uuid', code='FORM-API', slug='form-api'),
+            reporting_year=2026,
+            reporting_period_id=None,
+        )
+        planner = AnalyticsRefreshPlannerService(
+            dataset_repository=StubDatasetRepository([dataset]),
+            dataset_version_repository=StubDatasetVersionRepository([published_version]),
+            dataset_run_repository=StubDatasetRunRepository(),
+            dataset_run_service=StubRunService(),
+        )
+
+        results = planner.enqueue_for_submission(submission, trigger='submission_updated')
+
+        assert len(results) == 1
+        assert calls[0][0] == dataset.id
+        assert calls[0][1] == published_version.id
+        assert calls[0][2]['trigger_type'] == AnalyticsDatasetRun.TRIGGER_SYSTEM
+        assert calls[0][2]['requested_reporting_year'] == 2026

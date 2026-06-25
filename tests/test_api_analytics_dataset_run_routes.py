@@ -259,7 +259,8 @@ def test_get_analytics_dataset_detail_returns_versions_and_runs(monkeypatch):
     client = app.test_client()
 
     class StubAnalyticsQueryService:
-        def get_dataset_workspace(self, dataset_id):
+        def get_dataset_workspace(self, dataset_id, auto_enqueue_stale=False, actor=None):
+            assert auto_enqueue_stale is False
             return {
                 'dataset': make_dataset(id=dataset_id),
                 'draft_version': None,
@@ -272,6 +273,7 @@ def test_get_analytics_dataset_detail_returns_versions_and_runs(monkeypatch):
                     'source_watermark': '2026-06-24T10:00:00+00:00',
                     'run_watermark': '2026-06-24T09:00:00+00:00',
                 },
+                'auto_refresh': {},
             }
 
     monkeypatch.setattr('app.api.v1.analytics.routes.AnalyticsQueryService', StubAnalyticsQueryService)
@@ -286,6 +288,39 @@ def test_get_analytics_dataset_detail_returns_versions_and_runs(monkeypatch):
     assert payload['data']['runs'][0]['error_code'] == 'QUERY_TIMEOUT'
     assert payload['data']['freshness']['is_stale'] is True
     assert payload['data']['freshness']['source_watermark'] == '2026-06-24T10:00:00+00:00'
+
+
+def test_get_analytics_dataset_detail_can_request_auto_enqueue_stale(monkeypatch):
+    app = create_app('testing')
+    client = app.test_client()
+
+    class StubAnalyticsQueryService:
+        def get_dataset_workspace(self, dataset_id, auto_enqueue_stale=False, actor=None):
+            assert dataset_id == 11
+            assert auto_enqueue_stale is True
+            return {
+                'dataset': make_dataset(id=dataset_id),
+                'draft_version': None,
+                'published_version': make_dataset_version(),
+                'versions': [make_dataset_version()],
+                'runs': [make_dataset_run(id=44, status='queued')],
+                'freshness': {'status': 'stale', 'is_stale': True},
+                'auto_refresh': {
+                    'attempted': True,
+                    'queued': True,
+                    'run_id': 44,
+                    'dispatch': {'queued': True},
+                },
+            }
+
+    monkeypatch.setattr('app.api.v1.analytics.routes.AnalyticsQueryService', StubAnalyticsQueryService)
+
+    response = client.get('/api/v1/analytics/datasets/11?auto_enqueue_stale=1')
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['data']['auto_refresh']['queued'] is True
+    assert payload['data']['auto_refresh']['run_id'] == 44
 
 
 def test_get_analytics_dataset_runs_returns_run_history(monkeypatch):

@@ -608,7 +608,12 @@ def list_dataset_definitions():
 @swag_from(GET_DATASET_WORKSPACE_DOC)
 def get_dataset_workspace(dataset_id):
     try:
-        workspace = AnalyticsQueryService().get_dataset_workspace(dataset_id)
+        auto_enqueue_stale = request.args.get('auto_enqueue_stale') in {'1', 'true', 'yes'}
+        workspace = AnalyticsQueryService().get_dataset_workspace(
+            dataset_id,
+            auto_enqueue_stale=auto_enqueue_stale,
+            actor=current_actor(),
+        )
         return json_response(
             True,
             'Detail analytics dataset berhasil diambil.',
@@ -619,6 +624,7 @@ def get_dataset_workspace(dataset_id):
                 'versions': [serialize_dataset_version(version) for version in workspace.get('versions', [])],
                 'runs': [serialize_dataset_run(run) for run in workspace.get('runs', [])],
                 'freshness': workspace.get('freshness') or {},
+                'auto_refresh': workspace.get('auto_refresh') or {},
             },
         )
     except ValueError as error:
